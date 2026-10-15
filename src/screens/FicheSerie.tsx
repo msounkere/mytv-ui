@@ -13,8 +13,9 @@ import {
 import ListeVirtuelle from '../components/ListeVirtuelle'
 import SubstitutLogo from '../components/SubstitutLogo'
 import EtiquettePays from '../components/EtiquettePays'
-import { ClientXtream, audioLisible, separerPrefixe } from '../lib/xtream'
-import { config } from '../config'
+import { audioLisible, separerPrefixe } from '../lib/libelles'
+import { json, versErreurLecteur, type SaisonApi } from '../lib/api'
+import { cheminContenu } from '../lib/identifiants'
 import { ErreurLecteur, LIBELLE_COUCHE } from '../lib/errors'
 import { progressions } from '../lib/preferences'
 import { FRAICHEUR, cles, requeteClefee } from '../lib/requetes'
@@ -26,14 +27,13 @@ import type { EntreeCatalogue } from '../lib/db'
 // (verifie sur le catalogue reel) — d ou le selecteur de saison et la liste
 // fenetree au-dela de SEUIL_VIRTUEL.
 
-// ── Forme reelle de get_series_info ─────────────────────────────────────────
-// Observee sur le relais, et volontairement plus prudente que `InfosSerie` :
-//  · la reponse est `[]` (et non un objet) pour ~1 serie sur 8 — fiche absente ;
-//  · `seasons` annonce des saisons qui n ont aucun episode (« Especiales ») :
-//    la verite, ce sont les cles de `episodes` ;
-//  · `info.audio` est tantot l objet ffprobe, tantot `[]` quand la piste manque ;
-//  · `info.plot` n est jamais renseigne par episode, `movie_image` souvent absent.
-// On ne touche pas a xtream.ts (d autres ecrans en dependent) : on narrow ici.
+// ── Fiche d affichage ───────────────────────────────────────────────────────
+// Le modele d affichage ci-dessous date de l ancienne API (`get_series_info`) ;
+// il est conserve pour ne pas reecrire l ecran. `fiche.json` le remplit depuis
+// `/series/{id}/saisons` (contrat v1) : saisons -> episodes, chacun avec son
+// identifiant `fournisseur:numero.ext` et son adresse de lecture relative.
+// Le contrat ne donne NI synopsis, NI genre, NI vignette d episode : ces champs
+// restent simplement absents, et l ecran les masque deja quand ils manquent.
 
 interface PisteFfprobe {
   codec_name?: string
@@ -51,6 +51,8 @@ interface InfoEpisodeBrut {
 
 interface EpisodeBrut {
   id?: string
+  /** Adresse de lecture relative donnee par l API. */
+  lecture?: string
   episode_num?: number
   title?: string
   container_extension?: string
@@ -139,13 +141,18 @@ export default function FicheSerie(props: {
   // Clefee par serie : rouvrir une fiche deja consultee ne redemande rien au
   // relais, qui pousse peut-etre un flux au meme moment. L'erreur ne se propage
   // pas — le `Switch` plus bas montre un diagnostic et un bouton « Reessayer ».
-  const [fiche, { refetch }] = requeteClefee<number, FicheBrute | null>(
+  const [fiche, { refetch }] = requeteClefee<string, FicheBrute | null>(
     (id) => cles.serie(id),
-    () => props.serie.id,
+    () => props.serie.cle,
     async (id) => {
-      const brut: unknown = await new ClientXtream().infosSerie(id)
-      if (!brut || typeof brut !== 'object' || Array.isArray(brut)) return null
-      return brut as FicheBrute
+      try {
+        const r = await json<{ elements: SaisonApi[] }>(`/series/${cheminContenu(id)}/saisons`)
+        return versFiche(r.elements)
+      } catch (e) {
+        // `ErreurApi` (501 non disponible, 502 fournisseur...) devient l erreur
+        // nommee que l ecran sait afficher, avec son action proposee.
+        throw versErreurLecteur(e, 'Reessayer le chargement de la fiche.')
+      }
     },
     { fraicheur: FRAICHEUR.relais, reessais: 2, peremption: FRAICHEUR.relais },
   )
@@ -203,7 +210,6 @@ export default function FicheSerie(props: {
     const saison = saisonActive()
     if (!f?.episodes || saison === null) return []
     const bruts = f.episodes[String(saison)] ?? []
-    const client = clientOuRien()
     const nomBrutSerie = f.info?.name ?? props.serie.nom
 
     return bruts
@@ -213,11 +219,13 @@ export default function FicheSerie(props: {
         const extension = e.container_extension || 'mp4'
         const codec = codecAudio(e.info)
         return {
-          cle: `${props.serie.cle}:${e.id}`,
+          // L identifiant serveur de l episode EST sa cle : l historique et les
+          // reprises le rangent sous ce nom, sans traduction.
+          cle: e.id,
           numero,
           titre: titreLisible(e.title, nomBrutSerie, numero),
           nom: `${titreSerie()} — ${repere(saison, numero)}`,
-          url: client ? client.fluxEpisode(e.id, extension) : '',
+          url: e.lecture ?? '',
           extension,
           vignette: e.info?.movie_image || undefined,
           dureeSecondes: typeof e.info?.duration_secs === 'number' ? e.info.duration_secs : undefined,
@@ -355,7 +363,7 @@ export default function FicheSerie(props: {
           ← Retour
         </button>
         <span class="secondaire tronque" style={{ 'font-size': '13px' }}>
-          Série · <span class="num">{props.serie.id}</span>
+          Série · <span class="num">{props.serie.idServeur}</span>
         </span>
       </nav>
 
@@ -400,7 +408,7 @@ export default function FicheSerie(props: {
               Le relais ne renvoie aucun episode pour « {props.serie.nom} ».
             </p>
             <p class="secondaire" style={{ margin: '2px 0 10px', 'font-size': '13px' }}>
-              La fiche existe au catalogue mais le detail est vide cote TuliProx. Reessayer, ou
+              La fiche existe au catalogue mais le detail est vide cote fournisseur. Reessayer, ou
               choisir une autre serie.
             </p>
             <button onClick={() => void refetch()} style={{ border: '1px solid var(--line2)', padding: '4px 10px' }}>
@@ -518,15 +526,21 @@ export default function FicheSerie(props: {
 
 // ── Utilitaires locaux ──────────────────────────────────────────────────────
 
-/**
- * Le client n est construit que pour fabriquer les URL d episodes, seul endroit
- * de l interface ou les identifiants du relais servent encore. Session fermee,
- * donc identifiants absents : on renvoie `null` et le bouton reste inerte,
- * l erreur de chargement ayant deja ete affichee par la ressource.
- */
-function clientOuRien(): ClientXtream | null {
-  const c = config()
-  return c.username && c.password ? new ClientXtream(c) : null
+/** Saisons de l API v1 -> forme d affichage historique (episodes par numero de saison). */
+export function versFiche(saisons: SaisonApi[]): FicheBrute | null {
+  if (saisons.length === 0) return null
+  const episodes: Record<string, EpisodeBrut[]> = {}
+  for (const s of saisons)
+    episodes[String(s.numero)] = s.episodes.map((e) => ({
+      id: e.id,
+      lecture: e.lecture,
+      episode_num: e.numero,
+      title: e.titre,
+      container_extension: e.extension,
+      season: s.numero,
+      info: e.duree > 0 ? { duration_secs: e.duree } : undefined,
+    }))
+  return { episodes }
 }
 
 function codecAudio(info: InfoEpisodeBrut | undefined): string | undefined {

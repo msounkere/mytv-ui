@@ -11,7 +11,8 @@ import type { EntreeCatalogue, TypeContenu } from './db'
 export interface ResultatRecherche {
   cle: string
   type: TypeContenu
-  id: number
+  /** Identifiant serveur (`iptva:845410`), identique a `cle`. */
+  idServeur: string
   nom: string
   pays?: string
   icone?: string
@@ -132,7 +133,7 @@ function classer(requete: string): EntreeCatalogue[] {
 
 function versResultat(e: EntreeCatalogue): ResultatRecherche {
   return {
-    cle: e.cle, type: e.type, id: e.id, nom: e.nom,
+    cle: e.cle, type: e.type, idServeur: e.idServeur, nom: e.nom,
     pays: e.pays, icone: e.icone, note: e.note, ajouteLe: e.ajouteLe,
   }
 }

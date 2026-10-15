@@ -1,5 +1,6 @@
 import { batch, createComputed, createSignal } from 'solid-js'
 import type { EntreeCatalogue, TypeContenu } from './lib/db'
+import { associerSerie } from './lib/preferences'
 
 // Navigation : l'URL est la source de vérité de l'écran courant.
 //
@@ -48,8 +49,8 @@ function tete(chemin: string): string {
   return chemin.split('/').filter(Boolean)[0] ?? ''
 }
 
-/** Une clé de catalogue ne contient que des chiffres et des deux-points, mais
- *  un lien recopié peut arriver échappé : on accepte les deux écritures. */
+/** Une clé de contenu (`iptva:845410`) ne contient que des caractères sûrs, mais
+ *  un lien recopié peut arriver échappé (`%3A`) : on accepte les deux écritures. */
 function decoder(brut: string): string {
   try {
     return decodeURIComponent(brut)
@@ -180,12 +181,22 @@ export function ouvrirFiche(e: EntreeCatalogue): void {
 }
 
 export function lireEpisode(ep: Episode & { suivant?: Episode }): void {
+  // La fiche ouverte EST la serie de cet episode. Le serveur range l'historique
+  // d'un episode sous sa serie : on la declare avant que le lecteur ne note quoi
+  // que ce soit.
+  const serie = serieOuverte()
+  if (serie) associerSerie(ep.cle, serie.cle)
   batch(() => {
     poserEpisodeSuivant(ep.suivant)
     poserUrlEpisode(ep.url)
     poserSelection({
       cle: ep.cle,
       type: 'series',
+      // Un episode n'est pas au catalogue : son identifiant serveur est sa cle,
+      // et son adresse de lecture est celle que la fiche a recue de l'API.
+      idServeur: ep.cle,
+      lecture: ep.url,
+      serie: serie?.cle,
       id: 0,
       nom: ep.nom,
       recherche: ep.nom.toLowerCase(),

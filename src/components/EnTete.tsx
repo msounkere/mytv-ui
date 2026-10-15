@@ -2,11 +2,8 @@ import { Show, createSignal, onCleanup, onMount } from 'solid-js'
 import Icone from './Icone'
 import PanneauLecteur from './PanneauLecteur'
 import MenuProfil from './MenuProfil'
-import { configComplete } from '../config'
-import { ClientXtream } from '../lib/xtream'
 import { lectureEnCours } from '../etat'
 import { gabarit } from '../lib/gabarit'
-import { FRAICHEUR, cles, requeteClefee } from '../lib/requetes'
 import { libelleReseau, sonde } from '../sonde-debit'
 
 // En-tête de 52 px, allégé en V2. Il ne garde que ce qu'on consulte en
@@ -16,23 +13,14 @@ import { libelleReseau, sonde } from '../sonde-debit'
 // et elles occupaient la largeur de la recherche.
 
 /**
- * Connexions ouvertes / autorisées, telles que le relais les déclare.
- * Au premier démarrage aucun compte n'est encore saisi : l'indicateur se tait
- * alors plutôt que de propager l'erreur, sinon toute la coque disparaît avant
- * même que l'utilisateur ait pu atteindre les Réglages.
+ * Connexions ouvertes / autorisees. L'API v1 n'expose plus le compteur du
+ * fournisseur (`active_cons` mentait de toute facon : toujours 0) : l'indicateur
+ * dit ce que NOUS savons, a savoir si ce navigateur tient un flux. Le fournisseur
+ * n'autorise qu'une connexion, d'ou `max: 1` -- la saturation reelle, elle,
+ * arrive par le `503 Retry-After` du direct (US-20).
  */
-async function fluxDuCompte(): Promise<{ actifs: number; max: number }> {
-  if (!configComplete()) return { actifs: 0, max: 1 }
-  const infos = await new ClientXtream().authentifier().catch(() => ({
-    user_info: undefined,
-  }))
-  const u = infos.user_info ?? {}
-  return {
-    actifs: Number(u.active_cons ?? 0) || 0,
-    // Un compte TuliProx sans limite déclarée vaut une connexion : le brief
-    // construit toute la lecture autour de « une seule connexion à la fois ».
-    max: Number(u.max_connections ?? 1) || 1,
-  }
+function fluxDuCompte(): { actifs: number; max: number } {
+  return { actifs: lectureEnCours() ? 1 : 0, max: 1 }
 }
 
 type Calque = 'lecteur' | 'profil' | null
@@ -54,19 +42,7 @@ export default function EnTete(props: {
   surCalque: (c: Calque) => void
 }) {
   const [requete, poserRequete] = createSignal('')
-  // Le compteur est relu à chaque ouverture ou fermeture de flux : interrogé
-  // une seule fois au montage, il affichait « 0/1 » pendant qu'on regardait,
-  // c'est-à-dire exactement quand il doit dire autre chose. Ce qui joue fait
-  // donc partie de la clé — et comme cette réponse décrit l'instant présent,
-  // elle est toujours périmée : revenir sur une chaîne la redemande.
-  const [flux] = requeteClefee(
-    (encours: string) => cles.connexions(encours),
-    () => lectureEnCours()?.titre ?? '—',
-    fluxDuCompte,
-    // Une chaîne quittée n'a plus de compteur à garder : la clé porte ce qui
-    // joue, et zapper trente chaînes ne doit pas laisser trente entrées.
-    { fraicheur: FRAICHEUR.connexions, reessais: 1, peremption: 60_000 },
-  )
+  const flux = fluxDuCompte
   let champ: HTMLInputElement | undefined
 
   const calque = () => props.calqueForce

@@ -1,70 +1,72 @@
-import { Show, createSignal } from 'solid-js'
-import { config } from '../config'
-import { deconnexion, session } from '../lib/auth'
-import { ClientXtream } from '../lib/xtream'
-import { ErreurLecteur, LIBELLE_COUCHE } from '../lib/errors'
-import { importerCatalogue, type Avancement } from '../lib/catalogue'
-import { invaliderCatalogue } from '../lib/requetes'
+import { For, Show, createResource, createSignal } from 'solid-js'
+import { choisirProfil, creerProfil, deconnexion, profilActifId, profils, session, supprimerProfil } from '../lib/auth'
+import { json, versErreurLecteur } from '../lib/api'
+import { LIBELLE_COUCHE, type ErreurLecteur } from '../lib/errors'
+import {
+  avancementCatalogue, dernierImportLe, erreurCatalogue, etatCatalogue, mettreAJourCatalogue,
+  versionCatalogue,
+} from '../lib/catalogue'
+import { db } from '../lib/db'
+import { etatSynchro } from '../lib/synchro'
+import { messageErreur } from './ChoixProfil'
 
-// Écran minimal : compte, état du relais, import du catalogue.
+// Écran minimal : compte et profils, catalogue, état du service.
 //
-// POURQUOI plus aucune saisie d'identifiants : le service les détient et les
-// sert à une session valide (voir lib/auth.ts). Les laisser modifiables ici
-// n'aurait plus de sens — ce ne sont plus les identifiants de l'utilisateur mais
-// ceux du serveur. Ils restent AFFICHÉS, en lecture seule, parce qu'un service
-// qui refuse un compte est le premier soupçon quand plus rien ne se lit.
+// POURQUOI plus aucune saisie ni affichage d'identifiants de relais : le
+// serveur les détient seul et l'API v1 n'en expose aucun. Le navigateur ne
+// connaît qu'un cookie de session qu'il ne peut même pas lire.
+
+const LIBELLE_SYNCHRO = {
+  inactif: 'En attente',
+  'en-cours': 'Synchronisation…',
+  ok: 'À jour',
+  erreur: 'Erreur — nouvel essai automatique',
+  'hors-ligne': 'Hors ligne — les gestes sont gardés et partiront au retour du réseau',
+} as const
 
 export default function Reglages() {
   const [etat, poserEtat] = createSignal('')
   const [erreur, poserErreur] = createSignal<ErreurLecteur | null>(null)
-  const [avancement, poserAvancement] = createSignal<Avancement | null>(null)
-
-  function signaler(e: unknown) {
-    poserErreur(e instanceof ErreurLecteur ? e : new ErreurLecteur('relais', String(e), 'Réessayer.'))
-  }
+  const [erreurProfil, poserErreurProfil] = createSignal('')
+  const [nouveau, poserNouveau] = createSignal('')
+  const [version] = createResource(() => etatCatalogue(), () => versionCatalogue())
+  const [effectif] = createResource(() => etatCatalogue(), () => db.catalogue.count())
 
   async function verifier() {
     poserErreur(null)
-    poserEtat('Vérification du relais…')
+    poserEtat('Vérification du service…')
     try {
-      const infos = (await new ClientXtream().authentifier()).user_info
-      if (!infos || infos.auth !== 1) {
-        poserErreur(
-          new ErreurLecteur(
-            'auth',
-            'Le relais a répondu, mais a refusé ce compte.',
-            'Vérifier les identifiants du relais dans le .env du service.',
-          ),
-        )
-        poserEtat('')
-        return
-      }
-      poserEtat(
-        `Compte valide — statut ${infos.status ?? 'inconnu'}, ` +
-          `${infos.active_cons ?? '?'} / ${infos.max_connections ?? '?'} connexion(s).`,
-      )
+      await json<{ statut: string }>('/sante', { sansDetectionSession: true })
+      poserEtat('Le service répond.')
     } catch (e) {
-      signaler(e)
+      poserErreur(versErreurLecteur(e))
       poserEtat('')
     }
   }
 
-  async function importer() {
+  async function importer(force: boolean) {
     poserErreur(null)
     poserEtat('')
+    const r = await mettreAJourCatalogue(force)
+    if (!r) return
+    poserEtat(
+      r.importe
+        ? `${r.entrees.toLocaleString('fr-FR')} entrées importées, ${r.categories} catégories.`
+        : 'Le catalogue est déjà à jour : rien à télécharger.',
+    )
+  }
+
+  async function agirProfil(f: () => Promise<unknown>) {
+    poserErreurProfil('')
     try {
-      const r = await importerCatalogue(poserAvancement)
-      poserAvancement(null)
-      // L'import est le SEUL ecrivain du catalogue : c'est donc le seul moment
-      // ou les lectures mises en cache cessent d'etre vraies. Les ecrans
-      // restent montes derriere cet ecran, personne ne relirait de lui-meme.
-      await invaliderCatalogue()
-      poserEtat(`${r.entrees.toLocaleString('fr-FR')} entrées importées, ${r.categories} catégories.`)
+      await f()
     } catch (e) {
-      poserAvancement(null)
-      signaler(e)
+      poserErreurProfil(messageErreur(e))
     }
   }
+
+  const enImport = () => etatCatalogue() === 'import'
+  const erreurAffichee = () => erreur() ?? erreurCatalogue()
 
   return (
     <div style={{ 'max-width': '560px', padding: '32px 24px' }}>
@@ -80,9 +82,9 @@ export default function Reglages() {
         }}
       >
         <div style={{ flex: 1, display: 'grid', gap: '2px', 'min-width': 0 }}>
-          <strong class="tronque">{session()?.identifiant ?? 'Session inconnue'}</strong>
-          <span class="secondaire" style={{ 'font-size': '12px' }}>
-            Favoris, historique et reprises suivent ce compte d'une machine à l'autre.
+          <strong class="tronque">{session()?.identifiant || 'Session ouverte'}</strong>
+          <span class="secondaire" style={{ 'font-size': '12px' }} data-testid="etat-synchro">
+            Favoris, historique et réglages suivent le profil — {LIBELLE_SYNCHRO[etatSynchro()]}.
           </span>
         </div>
         <button
@@ -93,36 +95,104 @@ export default function Reglages() {
         </button>
       </div>
 
-      <h2 style={{ 'margin-top': '24px' }}>Relais</h2>
+      <h2 style={{ 'margin-top': '24px' }}>Profils</h2>
+      <div style={{ display: 'grid', gap: '6px', margin: '12px 0' }} data-testid="liste-profils">
+        <For each={profils()}>
+          {(p) => (
+            <div
+              style={{
+                display: 'flex', 'align-items': 'center', gap: '10px', padding: '8px 12px',
+                border: '1px solid var(--line)', 'border-radius': 'var(--r-md)',
+              }}
+            >
+              <span class="tronque" style={{ flex: 1 }}>
+                {p.nom}
+                <Show when={p.id === profilActifId()}>
+                  <span class="secondaire" style={{ 'margin-left': '8px', 'font-size': '12px' }}>actif</span>
+                </Show>
+              </span>
+              <Show when={p.id !== profilActifId()}>
+                <button
+                  onClick={() => void agirProfil(() => choisirProfil(p.id))}
+                  style={{ border: '1px solid var(--line2)', padding: '4px 10px' }}
+                >
+                  Utiliser
+                </button>
+              </Show>
+              <button
+                aria-label={`Supprimer le profil ${p.nom}`}
+                onClick={() => {
+                  if (confirm(`Supprimer le profil « ${p.nom} » et son état (favoris, historique) ?`))
+                    void agirProfil(() => supprimerProfil(p.id))
+                }}
+                style={{ border: '1px solid var(--line2)', padding: '4px 10px' }}
+              >
+                Supprimer
+              </button>
+            </div>
+          )}
+        </For>
+      </div>
+      <form
+        style={{ display: 'flex', gap: '8px' }}
+        onSubmit={(ev) => {
+          ev.preventDefault()
+          const n = nouveau().trim()
+          if (n) void agirProfil(async () => { await creerProfil(n); poserNouveau('') })
+        }}
+      >
+        <input
+          type="text"
+          value={nouveau()}
+          maxLength={64}
+          placeholder="Nouveau profil"
+          aria-label="Nom du nouveau profil"
+          onInput={(e) => poserNouveau(e.currentTarget.value)}
+          style={{ flex: 1 }}
+        />
+        <button type="submit" disabled={nouveau().trim() === ''} style={{ border: '1px solid var(--line2)', padding: '6px 14px' }}>
+          Ajouter
+        </button>
+      </form>
+      <Show when={erreurProfil()}>
+        <p role="alert" style={{ color: 'var(--err)', 'font-size': '13px' }}>{erreurProfil()}</p>
+      </Show>
+
+      <h2 style={{ 'margin-top': '24px' }}>Catalogue</h2>
       <p class="secondaire" style={{ margin: '6px 0 12px', 'font-size': '12px' }}>
-        Détenus par le service, en lecture seule. Ils se changent dans son
-        fichier <code>.env</code>, jamais ici.
+        Importé depuis le service et gardé sur cette machine. Il se met à jour tout seul
+        quand le serveur en a un nouveau ; ces boutons ne servent qu'à le forcer.
       </p>
       <div style={{ display: 'grid', gap: '8px', margin: '0 0 16px' }}>
-        <Ligne libelle="Adresse" valeur={config().base || `${location.host} (même origine)`} />
-        <Ligne libelle="Utilisateur" valeur={config().username || '—'} />
-        {/* Masqué, et sans bouton pour le révéler : l'afficher ne répond à
-            aucune question que l'utilisateur se pose encore. */}
-        <Ligne libelle="Mot de passe" valeur={config().password ? '••••••••••' : '—'} />
-        <Show when={config().hoteLocal}>
-          {(h) => <Ligne libelle="Diffusion locale" valeur={h()} />}
-        </Show>
+        <Ligne libelle="Entrées" valeur={effectif()?.toLocaleString('fr-FR') ?? '—'} />
+        <Ligne libelle="Version" valeur={version() ?? '—'} />
+        <Ligne
+          libelle="Dernier import"
+          valeur={dernierImportLe() ? new Date(dernierImportLe()!).toLocaleString('fr-FR') : '—'}
+        />
       </div>
 
-      <div style={{ display: 'flex', gap: '8px' }}>
+      <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap' }}>
         <button onClick={verifier} style={{ background: 'var(--acc)', color: 'var(--acc-ink)', padding: '8px 16px' }}>
-          Vérifier le relais
+          Vérifier le service
         </button>
         <button
-          onClick={importer}
-          disabled={!!avancement()}
+          onClick={() => void importer(false)}
+          disabled={enImport()}
           style={{ border: '1px solid var(--line2)', padding: '8px 16px' }}
         >
-          Importer le catalogue
+          Mettre à jour le catalogue
+        </button>
+        <button
+          onClick={() => void importer(true)}
+          disabled={enImport()}
+          style={{ border: '1px solid var(--line2)', padding: '8px 16px' }}
+        >
+          Réimporter tout
         </button>
       </div>
 
-      <Show when={avancement()}>
+      <Show when={enImport() ? avancementCatalogue() : null}>
         {(a) => (
           <div style={{ 'margin-top': '16px' }}>
             <p class="secondaire" style={{ margin: '0 0 6px' }}>{a().etape}…</p>
@@ -140,10 +210,10 @@ export default function Reglages() {
       </Show>
 
       <Show when={etat()}>
-        <p style={{ color: 'var(--ok)', 'margin-top': '16px' }}>{etat()}</p>
+        <p style={{ color: 'var(--ok)', 'margin-top': '16px' }} data-testid="etat-reglages">{etat()}</p>
       </Show>
 
-      <Show when={erreur()}>
+      <Show when={erreurAffichee()}>
         {(e) => (
           <div
             style={{

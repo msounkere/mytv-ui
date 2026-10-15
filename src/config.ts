@@ -3,16 +3,12 @@ import type { Identifiants } from './lib/xtream'
 
 // La configuration locale ne garde plus que des preferences d'affichage.
 //
-// POURQUOI les identifiants du relais n'y sont plus ecrits : ils viennent du
-// serveur, a l'ouverture d'une session (voir lib/auth.ts), et ne vivent que le
-// temps de l'onglet. L'utilisateur ne les saisit plus -- c'etait la seule raison
-// de les conserver -- et rien ne les pose plus sur le disque du navigateur, ou
-// une sauvegarde de profil ou une extension les lirait.
-//
-// CE A QUOI ILS SERVENT ENCORE, et a rien d'autre : le chemin des URL de
-// lecture (`/live/<u>/<p>/<id>.m3u8` et ses deux cousines), que le relais
-// n'accepte pas autrement. Le catalogue, le guide et les images passent
-// desormais par le service, qui les injecte lui-meme.
+// POURQUOI plus aucun identifiant de relais : l'API v1 n'en expose JAMAIS au
+// navigateur (cookie de session HttpOnly, contenus designes par
+// `fournisseur:numero`, adresses de lecture relatives). Les champs `base`,
+// `username` et `password` ne subsistent, toujours VIDES, que pour que les
+// fichiers de lecture/EPG (US-20/21) compilent tant qu'ils n'ont pas migre ;
+// rien ne les renseigne.
 
 const CLE = 'mytv.config'
 
@@ -80,33 +76,4 @@ export function poserConfig(maj: Partial<Config>): void {
   poserConfigInterne(suivant)
   ecrire(suivant)
   document.documentElement.dataset.theme = suivant.theme
-}
-
-/**
- * Identifiants du relais tels que le serveur les sert a une session valide.
- * EN MEMOIRE SEULEMENT : on passe deliberement a cote de `ecrire`.
- */
-export function poserRelais(r: {
-  base: string
-  username: string
-  password: string
-  hoteLocal?: string
-}): void {
-  poserConfigInterne({
-    ...config(),
-    base: r.base ?? '',
-    username: r.username ?? '',
-    password: r.password ?? '',
-    hoteLocal: r.hoteLocal || undefined,
-  })
-}
-
-/** Deconnexion : plus rien ne doit pouvoir appeler le relais. */
-export function oublierRelais(): void {
-  poserConfigInterne({ ...config(), base: '', username: '', password: '' })
-}
-
-export function configComplete(): boolean {
-  const c = config()
-  return c.username.length > 0 && c.password.length > 0
 }

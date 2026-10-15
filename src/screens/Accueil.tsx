@@ -11,10 +11,10 @@ import { anneeDuTitre, titreCourt } from '../components/titres'
 import { ecran, poserOnglet } from '../etat'
 import { db, type EntreeCatalogue, type TypeContenu } from '../lib/db'
 import { chainesGuidePartagees, grillesFenetre, programmeEnCours } from '../lib/epg'
-import { basculerFavori } from '../lib/preferences'
+import { basculerFavori, marquerVu, oublierReprise } from '../lib/preferences'
 import { gabarit as gabaritCoque } from '../lib/gabarit'
 import {
-  FRAICHEUR, cles, donneePartagee, invaliderReprises, requete,
+  FRAICHEUR, cles, donneePartagee, requete,
 } from '../lib/requetes'
 
 // Accueil V2. La règle structurante du dossier : « une rangée vide n'est jamais
@@ -427,17 +427,14 @@ export default function Accueil(props: {
         icone: 'check_circle',
         libelle: 'Marquer comme vu',
         action: async () => {
-          const r = await db.reprises.get(entree.cle)
-          if (r) await db.reprises.put({ ...r, position: r.duree, vuLe: Date.now() })
-          await invaliderReprises()
+          await marquerVu(entree.cle)
         },
       },
       {
         icone: 'delete',
         libelle: 'Retirer de la liste',
         action: async () => {
-          await db.reprises.delete(entree.cle)
-          await invaliderReprises()
+          await oublierReprise(entree.cle)
         },
       },
     ]

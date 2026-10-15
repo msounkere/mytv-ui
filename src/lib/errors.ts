@@ -56,13 +56,13 @@ export function depuisReponse(r: Response, contexte: string): ErreurLecteur {
     return new ErreurLecteur(
       'relais',
       'Le relais a repondu par une erreur interne.',
-      'Reessayer ; si cela persiste, verifier que TuliProx tourne.',
+      'Reessayer ; si cela persiste, verifier que le service tourne.',
       detail,
     )
   return new ErreurLecteur(
     'relais',
     `Reponse inattendue du relais (${r.status}).`,
-    'Reessayer, ou verifier l adresse du relais dans les Reglages.',
+    'Reessayer ; si cela persiste, consulter le diagnostic du service.',
     detail,
   )
 }

@@ -1,21 +1,37 @@
 import Dexie, { type EntityTable } from 'dexie'
-import type { ChaineXtream, FilmXtream, SerieXtream, CategorieXtream } from './xtream'
+import { estIdentifiantEpisode } from './identifiants'
+import type { CategorieApi, ChaineApi, FilmApi, SerieApi, TypeApi } from './api'
 
 // 21 791 chaines + 106 973 films ne peuvent pas etre re-telecharges a chaque
-// navigation : le catalogue est importe une fois puis sert depuis IndexedDB.
+// navigation : le catalogue est importe une fois (export en bloc de l'API, voir
+// import.worker.ts) puis sert depuis IndexedDB.
 
-export type TypeContenu = 'live' | 'vod' | 'series'
+export type TypeContenu = TypeApi
 
 export interface EntreeCatalogue {
-  /** `${type}:${id}` — identifiant stable toutes sources confondues. */
+  /**
+   * Identifiant du contenu tel que l'API le donne : `fournisseur:numero`
+   * (`iptva:845410`). C'est AUSSI la cle de toutes les tables locales et celle
+   * des favoris et de l'historique cote serveur : une seule orthographe d'un
+   * contenu, donc aucune traduction a faire aux frontieres. Pour un EPISODE,
+   * l'identifiant porte l'extension (`iptva:77123.mkv`).
+   */
   cle: string
   type: TypeContenu
+  /** Meme valeur que `cle`, nommee pour ce qu'elle designe : c'est ce que les
+   *  routes `/vod/{id}`, `/epg/...` et le diagnostic attendent. */
+  idServeur: string
+  /** Adresse de lecture RELATIVE donnee par l'API (jamais d'identifiants). */
+  lecture: string
+  /** OBSOLETE : partie numerique de `idServeur` (0 pour un episode). Conserve le
+   *  temps que les ecrans de lecture/EPG migrent vers `idServeur` ; ne plus lire. */
   id: number
   nom: string
   /** `nom` sans prefixe pays, normalise sans accents : la cle de recherche. */
   recherche: string
   pays?: string
   icone?: string
+  /** Identifiant de categorie serveur (`iptva:12`). */
   categorie?: string
   extension?: string
   /** Date d'ajout au catalogue, en millisecondes. Permet un vrai tri
@@ -24,11 +40,19 @@ export interface EntreeCatalogue {
   ajouteLe?: number
   /** Note du fournisseur, sur 10. */
   note?: number
+  annee?: number
+  /** Numero de chaine affiche (direct). */
+  numero?: number
+  /** Identifiant de guide de la chaine, quand le fournisseur en donne un. */
+  epgId?: string
+  /** Episodes seulement : cle de la serie parente (l'historique serveur l'exige). */
+  serie?: string
 }
 
 export interface Categorie {
   cle: string
   type: TypeContenu
+  /** Identifiant serveur de la categorie (`iptva:12`). */
   id: string
   nom: string
   /** Nombre d entrees, pour les compteurs exiges par le brief. */
@@ -46,6 +70,8 @@ export interface Reprise {
   position: number
   duree: number
   vuLe: number
+  /** Episodes : serie parente, que le serveur exige pour ranger l'historique. */
+  serie?: string
 }
 
 export interface Historique {
@@ -58,26 +84,23 @@ export interface Reglage {
   valeur: unknown
 }
 
-/** Les six genres d'etat personnel que le service sait stocker. */
-export type GenreEtat =
-  | 'favori'
-  | 'historique'
-  | 'reprise'
-  | 'categorie-masquee'
-  | 'epingle'
-  | 'affichage'
+/** Les genres d'etat personnel qui passent par le journal (un changement = un
+ *  geste a rejouer vers le service). Les reglages, eux, se synchronisent par
+ *  fusion (voir reglages-fusion.ts) et n'ont pas de journal. */
+export type GenreEtat = 'favori' | 'historique' | 'reprise'
 
 /**
  * Changement local en attente d'envoi. Il existe parce qu'une table seule ne
  * sait pas dire ce qu'elle a PERDU : un favori retire n'y laisse aucune trace,
  * et la synchronisation le ressusciterait depuis le serveur. La ligne de
- * journal porte donc la suppression, et l'instant exact du geste.
+ * journal designe donc le contenu touche ; ce qu'il faut envoyer (ajout ou
+ * retrait) se relit dans les tables au moment de l'envoi.
  */
 export interface LigneJournal {
   n: number
   genre: GenreEtat
   cle: string
-  /** Millisecondes du geste : c'est lui qui arbitre les conflits. */
+  /** Millisecondes du geste. */
   maj: number
   supprime: 0 | 1
   valeur?: unknown
@@ -113,121 +136,78 @@ db.version(3).stores({
   journal: '++n, [genre+cle]',
 })
 
-// `/resource/<genre>/<utilisateur>/<mot de passe>/<reste>` chez le relais, que
-// le service sert sous `/flux/relais/resource/<genre>/<reste>`. On repere les
-// deux segments a retirer par leur POSITION, pas par leur contenu : la page n'a
-// plus a connaitre les identifiants pour s'en debarrasser.
-const RESSOURCE_RELAIS = /^https?:\/\/[^/]+\/resource\/([^/]+)\/[^/]+\/[^/]+\/(.+)$/
-
-/** URL d'image relayee par le service, ou la valeur telle quelle. */
-export function ressourceRelayee(u: string | undefined): string | undefined {
-  if (!u) return u
-  const m = RESSOURCE_RELAIS.exec(u)
-  return m ? `/flux/relais/resource/${m[1]}/${m[2]}` : u
-}
-
-/** Marqueur de la purge ci-dessous. Une fois posee, elle ne recommence pas. */
-const CLE_PURGE = 'purge.urlsRelais'
-/** Lots d'ecriture. Mesure : 152 574 lignes reecrites en 30 s, soit 0,4 s par lot. */
-const LOT_PURGE = 2000
-
-/** Rend la main a l'interface entre deux transactions. */
-const repos = () => new Promise((r) => setTimeout(r, 0))
-
-/**
- * Efface les identifiants du relais des URL d'images deja stockees.
- *
- * POURQUOI il y a quelque chose a effacer : TuliProx place le couple
- * identifiant/mot de passe dans le chemin de CHAQUE logo (211 191 occurrences
- * dans les 78 Mo du catalogue), et les imports precedents les ont ecrits tels
- * quels ici — donc sur le disque du navigateur, en clair et durablement. Le
- * service les remplace maintenant a la source, mais rien n'oublie tout seul ce
- * qui est deja ecrit.
- *
- * POURQUOI en fond et non dans une migration Dexie. Mesure sur cette
- * installation : reecrire les 152 574 lignes concernees coute 30 s, au curseur
- * comme par lots de 5 000 — ce sont les ecritures IndexedDB qui dominent, pas
- * la methode. Place dans un `version().upgrade()`, ce temps BLOQUE l'ouverture
- * de la base, donc tout l'ecran d'accueil : trente secondes d'application
- * figee au premier demarrage apres la mise a jour. En fond, par lots, avec une
- * respiration entre chaque, l'interface reste utilisable pendant la purge.
- *
- * Idempotent, et sans risque a interrompre : chaque lot est une transaction, et
- * le marqueur n'est pose qu'a la fin. Une page rechargee au milieu reprend le
- * travail la ou il en etait (les lignes deja propres ne correspondent plus).
- */
-export async function purgerUrlsRelais(): Promise<number> {
-  if ((await db.reglages.get(CLE_PURGE))?.valeur === true) return 0
-  let reecrites = 0
-  // Par type : lire les 154 106 entrees d'un coup tiendrait tout le catalogue
-  // en memoire, la ou le plus gros type (107 204 films) suffit deja.
-  for (const type of ['live', 'vod', 'series'] as TypeContenu[]) {
-    const sales = (await db.catalogue.where('type').equals(type).toArray()).flatMap((e) => {
-      const propre = ressourceRelayee(e.icone)
-      return propre === e.icone ? [] : [{ ...e, icone: propre }]
-    })
-    for (let k = 0; k < sales.length; k += LOT_PURGE) {
-      await db.catalogue.bulkPut(sales.slice(k, k + LOT_PURGE))
-      reecrites += Math.min(LOT_PURGE, sales.length - k)
-      await repos()
-    }
-  }
-  await db.reglages.put({ cle: CLE_PURGE, valeur: true })
-  return reecrites
-}
+// Version 4 : passage a l'API v1. Les identifiants de contenu changent de
+// forme (`iptva:845410` au lieu de `live:123`) : TOUT ce qui les porte est
+// invalide -- catalogue, favoris, historique, reprises, journal -- et le
+// service est desormais la source de l'etat personnel, qui se retelecharge.
+// On vide donc ici plutot que de laisser des cles orphelines que plus rien
+// ne saurait resoudre.
+db.version(4)
+  .stores({})
+  .upgrade(async (tx) => {
+    for (const t of ['catalogue', 'categories', 'favoris', 'reprises', 'historique', 'journal', 'reglages'])
+      await tx.table(t).clear()
+  })
 
 /** Minuscules, sans accents : rend la recherche insensible a « é » vs « e ». */
 export function normaliser(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 }
 
-/** Secondes Unix du relais → millisecondes, en écartant les valeurs vides. */
-function enMillisecondes(v: string | undefined): number | undefined {
-  const n = Number(v)
-  return Number.isFinite(n) && n > 0 ? n * 1000 : undefined
+/** Instant RFC 3339 de l'API -> millisecondes ; `undefined` si absent ou illisible. */
+function enMillisecondes(v: string | null | undefined): number | undefined {
+  if (!v) return undefined
+  const t = Date.parse(v)
+  return Number.isFinite(t) && t > 0 ? t : undefined
 }
+
+/** Partie numerique de `fournisseur:numero` (0 si ce n'est pas un nombre). */
+function numeroDe(idServeur: string): number {
+  const n = Number(idServeur.slice(idServeur.indexOf(':') + 1))
+  return Number.isFinite(n) ? n : 0
+}
+
+type LigneCatalogue = ChaineApi | FilmApi | SerieApi
 
 export function versEntree(
   type: TypeContenu,
-  brut: ChaineXtream | FilmXtream | SerieXtream,
+  brut: LigneCatalogue,
   separer: (n: string) => { pays?: string; titre: string },
 ): EntreeCatalogue {
-  const id = 'series_id' in brut ? brut.series_id : brut.stream_id
-  const { pays, titre } = separer(brut.name)
-  const note = Number('rating' in brut ? brut.rating : undefined)
+  const { pays, titre } = separer(brut.nom)
+  const note = 'note' in brut ? brut.note : undefined
+  const annee = 'annee' in brut ? Number(brut.annee) : NaN
+  const image = type === 'live' ? (brut as ChaineApi).logo : (brut as FilmApi | SerieApi).image
   return {
-    cle: `${type}:${id}`,
+    cle: brut.id,
     type,
-    id,
+    idServeur: brut.id,
+    lecture: 'lecture' in brut ? brut.lecture : brut.saisons,
+    id: numeroDe(brut.id),
     nom: titre,
     recherche: normaliser(titre),
     pays,
-    // Le service a deja reecrit ces URL ; on repasse quand meme ici, parce
-    // que cette base est le seul endroit ou une URL d'image SURVIT a l'onglet.
-    icone: ressourceRelayee(
-      'cover' in brut ? brut.cover : 'stream_icon' in brut ? brut.stream_icon : undefined,
-    ),
-    categorie: brut.category_id,
-    extension: 'container_extension' in brut ? brut.container_extension : undefined,
-    ajouteLe:
-      'added' in brut
-        ? enMillisecondes(brut.added)
-        : enMillisecondes('last_modified' in brut ? brut.last_modified : undefined),
-    note: Number.isFinite(note) && note > 0 ? note : undefined,
+    icone: image || undefined,
+    categorie: brut.categorie || undefined,
+    extension: 'extension' in brut ? brut.extension || undefined : undefined,
+    ajouteLe: enMillisecondes(brut.ajoute),
+    note: note !== undefined && Number.isFinite(note) && note > 0 ? note : undefined,
+    annee: Number.isFinite(annee) && annee > 0 ? annee : undefined,
+    numero: 'numero' in brut ? brut.numero : undefined,
+    epgId: 'epg_id' in brut ? brut.epg_id || undefined : undefined,
   }
 }
 
-export function versCategorie(
-  type: TypeContenu,
-  brut: CategorieXtream,
-  compte: number,
-): Categorie {
+export function versCategorie(brut: CategorieApi, compte: number): Categorie {
   return {
-    cle: `${type}:${brut.category_id}`,
-    type,
-    id: brut.category_id,
-    nom: brut.category_name,
+    cle: `${brut.type}:${brut.id}`,
+    type: brut.type,
+    id: brut.id,
+    nom: brut.nom,
     compte,
     masquee: 0,
   }
 }
+
+/** Un episode se reconnait a l'extension qui suit son numero (`iptva:77123.mkv`). */
+export const estEpisode = estIdentifiantEpisode

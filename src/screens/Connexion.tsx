@@ -1,8 +1,6 @@
-import { Show, createSignal, onMount } from 'solid-js'
+import { Show, createSignal, onCleanup, onMount } from 'solid-js'
 import Icone from '../components/Icone'
-import {
-  amorcageOuvert, amorcer, connexion, etatAuth, verifierSession, type Echec,
-} from '../lib/auth'
+import { connexion, etatAuth, verifierSession, type Echec } from '../lib/auth'
 
 // Page de connexion. Tant qu'elle est affichee, AUCUN ecran de l'application
 // n'est monte (voir Portail.tsx) : l'URL publique ne montre donc plus une
@@ -15,39 +13,43 @@ import {
 export default function Connexion() {
   const [identifiant, poserIdentifiant] = createSignal('')
   const [motDePasse, poserMotDePasse] = createSignal('')
-  const [code, poserCode] = createSignal('')
-  const [confirmation, poserConfirmation] = createSignal('')
   const [echec, poserEchec] = createSignal<Echec | null>(null)
   const [enCours, poserEnCours] = createSignal(false)
-  // L'amorcage est propose, pas impose : on peut avoir cree le compte en ligne
-  // de commande et vouloir simplement se connecter.
-  const [creation, poserCreation] = createSignal(false)
+  // Un compte ne se cree pas ici : le contrat n'offre aucune route d'inscription,
+  // les comptes sont poses par l'administrateur du serveur.
+  // `retard` : secondes restantes avant un nouvel essai quand le serveur temporise
+  // (429). Le bouton reste inerte pendant ce delai au lieu de relancer le refus.
+  const [retard, poserRetard] = createSignal(0)
 
   onMount(() => {
     if (etatAuth() === 'inconnu') void verifierSession()
   })
 
   const injoignable = () => etatAuth() === 'injoignable'
-  const amorcage = () => amorcageOuvert() && creation()
 
   async function envoyer(e: Event) {
     e.preventDefault()
     if (enCours()) return
     poserEchec(null)
-    if (amorcage() && motDePasse() !== confirmation()) {
-      poserEchec({ message: 'Les deux saisies du mot de passe diffèrent.' })
-      return
-    }
     poserEnCours(true)
-    const r = amorcage()
-      ? await amorcer(code(), identifiant().trim(), motDePasse())
-      : await connexion(identifiant().trim(), motDePasse())
+    const r = await connexion(identifiant().trim(), motDePasse())
     poserEnCours(false)
     if (r) {
       poserEchec(r)
       poserMotDePasse('')
-      poserConfirmation('')
+      if (r.retardSecondes) demarrerRetard(r.retardSecondes)
     }
+  }
+
+  let minuteur: ReturnType<typeof setInterval> | undefined
+  onCleanup(() => clearInterval(minuteur))
+  function demarrerRetard(secondes: number) {
+    clearInterval(minuteur)
+    poserRetard(Math.ceil(secondes))
+    minuteur = setInterval(() => {
+      poserRetard((n) => Math.max(0, n - 1))
+      if (retard() === 0) clearInterval(minuteur)
+    }, 1000)
   }
 
   async function reessayer() {
@@ -80,34 +82,20 @@ export default function Connexion() {
           <div style={{ display: 'grid' }}>
             <h1 style={{ 'font-size': '18px' }}>MyTV</h1>
             <span class="secondaire" style={{ 'font-size': '12px' }}>
-              {amorcage() ? 'Création du premier compte' : 'Connexion'}
+              Connexion
             </span>
           </div>
         </div>
 
         <Show when={injoignable()}>
           <Encadre couche="err" titre="Service injoignable">
-            Le service <code>/flux</code> ne répond pas. La connexion est impossible
-            tant qu'il est arrêté — les favoris et l'historique déjà présents sur
-            cette machine, eux, ne sont pas perdus.
+            Le service ne répond pas. La connexion est impossible tant qu'il est
+            arrêté — les favoris et l'historique déjà présents sur cette machine,
+            eux, ne sont pas perdus.
           </Encadre>
         </Show>
 
         <Show when={!injoignable()}>
-          <Show when={amorcage()}>
-            <p class="secondaire" style={{ margin: 0, 'font-size': '12px' }}>
-              Aucun compte n'existe encore. Le code d'installation se trouve dans
-              le fichier <code>.env</code> du service.
-            </p>
-            <Champ
-              libelle="Code d'installation"
-              valeur={code()}
-              surSaisie={poserCode}
-              masque
-              auto="off"
-            />
-          </Show>
-
           <Champ
             libelle="Identifiant"
             valeur={identifiant()}
@@ -120,29 +108,14 @@ export default function Connexion() {
             valeur={motDePasse()}
             surSaisie={poserMotDePasse}
             masque
-            auto={amorcage() ? 'new-password' : 'current-password'}
+            auto="current-password"
           />
-          <Show when={amorcage()}>
-            <Champ
-              libelle="Confirmation"
-              valeur={confirmation()}
-              surSaisie={poserConfirmation}
-              masque
-              auto="new-password"
-            />
-            <p class="tertiaire" style={{ margin: 0, 'font-size': '12px' }}>
-              Douze caractères au minimum.
-            </p>
-          </Show>
         </Show>
 
         <Show when={echec()}>
           {(e) => (
             <Encadre couche="err" titre="Connexion refusée">
               {e().message}
-              <Show when={e().retardSecondes}>
-                {(s) => <> Nouvel essai dans {s()} s.</>}
-              </Show>
             </Encadre>
           )}
         </Show>
@@ -162,33 +135,16 @@ export default function Connexion() {
         >
           <button
             type="submit"
-            disabled={enCours() || !identifiant() || !motDePasse()}
+            disabled={enCours() || retard() > 0 || !identifiant() || !motDePasse()}
             style={{
               background: 'var(--acc)', color: 'var(--acc-ink)',
               padding: '9px 16px', opacity: enCours() ? 0.7 : 1,
             }}
           >
-            {enCours()
-              ? 'Vérification…'
-              : amorcage()
-                ? 'Créer le compte'
-                : 'Se connecter'}
+            {enCours() ? 'Vérification…' : retard() > 0 ? `Patienter ${retard()} s` : 'Se connecter'}
           </button>
         </Show>
 
-        <Show when={amorcageOuvert() && !injoignable()}>
-          <button
-            type="button"
-            onClick={() => {
-              poserEchec(null)
-              poserCreation((c) => !c)
-            }}
-            class="secondaire"
-            style={{ 'font-size': '12px', padding: '4px' }}
-          >
-            {creation() ? "J'ai déjà un compte" : 'Créer le premier compte'}
-          </button>
-        </Show>
       </form>
     </div>
   )

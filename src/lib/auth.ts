@@ -1,21 +1,18 @@
 import { createSignal } from 'solid-js'
-import { oublierRelais, poserRelais } from '../config'
+import {
+  ErreurApi, ErreurReseau, abonnerSessionPerdue, envoyer, json,
+  type CompteApi, type ProfilApi, type SessionApi,
+} from './api'
 
 /**
- * Session de l'application.
- *
- * POURQUOI un compte propre a l'application alors que le relais en a deja un :
- * jusqu'ici l'URL publique n'etait « protegee » que parce qu'une interface sans
- * identifiants de relais ne sert a rien. Il etait donc impossible de servir ces
- * identifiants depuis le serveur -- la porte serait tombee avec -- et il fallait
- * les ressaisir sur chaque machine. Avec une session, c'est elle qui garde la
- * porte : le serveur garde le relais et le navigateur ne connait plus qu'un mot
- * de passe, le sien.
+ * Session de l'application, par cookie.
  *
  * CE QUE CE MODULE NE FAIT PAS : il ne touche jamais au jeton de session. Il
- * vit dans un cookie `HttpOnly`, donc hors de portee de tout JavaScript, le
- * notre comme celui d'une injection. On n'envoie que `credentials:
- * 'same-origin'` et le navigateur fait le reste.
+ * vit dans un cookie `HttpOnly` (contrat de `POST /connexion` : « le jeton n'est
+ * JAMAIS dans le corps »), donc hors de portee de tout JavaScript, le notre
+ * comme celui d'une injection. `api.ts` n'envoie que `credentials:
+ * 'same-origin'` et le navigateur fait le reste. Plus aucun identifiant de
+ * fournisseur n'existe cote navigateur : le serveur les garde.
  */
 
 export type EtatAuth =
@@ -28,35 +25,44 @@ export type EtatAuth =
   | 'injoignable'
 
 export interface Session {
+  /** Identifiant stable de la session -- ce n'est PAS le jeton. */
+  id: string
+  admin: boolean
+  profilId?: string
+  /** Millisecondes. Informatif : c'est le serveur qui tranche. */
+  expire: number
+  /** Nom saisi a la connexion, retenu pour l'affichage (le contrat ne le rend pas). */
   identifiant: string
-  /** Secondes Unix. Informatif : c'est le serveur qui tranche. */
-  expire?: number
-}
-
-interface Relais {
-  base: string
-  username: string
-  password: string
-  hoteLocal?: string
-}
-
-interface ReponseSession extends Session {
-  relais: Relais
 }
 
 const [session, poserSessionInterne] = createSignal<Session | undefined>()
 const [etatAuth, poserEtatAuth] = createSignal<EtatAuth>('inconnu')
-/** Vrai tant que le service attend son premier compte : la page de connexion
- *  propose alors l'amorcage au lieu d'un formulaire sans issue. */
-const [amorcageOuvert, poserAmorcageOuvert] = createSignal(false)
+const [profils, poserProfils] = createSignal<ProfilApi[]>([])
 
-export { session, etatAuth, amorcageOuvert }
+export { session, etatAuth, profils }
 
-const BASE = '/flux/auth'
-
-/** Identifiant de la derniere session ouverte sur CETTE machine. Il sert a ne
- *  pas melanger l'etat personnel de deux comptes dans le meme navigateur. */
+/** Nom du compte saisi a la derniere connexion sur CETTE machine : non secret,
+ *  il sert a l'affichage et a ne pas melanger l'etat de deux comptes. */
 const CLE_COMPTE = 'mytv.compte'
+/** Identite (`compte/profil`) dont l'etat personnel est actuellement en base locale. */
+const CLE_IDENTITE_LOCALE = 'mytv.identite-locale'
+
+function lireLocal(cle: string): string | null {
+  try {
+    return localStorage.getItem(cle)
+  } catch {
+    return null
+  }
+}
+
+function ecrireLocal(cle: string, valeur: string | null): void {
+  try {
+    if (valeur === null) localStorage.removeItem(cle)
+    else localStorage.setItem(cle, valeur)
+  } catch {
+    // Mode prive : l'identite vaut pour la session, ce qui suffit.
+  }
+}
 
 export interface Echec {
   message: string
@@ -64,173 +70,189 @@ export interface Echec {
   retardSecondes?: number
 }
 
-async function poster(chemin: string, corps: unknown): Promise<Response> {
-  return fetch(`${BASE}/${chemin}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(corps),
-    // Le cookie de session est pose et renvoye par le navigateur ; il n'y a
-    // rien a lire ni a stocker ici.
-    credentials: 'same-origin',
-  })
-}
-
-function messageDe(corps: unknown, repli: string): string {
-  const e = (corps as { erreur?: unknown } | null)?.erreur
-  return typeof e === 'string' && e ? e : repli
-}
-
-async function corpsJson(r: Response): Promise<unknown> {
-  try {
-    return await r.json()
-  } catch {
-    return null
+function versSession(s: SessionApi): Session {
+  return {
+    id: s.id,
+    admin: s.admin,
+    profilId: s.profil_id || undefined,
+    expire: Date.parse(s.expire) || 0,
+    identifiant: lireLocal(CLE_COMPTE) ?? '',
   }
-}
-
-async function accepter(rep: ReponseSession): Promise<void> {
-  // Les identifiants du relais vivent en memoire, jamais sur le disque du
-  // navigateur : fermer l'onglet les efface, et une sauvegarde du profil
-  // Chrome ne les emporte pas.
-  poserRelais(rep.relais)
-  await cloisonner(rep.identifiant)
-  poserSessionInterne({ identifiant: rep.identifiant, expire: rep.expire })
-  poserEtatAuth('connecte')
-  // La reprise de l'etat personnel n'a de sens qu'une fois la session ouverte.
-  // Import differe : `synchro` depend de la configuration que l'on vient de
-  // poser, et la page de connexion n'a pas a le charger.
-  void import('./synchro').then((m) => m.synchroniser())
-  // Purge des identifiants du relais laisses dans les URL d'images par les
-  // imports precedents. En fond et sans attente : elle reecrit 152 574 lignes,
-  // soit une trentaine de secondes, et aucun ecran ne doit en dependre.
-  void import('./db').then((m) => m.purgerUrlsRelais())
 }
 
 /**
- * Un autre compte se connecte sur cette machine : son etat personnel ne doit
- * pas heriter des favoris, de l'historique et des reprises du precedent. Sans
- * ce menage, la premiere synchronisation les POUSSERAIT dans l'espace du nouvel
- * arrivant -- l'amorcage de `synchro.ts` envoie tout ce qu'il trouve en local.
+ * Un autre compte -- ou un autre profil -- prend la machine : son etat
+ * personnel ne doit pas heriter des favoris, de l'historique et des reprises du
+ * precedent. L'etat personnel est maintenant une COPIE du service (il se
+ * retelecharge), donc le vider est sans perte ; le garder serait au contraire
+ * un melange que la synchronisation pousserait dans le mauvais profil.
  *
- * Premiere connexion sur une machine deja utilisee : on ne touche a rien, cet
- * etat est justement celui que l'on veut faire remonter.
+ * Le catalogue reste : il n'est pas personnel, et le reimporter coute des Mo.
  */
-async function cloisonner(identifiant: string): Promise<void> {
-  let vu: string | null = null
-  try {
-    vu = localStorage.getItem(CLE_COMPTE)
-    localStorage.setItem(CLE_COMPTE, identifiant)
-  } catch {
-    return
-  }
-  if (!vu || vu === identifiant) return
+async function cloisonner(identite: string): Promise<void> {
+  const vue = lireLocal(CLE_IDENTITE_LOCALE)
+  if (vue === identite) return
+  ecrireLocal(CLE_IDENTITE_LOCALE, identite)
   const { db } = await import('./db')
-  await db.favoris.clear()
-  await db.historique.clear()
-  await db.reprises.clear()
-  await db.journal.clear()
-  await db.reglages.delete('epingles.live')
-  for (const r of await db.reglages.toArray())
-    if (String(r.cle).startsWith('synchro.')) await db.reglages.delete(r.cle)
-  // Le catalogue et le guide restent : ils ne sont pas personnels, et les
-  // reimporter couterait 78 Mo pour rien.
+  await db.transaction('rw', [db.favoris, db.historique, db.reprises, db.journal, db.reglages], async () => {
+    await db.favoris.clear()
+    await db.historique.clear()
+    await db.reprises.clear()
+    await db.journal.clear()
+    for (const r of await db.reglages.toArray())
+      if (/^(synchro\.|epingles\.)/.test(String(r.cle))) await db.reglages.delete(r.cle)
+  })
+  // Les categories masquees sont un reglage de profil, lui aussi.
+  await db.categories.where('masquee').equals(1).modify({ masquee: 0 }).catch(() => undefined)
+  const { invaliderTout } = await import('./requetes')
+  await invaliderTout()
+}
+
+/** Identite locale d'une session : compte (saisi) et profil actif. */
+function identiteDe(s: Session): string {
+  return `${s.identifiant}/${s.profilId ?? ''}`
+}
+
+async function accepter(compte: CompteApi): Promise<void> {
+  poserProfils(compte.profils)
+  let s = versSession(compte.session)
+  // Un seul profil et aucun actif : le choisir est la seule action possible, la
+  // demander a l'utilisateur serait un clic pour rien.
+  if (!s.profilId && compte.profils.length === 1) {
+    try {
+      await envoyer('/compte/profil-actif', { methode: 'PUT', corps: { profil_id: compte.profils[0]!.id } })
+      s = { ...s, profilId: compte.profils[0]!.id }
+    } catch {
+      // Echec reseau ou 404 : l'ecran de choix du profil prendra le relais.
+    }
+  }
+  poserSessionInterne(s)
+  poserEtatAuth('connecte')
+  // Le catalogue ne depend d'aucun profil : on le met a jour des l'ouverture.
+  void import('./catalogue').then((m) => m.demarrerSuiviCatalogue())
+  if (s.profilId) await activerProfil(s)
+}
+
+/** Le profil est connu : l'etat personnel peut etre cloisonne puis synchronise. */
+async function activerProfil(s: Session): Promise<void> {
+  await cloisonner(identiteDe(s))
+  void import('./synchro').then((m) => m.synchroniser())
 }
 
 /** Etat du service et de la session, au demarrage de l'application. */
 export async function verifierSession(): Promise<EtatAuth> {
   try {
-    const r = await fetch(`${BASE}/session`, { credentials: 'same-origin' })
-    if (r.ok) {
-      await accepter((await r.json()) as ReponseSession)
-      return 'connecte'
+    const compte = await json<CompteApi>('/compte', { sansDetectionSession: true })
+    await accepter(compte)
+    return 'connecte'
+  } catch (e) {
+    if (e instanceof ErreurApi && e.statut === 401) {
+      // 401 attendu : le service va bien, c'est nous qui ne sommes pas connectes.
+      poserSessionInterne(undefined)
+      poserProfils([])
+      poserEtatAuth('anonyme')
+      return 'anonyme'
     }
-    // 401 attendu : le service va bien, c'est nous qui ne sommes pas connectes.
-    oublierRelais()
-    poserSessionInterne(undefined)
-    poserEtatAuth('anonyme')
-    void verifierAmorcage()
-    return 'anonyme'
-  } catch {
-    poserEtatAuth('injoignable')
-    return 'injoignable'
+    // Reseau coupe ou service en erreur : si une session etait ouverte, on la
+    // GARDE (l'etat local reste utilisable hors ligne) ; sinon on le dit.
+    if (etatAuth() !== 'connecte') poserEtatAuth('injoignable')
+    return etatAuth()
   }
 }
 
-async function verifierAmorcage(): Promise<void> {
-  try {
-    const r = await fetch(`${BASE}/etat`, { credentials: 'same-origin' })
-    if (!r.ok) return
-    const d = (await r.json()) as { amorcage?: boolean }
-    poserAmorcageOuvert(!!d.amorcage)
-  } catch {
-    // L'amorcage n'est qu'une proposition : son absence ne change rien.
-  }
-}
+// Un 401 n'importe ou = cookie expire ou revoque : retour a la connexion, l'etat
+// local n'a rien perdu.
+abonnerSessionPerdue(() => {
+  if (etatAuth() === 'connecte') void verifierSession()
+})
 
-export async function connexion(
-  identifiant: string,
-  motDePasse: string,
-): Promise<Echec | undefined> {
-  let r: Response
+export async function connexion(identifiant: string, motDePasse: string): Promise<Echec | undefined> {
   try {
-    r = await poster('connexion', { identifiant, motDePasse })
-  } catch {
-    poserEtatAuth('injoignable')
-    return { message: "Le service d'authentification est injoignable." }
-  }
-  const corps = await corpsJson(r)
-  if (r.status === 429) {
-    const d = corps as { retardSecondes?: number } | null
-    return {
-      message: 'Trop de tentatives.',
-      retardSecondes: typeof d?.retardSecondes === 'number' ? d.retardSecondes : 1,
+    await envoyer('/connexion', {
+      methode: 'POST',
+      corps: { nom: identifiant, mot_de_passe: motDePasse },
+      sansDetectionSession: true,
+    })
+  } catch (e) {
+    if (e instanceof ErreurReseau) {
+      poserEtatAuth('injoignable')
+      return { message: 'Le service est injoignable.' }
     }
+    if (e instanceof ErreurApi) {
+      if (e.statut === 429)
+        return { message: 'Trop de tentatives.', retardSecondes: e.retryApres ?? 1 }
+      if (e.statut === 401) return { message: 'Identifiant ou mot de passe incorrect.' }
+      return { message: e.message }
+    }
+    return { message: 'La connexion a echoue.' }
   }
-  if (!r.ok)
-    return { message: messageDe(corps, 'Identifiant ou mot de passe incorrect.') }
-  await accepter(corps as ReponseSession)
-  return undefined
-}
-
-/** Creation du premier compte, avec le code d'installation du serveur. Le
- *  service refuse cette route des qu'un compte existe. */
-export async function amorcer(
-  code: string,
-  identifiant: string,
-  motDePasse: string,
-): Promise<Echec | undefined> {
-  let r: Response
-  try {
-    r = await poster('amorcage', { code, identifiant, motDePasse })
-  } catch {
-    poserEtatAuth('injoignable')
-    return { message: 'Le service est injoignable.' }
-  }
-  const corps = await corpsJson(r)
-  if (!r.ok) {
-    // 409 : un compte existe deja, la porte est fermee pour de bon. Un code
-    // simplement faux (403) laisse le formulaire ouvert pour un nouvel essai.
-    if (r.status === 409) poserAmorcageOuvert(false)
-    return { message: messageDe(corps, 'La création du compte a échoué.') }
-  }
-  poserAmorcageOuvert(false)
-  await accepter(corps as ReponseSession)
+  ecrireLocal(CLE_COMPTE, identifiant)
+  // Le contrat ne rend aucun corps exploitable pour decider du profil : on
+  // relit le compte, qui est de toute facon la source de verite de la session.
+  const etat = await verifierSession()
+  if (etat !== 'connecte') return { message: 'Session ouverte mais illisible : reessayer.' }
   return undefined
 }
 
 export async function deconnexion(): Promise<void> {
   try {
-    await poster('deconnexion', {})
+    await envoyer('/deconnexion', { methode: 'POST', sansDetectionSession: true })
   } catch {
     // Le cookie peut rester si le service ne repond pas ; l'interface se
     // referme malgre tout, et la session expirera d'elle-meme.
   }
-  oublierRelais()
   poserSessionInterne(undefined)
+  poserProfils([])
   poserEtatAuth('anonyme')
-  void verifierAmorcage()
+  void import('./synchro').then((m) => m.arreterSynchro())
 }
 
 export function estConnecte(): boolean {
   return etatAuth() === 'connecte'
+}
+
+/** Le service dit « profil_requis » (409) : la session n'a plus de profil actif. */
+export function signalerProfilRequis(): void {
+  const s = session()
+  if (s?.profilId) poserSessionInterne({ ...s, profilId: undefined })
+}
+
+// --- Profils (CA5) -----------------------------------------------------------
+
+/** Profil actif de la session, ou `undefined` tant qu'aucun n'est choisi. */
+export const profilActifId = (): string | undefined => session()?.profilId
+
+export function profilActif(): ProfilApi | undefined {
+  const id = profilActifId()
+  return id ? profils().find((p) => p.id === id) : undefined
+}
+
+export async function rechargerProfils(): Promise<void> {
+  const r = await json<{ elements: ProfilApi[] }>('/compte/profils')
+  poserProfils(r.elements)
+}
+
+export async function creerProfil(nom: string): Promise<ProfilApi> {
+  const p = await json<ProfilApi>('/compte/profils', { methode: 'POST', corps: { nom } })
+  poserProfils([...profils(), p])
+  return p
+}
+
+export async function supprimerProfil(id: string): Promise<void> {
+  await envoyer(`/compte/profils/${encodeURIComponent(id)}`, { methode: 'DELETE' })
+  poserProfils(profils().filter((p) => p.id !== id))
+  // Supprimer le profil actif le rend inexistant cote serveur : la session
+  // n'en a plus, l'utilisateur doit en choisir un autre.
+  const s = session()
+  if (s && s.profilId === id) poserSessionInterne({ ...s, profilId: undefined })
+}
+
+/** Change le profil actif de la session. Echoue sans rien changer si le service refuse. */
+export async function choisirProfil(id: string): Promise<void> {
+  const s = session()
+  if (!s) return
+  await envoyer('/compte/profil-actif', { methode: 'PUT', corps: { profil_id: id } })
+  const suivant = { ...s, profilId: id }
+  poserSessionInterne(suivant)
+  await activerProfil(suivant)
 }

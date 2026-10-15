@@ -1,29 +1,32 @@
-import { For } from 'solid-js'
+import { For, Show, createSignal } from 'solid-js'
 import Icone from './Icone'
+import { choisirProfil, deconnexion, profilActifId, profils } from '../lib/auth'
 
-// Le profil n'existe pas encore côté données : le dossier de conception en fait
-// une évolution à part entière (favoris, historique et progression par profil).
-// La coque en pose la place exacte et les actions, sans simuler des profils qui
-// n'existeraient que dans ce menu — proposer « Marie » et « Enfants » ici
-// donnerait une promesse que le reste de l'application ne tient pas.
+// Menu du profil : changer de profil actif (CA5), reglages, deconnexion.
+//
+// Changer de profil change TOUT l'etat personnel (favoris, historique,
+// reglages) : `choisirProfil` previent le service puis la synchronisation
+// recharge l'etat du nouveau profil -- le menu n'a rien d'autre a faire que
+// dire si ca a echoue.
 
 export default function MenuProfil(props: {
   profil: { nom: string; initiale: string; teinte: number }
   surReglages: () => void
   surFermer: () => void
 }) {
-  const actions: Array<{ icone: string; libelle: string; indice?: string; surAction?: () => void }> = [
-    {
-      icone: 'settings',
-      libelle: 'Préférences et réglages',
-      surAction: () => {
-        props.surReglages()
-        props.surFermer()
-      },
-    },
-    { icone: 'groups', libelle: 'Changer de profil', indice: 'Bientôt' },
-    { icone: 'edit', libelle: 'Gérer les profils', indice: 'Bientôt' },
-  ]
+  const [erreur, poserErreur] = createSignal('')
+
+  async function changer(id: string) {
+    if (id === profilActifId()) return
+    poserErreur('')
+    try {
+      await choisirProfil(id)
+      props.surFermer()
+    } catch {
+      // Le profil actif n'a pas change (service muet ou profil supprime ailleurs).
+      poserErreur('Le changement de profil a échoué. Réessayer.')
+    }
+  }
 
   return (
     <div class="panneau panneau--profil" role="menu" aria-label="Profil">
@@ -33,26 +36,53 @@ export default function MenuProfil(props: {
         </span>
         <span class="profil-identite">
           <span class="profil-nom">{props.profil.nom}</span>
-          <span class="profil-sous">Profil unique</span>
+          <span class="profil-sous">
+            {profils().length > 1 ? `${profils().length} profils` : 'Profil unique'}
+          </span>
         </span>
       </div>
 
+      <Show when={profils().length > 1}>
+        <div class="panneau-trait" />
+        <For each={profils()}>
+          {(p) => (
+            <button
+              class="panneau-option"
+              role="menuitemradio"
+              aria-checked={p.id === profilActifId()}
+              onClick={() => void changer(p.id)}
+            >
+              <Icone
+                nom={p.id === profilActifId() ? 'radio_button_checked' : 'radio_button_unchecked'}
+                taille={18}
+              />
+              <span style={{ flex: 1 }}>{p.nom}</span>
+            </button>
+          )}
+        </For>
+      </Show>
+
       <div class="panneau-trait" />
 
-      <For each={actions}>
-        {(a) => (
-          <button
-            class="panneau-option"
-            role="menuitem"
-            disabled={a.surAction === undefined}
-            onClick={() => a.surAction?.()}
-          >
-            <Icone nom={a.icone} taille={18} />
-            <span style={{ flex: 1 }}>{a.libelle}</span>
-            <span class="panneau-appoint">{a.indice}</span>
-          </button>
-        )}
-      </For>
+      <button
+        class="panneau-option"
+        role="menuitem"
+        onClick={() => {
+          props.surReglages()
+          props.surFermer()
+        }}
+      >
+        <Icone nom="settings" taille={18} />
+        <span style={{ flex: 1 }}>Préférences et profils</span>
+      </button>
+      <button class="panneau-option" role="menuitem" onClick={() => void deconnexion()}>
+        <Icone nom="link_off" taille={18} />
+        <span style={{ flex: 1 }}>Se déconnecter</span>
+      </button>
+
+      <Show when={erreur()}>
+        <p role="alert" style={{ color: 'var(--err)', margin: '6px 12px', 'font-size': '12px' }}>{erreur()}</p>
+      </Show>
     </div>
   )
 }
