@@ -4,19 +4,23 @@ import { estMobile, estTablette } from '../lib/gabarit'
 import { plaqueTexte } from './couleurs'
 import { couverture } from './aplats'
 import { titreCourt } from './titres'
+import ResumeContenu from './ResumeContenu'
+import { cibleDe, dureeLongue, useDetails, type Details } from '../lib/details'
 import type { EntreeCatalogue } from '../lib/db'
+
+/** Attente avant de demander les details d'une nouvelle vignette. */
+const DELAI_DETAILS_MS = 350
 
 // Bloc « À la une » : cinq contenus récents, navigation strictement MANUELLE.
 // Le dossier interdit le défilement automatique — un carrousel qui tourne seul
 // déplace la cible sous le curseur et rend l'écran impossible à lire à la
 // télécommande. Flèches et pastilles, rien d'autre.
 
-// POURQUOI plus aucune requete par contenu : l'ancienne API rendait synopsis,
-// genre et duree « a l'unite » (get_vod_info / get_series_info). Le contrat v1
-// n'expose pas ces champs -- `Film` et `Serie` portent nom, image, note, annee --
-// et l'encart se contente donc de ce que le catalogue local sait deja. C'est
-// aussi plus sobre : plus aucun aller-retour par changement de pastille, sur un
-// service qui pousse peut-etre la video au meme moment.
+// Synopsis, genre, duree et casting ne sont pas dans le catalogue importe : le
+// fournisseur ne les donne que contenu par contenu. L'encart les demande donc
+// pour LE SEUL contenu affiche (jamais pour les cinq d'avance), apres un court
+// delai -- un clic rapide sur les pastilles ne doit pas faire une rafale d'appels
+// pour des contenus qu'on ne regarde pas. Le service garde la reponse 30 jours.
 
 interface Fiche {
   meta: string[]
@@ -29,13 +33,18 @@ function annee(brut: string | undefined): string | undefined {
   return m?.[0]
 }
 
-function fiche(entree: EntreeCatalogue): Fiche {
+function fiche(entree: EntreeCatalogue, d: Details | undefined): Fiche {
   const meta: string[] = []
-  const a = entree.annee ? String(entree.annee) : annee(entree.nom)
+  const a = d?.annee ?? (entree.annee ? String(entree.annee) : annee(entree.nom))
   if (a) meta.push(a)
-  if (entree.note) meta.push(`★ ${entree.note.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}`)
+  const duree = dureeLongue(d?.dureeSecondes)
+  if (duree) meta.push(duree)
+  const note = d?.note ?? entree.note
+  if (note) meta.push(`★ ${note.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}`)
+  if (d?.genre) meta.push(d.genre)
+  if (d?.age) meta.push(/^\d+$/.test(d.age) ? `${d.age}+` : d.age)
   if (entree.pays) meta.push(entree.pays)
-  return { meta }
+  return { meta, resume: d?.synopsis, image: d?.fond }
 }
 
 function Bouton(props: { children: JSX.Element; principal?: boolean; libelle?: string; surClic: () => void }) {
@@ -83,9 +92,10 @@ export interface ALaUneProps {
 export default function ALaUne(props: ALaUneProps) {
   const [index, poserIndex] = createSignal(0)
   const courant = () => props.elements[index() % Math.max(1, props.elements.length)]
+  const [details, { refetch }] = useDetails(() => cibleDe(courant()), DELAI_DETAILS_MS)
   const infos = createMemo(() => {
     const e = courant()
-    return e ? fiche(e) : { meta: [] }
+    return e ? fiche(e, details()) : { meta: [] }
   })
 
   const deplacer = (d: number) => {
@@ -127,7 +137,7 @@ export default function ALaUne(props: ALaUneProps) {
             >
               {titreCourt(e().nom)}
             </div>
-            <Show when={e().icone}>
+            <Show when={infos().image ?? e().icone}>
               {(src) => (
                 <img
                   src={src()}
@@ -177,15 +187,26 @@ export default function ALaUne(props: ALaUneProps) {
             >
               <span>{infos().meta.join(' · ')}</span>
             </div>
-            <p
-              style={{
-                margin: 0, 'font-size': '14px', 'line-height': '20px', color: 'rgba(255,255,255,.84)',
-                display: '-webkit-box', '-webkit-line-clamp': 2, '-webkit-box-orient': 'vertical',
-                overflow: 'hidden', 'text-wrap': 'pretty', 'min-height': '40px',
-              }}
-            >
-              {infos().resume ?? ''}
-            </p>
+            <ResumeContenu
+              details={details()}
+              erreur={details.error}
+              attendu={cibleDe(e()) !== undefined}
+              surReessayer={() => void refetch()}
+              lignes={estMobile() ? 3 : 2}
+              hauteurMin="40px"
+              style={{ 'font-size': '14px', 'line-height': '20px', color: 'rgba(255,255,255,.84)' }}
+            />
+            <Show when={details()?.casting || details()?.realisateur}>
+              <span
+                data-role="a-la-une-casting"
+                class="tronque"
+                style={{ 'font-size': '12px', 'line-height': '16px', color: 'rgba(255,255,255,.7)' }}
+              >
+                {[details()?.realisateur ? `De ${details()!.realisateur}` : '', details()?.casting ? `Avec ${details()!.casting}` : '']
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            </Show>
             <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '8px', 'margin-top': '6px' }}>
               <Bouton principal surClic={() => props.surLire(e())}>
                 <Icone nom="play_arrow" taille={20} plein />
@@ -195,6 +216,25 @@ export default function ALaUne(props: ALaUneProps) {
                 <Icone nom="info" taille={18} />
                 Voir les détails
               </Bouton>
+              <Show when={details()?.bandeAnnonce}>
+                {(href) => (
+                  <a
+                    href={href()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-role="bande-annonce"
+                    style={{
+                      height: estMobile() ? '44px' : '36px', display: 'flex', 'align-items': 'center', gap: '6px',
+                      padding: '0 14px 0 10px', 'border-radius': 'var(--r-btn-sm)', 'font-weight': 'var(--w-strong)',
+                      background: 'rgba(255,255,255,.1)', border: '1px solid rgba(255,255,255,.24)', color: 'inherit',
+                      'text-decoration': 'none',
+                    }}
+                  >
+                    <Icone nom="movie" taille={18} />
+                    Bande-annonce
+                  </a>
+                )}
+              </Show>
               <div style={{ width: estMobile() ? '44px' : '36px', display: 'flex' }}>
                 <Bouton
                   libelle={props.estFavori(e().cle) ? 'Retirer des favoris' : 'Ajouter aux favoris'}

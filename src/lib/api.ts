@@ -225,7 +225,39 @@ export interface EpisodeApi {
   extension: string
   duree: number
   lecture: string
+  /** Facultatifs (US-28) : absents quand le fournisseur n'en donne pas. */
+  synopsis?: string
+  image?: string
+  sortie?: string
+  note?: number
 }
+
+/** Provenance des details (schema `DetailsStatut`). */
+export type StatutDetailsApi = 'ok' | 'perime' | 'indisponible' | 'absent' | 'non_demande'
+
+/** Schema `DetailsCommuns` : tout est facultatif. */
+export interface DetailsApi {
+  synopsis?: string
+  genre?: string
+  casting?: string
+  realisateur?: string
+  pays?: string
+  sortie?: string
+  /** Adresse https YouTube uniquement. */
+  bande_annonce?: string
+  image_fond?: string
+  affiche?: string
+  note?: number
+  age?: string
+  /** Film : secondes. */
+  duree?: number
+  /** Serie : duree moyenne d'un episode, secondes. */
+  duree_episode?: number
+}
+
+/** `GET /films/{id}` et `GET /series/{id}` : les champs de la liste + les details. */
+export type FilmDetailApi = FilmApi & { details?: DetailsApi; details_statut?: StatutDetailsApi }
+export type SerieDetailApi = SerieApi & { details?: DetailsApi; details_statut?: StatutDetailsApi }
 
 export interface SaisonApi {
   numero: number

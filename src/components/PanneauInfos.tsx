@@ -7,6 +7,9 @@ import { avancement, plage } from './MiniGuide'
 import type { Programme } from '../lib/epg'
 import type { EntreeCatalogue } from '../lib/db'
 import { LIBELLE_MODE, TEINTE_MODE, type Plan } from '../lib/flux'
+import ResumeContenu from './ResumeContenu'
+import FaitsContenu from './FaitsContenu'
+import { cibleDe, dureeLongue, useDetails } from '../lib/details'
 
 // Le dossier est formel : s'informer ne coupe pas la lecture. Ce panneau se
 // pose à droite de l'image, la vidéo continue derrière, et il se referme sur
@@ -32,10 +35,19 @@ export default function PanneauInfos(props: {
   surGuide?: () => void
   surFermer: () => void
 }) {
+  // Un FILM ouvert dans le lecteur : son resume est demande quand le panneau s'ouvre
+  // (et non a la lecture), une seule fois par film (US-28).
+  const [details, { refetch }] = useDetails(() => cibleDe(props.entree))
+  const meta = () => {
+    const d = details()
+    return [d?.annee ?? (props.entree.annee ? String(props.entree.annee) : ''), dureeLongue(d?.dureeSecondes) ?? '', d?.genre ?? '']
+      .filter(Boolean)
+      .join(' · ')
+  }
   return (
     <div
       role="dialog"
-      aria-label="Informations sur la chaîne"
+      aria-label={props.entree.type === 'live' ? 'Informations sur la chaîne' : 'Informations sur le film'}
       style={{
         position: 'absolute', right: 0, top: 0, bottom: 0,
         width: `${LARGEUR_INFOS}px`, 'max-width': '100%',
@@ -69,6 +81,23 @@ export default function PanneauInfos(props: {
           <Icone nom="close" taille={18} />
         </button>
       </div>
+
+      <Show when={cibleDe(props.entree)}>
+        <div data-role="infos-film" style={{ display: 'flex', 'flex-direction': 'column', gap: '8px', 'font-size': '14px', 'line-height': '20px' }}>
+          <Show when={meta()}>
+            <span class="num" style={{ 'font-size': '12px', color: ENCRE2 }}>{meta()}</span>
+          </Show>
+          <ResumeContenu
+            details={details()}
+            erreur={details.error}
+            attendu
+            surReessayer={() => void refetch()}
+            hauteurMin="40px"
+            style={{ color: ENCRE }}
+          />
+          <FaitsContenu details={details()} />
+        </div>
+      </Show>
 
       {/* Le programme en cours n'a de sens qu'en direct : un film n'est pas à
           l'antenne, et sa chaîne de traitement est ce qui l'intéresse. */}

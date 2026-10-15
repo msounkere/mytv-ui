@@ -362,6 +362,8 @@ const mesures = () => MESURES[gabaritCoque()]
 
 export default function Accueil(props: {
   surOuvrir: (e: EntreeCatalogue) => void
+  /** "Voir les details" de l'encart : la fiche d'un film avant de le lire. */
+  surDetails?: (e: EntreeCatalogue) => void
   surRechercher: (requete: string) => void
 }) {
   const [menu, poserMenu] = createSignal<{ entree: EntreeCatalogue; x: number; y: number } | null>(null)
@@ -461,7 +463,7 @@ export default function Accueil(props: {
           <ALaUne
             elements={laUne() ?? []}
             estFavori={estFavori}
-            surOuvrir={props.surOuvrir}
+            surOuvrir={props.surDetails ?? props.surOuvrir}
             surLire={props.surOuvrir}
             surBasculerFavori={basculer}
           />

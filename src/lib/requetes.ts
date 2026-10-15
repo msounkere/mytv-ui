@@ -58,6 +58,12 @@ export const FRAICHEUR = {
    * bande à la lecture en cours.
    */
   relais: 30 * 60_000,
+  /**
+   * Details d'un film ou d'une serie (synopsis, genre, casting...). Le SERVICE les
+   * garde 30 jours : l'interface n'a donc aucune raison de les redemander dans la
+   * session, sauf apres un echec (une erreur n'est jamais mise en cache).
+   */
+  details: 30 * 60_000,
 } as const
 
 // --- Clés ------------------------------------------------------------------
@@ -112,6 +118,8 @@ export const cles = {
   /** Fiche détaillée d'une série, telle que le relais la rend. */
   /** Saisons d'une serie, telles que l'API les rend (`/series/{id}/saisons`). */
   serie: (id: string) => ['serie', id] as const,
+  /** Details (synopsis, genre...) d'un film ou d'une serie, par identifiant serveur. */
+  details: (id: string) => ['details', id] as const,
 } as const
 
 // --- Client ----------------------------------------------------------------
