@@ -182,6 +182,20 @@ const SCENARIOS = {
     })
   },
 
+  // US-16b : le nom du compte vient du serveur quand il le donne (sinon : nom saisi).
+  async nom(navigateur) {
+    await scenario(navigateur, {}, async ({ serveur, page }) => {
+      await serveur.appel('session-nom', { actif: true })
+      await seConnecter(page)
+      await page.getByRole('button', { name: 'Réglages' }).waitFor()
+      // Stockage local perdu, cookie intact : le nom revient du serveur, pas du navigateur.
+      await page.evaluate(() => localStorage.removeItem('mytv.compte'))
+      await page.reload()
+      await page.getByRole('button', { name: 'Réglages' }).click()
+      await page.getByText(COMPTE, { exact: true }).first().waitFor()
+    })
+  },
+
   // CA2 : import en bloc, progression, ETag inchange = aucune donnee, nouvelle version.
   async import(navigateur) {
     await scenario(navigateur, { latenceChunk: 80 }, async ({ serveur, page }) => {
@@ -327,9 +341,9 @@ const SCENARIOS = {
       }, { delai: 10_000, quoi: 'reprise recue du serveur' })
 
       // Episode : le serveur EXIGE la serie parente (le faux serveur renvoie 400 sinon).
-      await page.goto(`${serveur.origine}/app/serie/${encodeURIComponent('series:iptva:700')}`)
+      await page.goto(`${serveur.origine}/app/serie/${encodeURIComponent('series:iptva:s5000')}`)
       await page.getByText('Épisode 2').first().click()
-      await attendre(() => [...(serveur.etat.historique.get('p1')?.values() ?? [])].some((h) => h.serie === 'iptva:700' && h.contenu.endsWith('.mkv')), { delai: 10_000, quoi: 'PUT historique episode avec serie' })
+      await attendre(() => [...(serveur.etat.historique.get('p1')?.values() ?? [])].some((h) => h.serie === 'iptva:s5000' && h.contenu.endsWith('.mkv')), { delai: 10_000, quoi: 'PUT historique episode avec serie' })
     })
   },
 
@@ -362,9 +376,11 @@ const SCENARIOS = {
     await scenario(navigateur, {}, async ({ serveur, page }) => {
       await seConnecter(page)
       await attendre(catalogueComplet(page, serveur), { quoi: 'import' })
-      await serveur.appel('favoris', { profil: 'p1', ids: ['iptva:5001', 'iptva:5002'] })
+      // Un film et une serie de meme numero (5001 / s5001) : le type vient du catalogue.
+      await serveur.appel('favoris', { profil: 'p1', ids: ['iptva:5001', 'iptva:s5001'] })
       await page.evaluate(() => window.dispatchEvent(new Event('online')))
       await attendre(async () => (await lireIdb(page, 'favoris'))?.length === 2, { delai: 10_000, quoi: 'favoris du profil 1' })
+      assert.deepEqual((await lireIdb(page, 'favoris')).map((f) => f.cle).sort(), ['series:iptva:s5001', 'vod:iptva:5001'])
 
       await page.getByRole('button', { name: 'Réglages' }).click()
       await page.getByLabel('Nom du nouveau profil').fill('Enfants')
@@ -374,7 +390,7 @@ const SCENARIOS = {
       await attendre(() => requetesVers(serveur, 'PUT', '/api/v1/compte/profil-actif').length >= 1, { quoi: 'PUT profil-actif' })
       // L'etat du profil precedent ne fuit pas dans le nouveau.
       await attendre(async () => (await lireIdb(page, 'favoris')).length === 0, { delai: 10_000, quoi: 'favoris vides pour le profil 2' })
-      assert.deepEqual(serveur.etat.favoris.get('p1'), ['iptva:5001', 'iptva:5002'], 'le profil 1 ne doit pas etre touche')
+      assert.deepEqual(serveur.etat.favoris.get('p1'), ['iptva:5001', 'iptva:s5001'], 'le profil 1 ne doit pas etre touche')
       assert.ok(!(serveur.etat.favoris.get('p2')?.length), 'rien ne doit avoir ete pousse dans le profil 2')
       // Retour au profil 1 par le menu du profil : ses favoris reviennent du serveur.
       await page.locator('.entete-bouton-profil').click()

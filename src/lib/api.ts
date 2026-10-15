@@ -141,6 +141,8 @@ export type TypeApi = 'live' | 'vod' | 'series'
 
 export interface SessionApi {
   id: string
+  /** Nom du compte (contrat US-16b). Absent d'un serveur plus ancien : voir auth.ts. */
+  nom?: string
   admin: boolean
   profil_id?: string
   expire: string

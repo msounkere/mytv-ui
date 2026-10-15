@@ -10,7 +10,6 @@ import type { ProgrammeCourant } from '../components/PlaqueChaine'
 import { anneeDuTitre, titreCourt } from '../components/titres'
 import { ecran, poserOnglet } from '../etat'
 import { db, type EntreeCatalogue, type TypeContenu } from '../lib/db'
-import { numeroDeCle } from '../lib/identifiants'
 import { chainesAvecGuide, programmesEnCours as programmesDuMoment } from '../lib/chaines-guide'
 import { basculerFavori, marquerVu, oublierReprise } from '../lib/preferences'
 import { gabarit as gabaritCoque } from '../lib/gabarit'
@@ -152,12 +151,18 @@ async function recemmentAjoutes(type: TypeContenu, limite: number): Promise<Entr
     .where('[type+categorie]')
     .anyOf(cats.map((c) => [type, c]))
     .primaryKeys()) as string[]
-  const triees = cles
-    .map((cle) => ({ cle, id: numeroDeCle(cle) }))
-    .sort((a, b) => b.id - a.id)
-    .slice(0, limite)
-  const entrees = await db.catalogue.bulkGet(triees.map((t) => t.cle))
-  return entrees.filter((e): e is EntreeCatalogue => e !== undefined)
+  const entrees = (await db.catalogue.bulkGet(cles)).filter((e): e is EntreeCatalogue => e !== undefined)
+  return recentsDabord(entrees).slice(0, limite)
+}
+
+/**
+ * Les plus recents d'abord. Les identifiants sont OPAQUES (`iptva:s77`,
+ * `iptva:845410`) : on ne les compare plus comme des nombres, ce qui servait
+ * autrefois a deviner la fraicheur. Le tri est stable : sans date, l'ordre du
+ * catalogue (celui du fournisseur) est conserve.
+ */
+function recentsDabord(entrees: EntreeCatalogue[]): EntreeCatalogue[] {
+  return [...entrees].sort((a, b) => (b.ajouteLe ?? 0) - (a.ajouteLe ?? 0))
 }
 
 function versAffiche(entrees: EntreeCatalogue[], nouveau: boolean): Affiche[] {
@@ -307,14 +312,11 @@ async function parceQue(): Promise<Similaires | undefined> {
     .where('[type+categorie]')
     .equals([reference.type, reference.categorie!])
     .primaryKeys()) as string[]
-  const voisines = cles
-    .filter((c) => c !== reference.cle)
-    .map((cle) => ({ cle, id: numeroDeCle(cle) }))
-    .sort((a, b) => b.id - a.id)
-    .slice(0, LIMITE_SIMILAIRES)
+  const voisines = cles.filter((c) => c !== reference.cle)
   if (voisines.length === 0) return undefined
-  const proches = (await db.catalogue.bulkGet(voisines.map((v) => v.cle)))
-    .filter((e): e is EntreeCatalogue => e !== undefined)
+  const proches = recentsDabord(
+    (await db.catalogue.bulkGet(voisines)).filter((e): e is EntreeCatalogue => e !== undefined),
+  ).slice(0, LIMITE_SIMILAIRES)
   return { reference: titreCourt(reference.nom), affiches: versAffiche(proches, false) }
 }
 

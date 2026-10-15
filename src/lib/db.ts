@@ -161,7 +161,8 @@ function enMillisecondes(v: string | null | undefined): number | undefined {
   return Number.isFinite(t) && t > 0 ? t : undefined
 }
 
-/** Partie numerique de `fournisseur:numero` (0 si ce n'est pas un nombre). */
+/** Champ OBSOLETE `id` : partie numerique de l'identifiant (0 pour une serie `s77`
+ *  ou un episode). Les identifiants sont opaques, rien ne doit plus la lire. */
 function numeroDe(idServeur: string): number {
   const n = Number(idServeur.slice(idServeur.indexOf(':') + 1))
   return Number.isFinite(n) ? n : 0

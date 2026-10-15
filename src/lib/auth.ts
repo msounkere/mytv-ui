@@ -73,6 +73,10 @@ export interface Echec {
 }
 
 function versSession(s: SessionApi): Session {
+  // Le serveur est la source du nom quand il le donne ; sinon on retombe sur celui
+  // saisi a la connexion (voir CLE_COMPTE). Le garder en local rend le nom
+  // disponible aussi apres un rechargement sans nouvelle saisie.
+  if (s.nom) ecrireLocal(CLE_COMPTE, s.nom)
   return {
     id: s.id,
     admin: s.admin,
