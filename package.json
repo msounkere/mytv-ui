@@ -1,0 +1,29 @@
+{
+  "name": "mytv-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Interface web de navigation et lecture pour le relais Xtream TuliProx",
+  "scripts": {
+    "dev": "NODE_OPTIONS=--tls-max-v1.2 vite",
+    "build": "tsc --noEmit && NODE_OPTIONS=--tls-max-v1.2 vite build",
+    "preview": "NODE_OPTIONS=--tls-max-v1.2 vite preview",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solidjs/router": "^1.0.0",
+    "@tanstack/solid-query": "^5.104.2",
+    "@tanstack/solid-virtual": "^3.13.42",
+    "@types/node": "^26.6.5",
+    "dexie": "^4.4.6",
+    "hls.js": "^1.7.3",
+    "minisearch": "^7.2.0",
+    "solid-js": "^1.9.17",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vite-plugin-solid": "^2.11.14"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.0"
+  }
+}

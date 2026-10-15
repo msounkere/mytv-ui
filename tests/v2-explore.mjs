@@ -1,0 +1,13 @@
+import { chromium } from 'playwright'
+const nav = await chromium.launch()
+const page = await nav.newPage({ viewport: { width: 1440, height: 900 } })
+page.on('pageerror', (e) => console.log('[PAGEERROR]', e.message.slice(0, 160)))
+await page.goto('http://127.0.0.1:8777/Lecteur%20IPTV.dc.html', { waitUntil: 'networkidle', timeout: 90000 })
+await page.waitForTimeout(6000)
+console.log('--- TEXTE ---')
+console.log((await page.evaluate(() => document.body.innerText)).slice(0, 3000))
+console.log('\n--- H2/H3 ---')
+console.log(await page.evaluate(() => [...document.querySelectorAll('h1,h2,h3')].map(h => h.tagName+':'+h.textContent.trim())))
+await page.screenshot({ path: 'captures/v2-accueil.png', fullPage: false })
+await page.screenshot({ path: 'captures/v2-accueil-full.png', fullPage: true })
+await nav.close()

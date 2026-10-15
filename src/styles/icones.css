@@ -1,0 +1,54 @@
+/* ============================================================================
+   Icônes — Fluent UI System Icons, tracés inclus dans le bundle.
+   Le dossier de conception impose Fluent 20 px, contour par défaut et plein
+   pour l'actif. Les tracés viennent de `src/components/fluent-icones.ts` : il
+   n'y a donc aucune ressource à charger, et aucun instant où la navigation
+   s'affiche en toutes lettres. Voir Icone.tsx pour le choix complet.
+
+   La police Material Symbols reste embarquée et reste branchée sur `.icone` :
+   plusieurs composants écrivent leur ligature à la main dans un <span class=
+   "icone"> au lieu de passer par <Icone>, et le lecteur demande deux noms que
+   Fluent ne couvre pas. La règle de police porte donc sur `.icone` tout court,
+   pour que RIEN ne disparaisse ; les icônes Fluent sont des <svg>, que ces
+   mêmes règles n'affectent pas.
+
+   L'interface vit sur la MÊME origine que le relais et doit rester utilisable
+   quand la liaison sortante est coupée : rien ici ne contacte un tiers. Le
+   fichier est un sous-ensemble (icon_names=…) des seules icônes employées :
+   12 ko au lieu des 1,4 Mo de la police complète.
+   ========================================================================== */
+
+@font-face {
+  font-family: 'Material Symbols Rounded';
+  font-style: normal;
+  font-weight: 400;
+  /* `block` et pas `swap` : la police lit des ligatures. Pendant un `swap`,
+     l'écran afficherait littéralement « settings », « live_tv »… */
+  font-display: block;
+  src: url('/polices/material-symbols-rounded.woff2') format('woff2');
+}
+
+.icone {
+  font-family: 'Material Symbols Rounded';
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  user-select: none;
+}
+
+/* L'icône de l'entrée de navigation active passe en plein : c'est, avec le
+   trait de sélection, le seul signal que la maquette donne en plus du fond. */
+.icone[data-plein='1'] { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+
+/* Un tracé Fluent porte déjà sa taille sur l'élément : il ne doit jamais être
+   comprimé par le flex de son conteneur, à la différence d'un glyphe. */
+svg.icone { flex: none; }

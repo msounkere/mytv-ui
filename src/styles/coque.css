@@ -1,0 +1,421 @@
+/* ============================================================================
+   Coque et accueil — états interactifs.
+   Ces règles ne sont pas en style inline parce qu'un style inline gagne
+   TOUJOURS contre `button:hover` de base.css : les survols de la maquette
+   disparaîtraient. Les valeurs sont relevées au getComputedStyle sur
+   « Lecteur IPTV.dc.html » ; les couleurs viennent de tokens.css.
+   ========================================================================== */
+
+/* --- Coque ---------------------------------------------------------------- */
+.coque {
+  position: fixed; inset: 0; display: grid;
+  background: var(--bgfx); color: var(--fg);
+  font-family: var(--moov-font-body); font-size: 14px; line-height: 20px;
+  overflow: hidden;
+}
+
+/* Le lecteur reste monté quand on navigue ailleurs : il est caché, pas démonté.
+   Voir App.tsx — c'est ce qui rend vrai le point « lecture en cours ». */
+.couche-lecteur { position: absolute; inset: 0; }
+
+/* Les écrans coûteux — Accueil, Parcours, Guide — sont préservés de la même
+   façon (voir Couche.tsx). `inset: 0` n'est pas cosmétique : c'est ce qui donne
+   à une couche masquée une hauteur REELLE, sans laquelle les listes
+   virtualisées qu'elle contient ne monteraient aucune ligne au retour.
+   `min-height: 0` pour que les grilles enfant puissent se rétrécir. */
+.couche-ecran { position: absolute; inset: 0; min-width: 0; min-height: 0; }
+
+/* --- Barre latérale : compacte 72 px / déployée 220 px --------------------
+   Toutes les valeurs sont relevées au getComputedStyle sur la maquette V2.
+   Le passage d'un état à l'autre ne change que la direction de l'élément, sa
+   hauteur et le corps du libellé : la colonne d'icônes reste au même endroit. */
+.rail {
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 8px 12px;
+  border-right: 1px solid var(--line); background: var(--pane);
+  backdrop-filter: var(--blur); min-width: 0; min-height: 0;
+  position: relative; z-index: 8;
+}
+
+.rail-entete {
+  display: flex; align-items: center; gap: 10px;
+  height: 48px; margin-bottom: 6px; padding: 0;
+}
+.rail[data-deployee='0'] .rail-entete { padding: 0 8px; }
+
+.rail-menu {
+  width: 40px; height: 40px; flex: none; border-radius: var(--r-xs);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--fg2); background: transparent; position: relative;
+}
+.rail-menu:hover { background: var(--hover); }
+
+.rail-marque { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rail-marque-pastille {
+  width: 26px; height: 26px; flex: none; border-radius: var(--r-sm);
+  background: var(--acc); color: var(--acc-ink);
+  display: flex; align-items: center; justify-content: center;
+}
+.rail-marque-nom {
+  font-family: var(--moov-font-heading); font-size: 15px; line-height: 20px;
+  font-weight: var(--w-strong); white-space: nowrap;
+}
+
+.rail-item {
+  position: relative; display: flex; align-items: center;
+  border-radius: var(--r-xs); cursor: pointer;
+  color: var(--fg2); background: transparent;
+  transition: background var(--dur) var(--ease);
+}
+.rail[data-deployee='1'] .rail-item {
+  flex-direction: row; justify-content: flex-start; gap: 12px; height: 40px; padding: 0 12px;
+}
+.rail[data-deployee='0'] .rail-item {
+  flex-direction: column; justify-content: center; gap: 3px; height: 54px; padding: 0;
+}
+.rail-item:hover { background: var(--hover); }
+.rail-item[aria-current='page'],
+.rail-item[aria-current='page']:hover { background: var(--acc-bg); color: var(--acc-fg); }
+
+/* Barre de sélection Fluent, 3x16 px sur le bord gauche. La couleur seule ne
+   suffit pas : c'est le seul repère qui reste lisible pour un daltonien. */
+.rail-item[aria-current='page']::before {
+  content: '';
+  position: absolute; left: 0; top: 50%; margin-top: -8px;
+  width: 3px; height: 16px; border-radius: 2px; background: var(--acc-fg);
+}
+
+.rail-libelle { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 16px; }
+.rail[data-deployee='1'] .rail-libelle { font-size: 14px; font-weight: 400; max-width: 140px; }
+.rail[data-deployee='0'] .rail-libelle {
+  /* 64 px et non 54 : « Réglages » mesure 50 px à ce corps et se faisait
+     tronquer pour rien, alors que la barre lui laisse toute sa gouttière. */
+  font-size: 11px; font-weight: var(--w-strong); max-width: 64px; text-align: center;
+}
+
+.rail-icone { position: relative; display: flex; flex: none; }
+
+/* Point « lecture en cours » : il dit qu'un flux est RÉELLEMENT ouvert, le
+   halo l'isole de l'icône pour qu'il reste lisible sur fond actif. */
+.rail-point {
+  position: absolute; right: -4px; top: -3px;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--acc-fg); box-shadow: 0 0 0 2px var(--panel);
+}
+
+/* Infobulle de la barre compacte : posée en attribut plutôt qu'en `title` pour
+   apparaître tout de suite — le délai natif d'une seconde rend une navigation
+   sans libellé inutilisable. */
+[data-infobulle]:not([data-infobulle='']):hover::after,
+[data-infobulle]:not([data-infobulle='']):focus-visible::after {
+  content: attr(data-infobulle);
+  position: absolute; left: calc(100% + 12px); top: 50%; transform: translateY(-50%);
+  padding: 5px 9px; border-radius: var(--r-xs);
+  background: var(--elev); color: var(--fg); border: 1px solid var(--line2);
+  box-shadow: var(--moov-shadow-lg);
+  font: 12px/16px var(--moov-font-body); white-space: nowrap;
+  z-index: 100; pointer-events: none;
+}
+
+/* Couleur d'identité dérivée du nom du profil, pas une couleur de thème : elle
+   doit rester distincte d'un profil à l'autre quand ils arriveront. */
+.avatar {
+  width: 26px; height: 26px; flex: none; border-radius: 50%;
+  background: oklch(0.52 0.13 var(--teinte)); color: var(--plate);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: var(--w-strong); line-height: 1;
+}
+.avatar--lg { width: 36px; height: 36px; font-size: 14px; }
+
+/* --- En-tête allégé ------------------------------------------------------- */
+.entete {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 16px 0 20px; border-bottom: 1px solid var(--line);
+  background: var(--pane); backdrop-filter: var(--blur);
+  min-width: 0; position: relative; z-index: 6;
+}
+.entete-titre {
+  font-family: var(--moov-font-heading); font-size: 16px; line-height: 20px;
+  font-weight: var(--w-strong); white-space: nowrap; min-width: 96px;
+}
+
+.entete-recherche { position: relative; width: 100%; max-width: 600px; }
+.entete-recherche-icone { position: absolute; left: 10px; top: 9px; color: var(--fg3); display: flex; }
+.entete-recherche input {
+  width: 100%; height: 36px; padding: 0 64px 0 36px;
+  border-radius: var(--r-xs); border: 1px solid var(--line2);
+  border-bottom-color: var(--fg3);
+  background: var(--elev); color: var(--fg); font: inherit; outline: none;
+}
+.entete-raccourci {
+  position: absolute; right: 8px; top: 9px;
+  font-family: var(--moov-font-mono); font-size: 11px; line-height: 16px;
+  padding: 0 6px; border-radius: var(--r-2xs);
+  border: 1px solid var(--line2); color: var(--fg3);
+}
+
+.entete-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+
+.entete-reprise {
+  display: flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 10px; border-radius: var(--r-xs);
+  border: 1px solid var(--line2); cursor: pointer; min-width: 0; background: transparent;
+}
+.entete-reprise:hover { background: var(--hover); }
+.entete-reprise-onde { display: flex; color: var(--acc-fg); }
+.entete-reprise-titre {
+  max-width: 150px; font-size: 13px; font-weight: var(--w-strong);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.entete-flux {
+  display: flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px; border-radius: 14px;
+  font-size: 12px; font-weight: var(--w-strong); white-space: nowrap;
+  border: 1px solid var(--line2); color: var(--fg3); background: transparent;
+}
+.entete-flux-point { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .35; }
+.entete-flux[data-etat='actif'] { border-color: transparent; background: var(--acc-bg); color: var(--acc-fg); }
+.entete-flux[data-etat='limite'] { border-color: transparent; background: var(--lim-bg); color: var(--lim); }
+.entete-flux[data-etat='actif'] .entete-flux-point,
+.entete-flux[data-etat='limite'] .entete-flux-point { opacity: 1; }
+
+.entete-bouton-icone {
+  width: 36px; height: 36px; flex: none; border-radius: var(--r-xs);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--fg); background: transparent;
+}
+.entete-bouton-icone:hover,
+.entete-bouton-icone[data-ouvert='1'] { background: var(--hover); }
+
+.entete-bouton-profil {
+  width: 36px; height: 36px; flex: none; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; background: transparent;
+}
+.entete-bouton-profil .avatar { width: 28px; height: 28px; font-size: 13px; }
+
+/* --- Panneaux ancrés à l'en-tête ------------------------------------------ */
+.calque-fond { position: fixed; inset: 0; z-index: 55; }
+.panneau {
+  position: absolute; top: 50px; right: 16px; z-index: 60;
+  width: 320px; max-width: calc(100vw - 16px); padding: 6px;
+  border-radius: var(--r-md); background: var(--elev);
+  border: 1px solid var(--line2); box-shadow: var(--moov-shadow-2xl);
+  max-height: calc(100vh - 66px); overflow: auto;
+}
+.panneau--profil { width: 280px; }
+
+.panneau-titre {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px 4px;
+  font-size: 11px; line-height: 20px; font-weight: var(--w-strong);
+  letter-spacing: .04em; text-transform: uppercase; color: var(--fg3);
+}
+.panneau-option {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  min-height: 36px; padding: 0 10px; border-radius: var(--r-xs);
+  text-align: left; cursor: pointer; color: var(--fg); background: transparent;
+  font-size: 14px; line-height: 20px;
+}
+.panneau-option:hover { background: var(--hover); }
+.panneau-option[aria-checked='true'],
+.panneau-option[aria-checked='true']:hover { background: var(--acc-bg); color: var(--acc-fg); }
+.panneau-option:disabled { color: var(--fg3); cursor: default; }
+.panneau-option:disabled:hover { background: transparent; }
+.panneau-appoint { font-size: 12px; color: var(--fg3); }
+
+.panneau-conseil {
+  margin: 6px 10px; padding: 8px 10px; border-radius: var(--r-xs);
+  background: var(--elev2); font-size: 12px; line-height: 16px; color: var(--fg2);
+  text-wrap: pretty;
+}
+
+.panneau-remesurer {
+  display: flex; align-items: center; gap: 4px;
+  padding: 2px 6px; border-radius: var(--r-xs);
+  font-size: 11px; line-height: 16px; font-weight: var(--w-strong);
+  letter-spacing: 0; text-transform: none;
+  color: var(--acc-fg); background: transparent; cursor: pointer;
+}
+.panneau-remesurer:hover { background: var(--hover); }
+.panneau-remesurer:disabled { color: var(--fg3); cursor: default; }
+
+.panneau-infos {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px;
+  padding: 2px 10px 10px; margin: 0; font-size: 12px; line-height: 20px;
+}
+.panneau-infos dt { color: var(--fg3); }
+.panneau-infos dd {
+  margin: 0; font-family: var(--moov-font-mono); font-size: 11px;
+  text-align: right; overflow-wrap: anywhere;
+}
+
+.panneau-trait { height: 1px; background: var(--line); margin: 4px 0; }
+.profil-entete { display: flex; align-items: center; gap: 10px; padding: 10px; }
+.profil-identite { display: flex; flex-direction: column; min-width: 0; }
+.profil-nom { font-size: 14px; font-weight: var(--w-strong); }
+.profil-sous { font-size: 12px; color: var(--fg3); }
+
+/* --- Accueil : vignette « Reprendre » ------------------------------------ */
+.reprise { display: flex; flex-direction: column; gap: 8px; cursor: pointer; min-width: 0; padding: 0; text-align: left; background: none; }
+.reprise-media {
+  position: relative; aspect-ratio: 16 / 9;
+  border-radius: var(--r-lg); overflow: hidden;
+  display: flex; align-items: flex-end; padding: 12px 14px 16px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07), 0 1px 2px rgba(0, 0, 0, .3);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.reprise:hover .reprise-media,
+.reprise:focus-visible .reprise-media {
+  transform: translateY(-3px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14), 0 12px 28px rgba(0, 0, 0, .45);
+}
+.reprise-voile {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  opacity: 0; background: rgba(5, 8, 12, .25); transition: opacity 160ms ease-out;
+}
+.reprise:hover .reprise-voile, .reprise:focus-visible .reprise-voile { opacity: 1; }
+.reprise:hover { background: none; }
+
+/* --- Accueil : carte de chaîne favorite ---------------------------------- */
+.carte-chaine {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: var(--r-md);
+  border: 1px solid var(--line); background: var(--panel);
+  cursor: pointer; min-width: 0; text-align: left; width: 100%;
+  transition: border-color 160ms ease-out, background 160ms ease-out, transform 160ms ease-out;
+}
+.carte-chaine:hover { border-color: var(--line2); background: var(--hover); transform: translateY(-1px); }
+
+/* --- Accueil : affiche de film ou série favoris --------------------------- */
+.affiche-favorite { display: flex; flex-direction: column; gap: 6px; cursor: pointer; min-width: 0; padding: 0; text-align: left; background: none; }
+.affiche-favorite:hover { background: none; }
+.affiche-media {
+  aspect-ratio: 2 / 3; border-radius: var(--r-sm);
+  display: flex; align-items: flex-end; padding: 8px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.affiche-favorite:hover .affiche-media, .affiche-favorite:focus-visible .affiche-media {
+  transform: translateY(-3px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14), 0 10px 24px rgba(0, 0, 0, .45);
+}
+
+/* --- Accueil : ligne « Récents » ------------------------------------------ */
+.ligne-recente {
+  display: flex; align-items: center; gap: 12px;
+  height: 48px; padding: 0 4px; width: 100%;
+  border-bottom: 1px solid var(--line); border-radius: 0;
+  cursor: pointer; text-align: left; background: transparent;
+}
+.ligne-recente:hover { background: var(--hover); }
+
+/* --- Accueil : gabarit ----------------------------------------------------
+   Les trois paliers de la maquette : 40/36 en bureau, 32/36 en tablette,
+   20/28 en mobile, et la colonne « Récents » qui ne tient plus sous 1100 px. */
+.accueil-contenu { padding: 40px 40px 64px; gap: 36px; }
+.accueil-colonnes { grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 36px; }
+@media (max-width: 1099px) {
+  .accueil-contenu { padding: 32px 24px 56px; }
+  .accueil-colonnes { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 699px) {
+  .accueil-contenu { padding: 20px 16px 40px; gap: 28px; }
+}
+
+/* ============================================================================
+   Gabarits — cahier des charges §6 : bureau ≥ 1100, tablette 700–1099,
+   mobile < 700. Le bureau n'est JAMAIS touché ici : tout ce qui suit est
+   borné par un max-width, les règles de base ci-dessus restent celles du bureau.
+   ========================================================================== */
+
+/* Hauteur de la barre d'onglets : 0 hors mobile, pour que les éléments posés
+   « au-dessus des onglets » (mini-lecteur, notifications, feuilles) n'aient pas
+   à connaître le gabarit. */
+:root { --hauteur-onglets: 0px; }
+
+/* La flèche de retour n'existe pas au bureau. */
+.entete-retour { display: none; }
+
+/* --- Tablette : barre compacte de 72 px, jamais déployée ------------------ */
+@media (max-width: 1099px) {
+  .coque { grid-template-columns: 72px minmax(0, 1fr); }
+  /* Le bouton de déploiement n'a plus d'effet ici ; on garde sa place pour que
+     la première entrée reste à la même hauteur que dans la maquette (y = 64). */
+  .rail-menu { visibility: hidden; }
+  .entete { padding: 0 16px 0 20px; }
+  .entete-recherche { max-width: 456px; }
+  .entete-reprise-titre { display: none; }
+  .entete-reprise { padding: 0; width: 36px; justify-content: center; }
+  .entete-retour {
+    display: flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; flex: none; margin-left: -12px;
+    border-radius: var(--r-xs); color: var(--fg);
+  }
+  .entete-retour:hover { background: var(--hover); }
+}
+
+/* --- Mobile : barre d'onglets en bas, en-tête allégé ---------------------- */
+@media (max-width: 699px) {
+  :root { --hauteur-onglets: calc(64px + env(safe-area-inset-bottom, 0px)); }
+
+  /* Une seule colonne : la barre quitte la grille pour se poser en bas. */
+  .coque { grid-template-columns: minmax(0, 1fr); }
+  .coque-contenu { padding-bottom: var(--hauteur-onglets); }
+
+  .rail {
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto;
+    flex-direction: row; align-items: stretch; gap: 0;
+    height: var(--hauteur-onglets);
+    padding: 4px 6px env(safe-area-inset-bottom, 0px);
+    border-right: 0; border-top: 1px solid var(--line);
+    z-index: 35;
+  }
+  .rail-entete, .rail-espace, .rail-item--reglages { display: none; }
+
+  /* Six cibles égales ; 54 px de haut mesurés sur la maquette, donc ≥ 44. */
+  .rail .rail-item { flex: 1 1 0; min-width: 44px; height: 54px; }
+  .rail .rail-libelle { max-width: 100%; font-size: 11px; }
+
+  /* La barre de sélection passe sous le libellé : à gauche elle n'aurait
+     aucun sens dans une rangée horizontale. */
+  .rail-item[aria-current='page']::before {
+    left: 50%; top: auto; bottom: 3px; margin: 0 0 0 -8px; width: 16px; height: 3px;
+  }
+
+  /* Pas de survol sur un écran tactile : l'infobulle resterait collée après un appui. */
+  .rail [data-infobulle]::after { display: none !important; }
+
+  .entete {
+    padding: 0 10px; gap: 8px; backdrop-filter: none;
+    /* Au-dessus du mini-lecteur (30) : les feuilles ouvertes depuis l'en-tête
+       doivent recouvrir tout ce qui est au-dessus de la barre d'onglets. */
+    z-index: 40;
+  }
+  .entete-titre, .entete-flux, .entete-reprise, .entete-bouton-profil, .entete-raccourci { display: none; }
+  .entete-recherche input { height: 44px; padding-right: 12px; }
+  .entete-recherche-icone { top: 13px; }
+  .entete-bouton-icone { width: 44px; height: 44px; }
+  .entete-retour { width: 44px; height: 44px; margin-left: -6px; }
+
+  /* Feuilles : le panneau Lecteur et le menu du profil montent du bas, posés
+     juste au-dessus des onglets plutôt que dans un coin de l'en-tête. */
+  .calque-fond { background: var(--ov1); }
+  .panneau, .panneau--profil {
+    position: fixed; top: auto; left: 0; right: 0; bottom: var(--hauteur-onglets);
+    width: auto; max-width: none; padding: 14px 8px 8px;
+    border-radius: var(--r-xl) var(--r-xl) 0 0; border-bottom: 0;
+    max-height: calc(100dvh - var(--hauteur-onglets) - 64px);
+    overscroll-behavior: contain;
+    animation: feuille var(--dur) var(--ease);
+  }
+  .panneau::before {
+    content: ''; position: absolute; top: 6px; left: 50%; margin-left: -20px;
+    width: 40px; height: 4px; border-radius: 2px; background: var(--line2);
+  }
+  .panneau-option { min-height: 44px; }
+  .panneau-remesurer { min-height: 44px; padding: 0 10px; }
+}
+@keyframes feuille { from { transform: translateY(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+/* base.css coupe déjà les durées sous prefers-reduced-motion ; la feuille n'a
+   donc rien de plus à déclarer. */

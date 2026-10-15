@@ -1,0 +1,41 @@
+/* ============================================================================
+   Lecteur IPTV — tokens CSS extraits de la maquette « Lecteur IPTV.dc.html »
+   Source : bloc <style> de la maquette, lignes 16-27 (copié intégralement).
+   Ordre de cascade : base (:root/dark|light) → [data-theme] (formes/durées)
+                      → [data-glass="on"] (optionnel)
+                      → [data-style="fluent"] (ACTIF dans la maquette, voir note)
+   NOTE : renderVals() force dstyle:'fluent' ; les blocs [data-style="fluent"]
+   sont donc toujours appliqués et écrasent la palette de base.
+   Polices du design system MOOV (colors_and_type.css) :
+     --moov-font-heading:'Sora','Helvetica Neue',sans-serif
+     --moov-font-body:'Plus Jakarta Sans','Helvetica Neue',sans-serif
+     --moov-font-mono:'JetBrains Mono','Courier New',monospace
+   (surchargées en Segoe UI Variable par le bloc [data-style="fluent"])
+   ========================================================================== */
+
+:root,[data-theme="dark"]{--bg:#0a0f16;--panel:#0d141e;--elev:#141d29;--hover:rgba(128,174,213,.08);--line:#1a2431;--line2:#26344a;--fg:#e7edf4;--fg2:#a3b3c5;--fg3:#7287a0;--acc:#4085bf;--acc-fg:#8eb7da;--acc-bg:rgba(64,133,191,.18);--err:#e9a0a0;--err-bg:rgba(194,31,31,.16);--lim:#febb8a;--lim-bg:rgba(236,102,7,.16);--cod:#e0b86a;--cod-bg:rgba(192,131,42,.16);--ok:#72d697;--video:#05080c;--plate:#eef2f6}
+[data-theme="light"]{--bg:#f8faff;--panel:#ffffff;--elev:#eff6ff;--hover:rgba(0,92,170,.06);--line:#dbeafe;--line2:#b3cee6;--fg:#0d1b2e;--fg2:#33506f;--fg3:#5b7897;--acc:#005CAA;--acc-fg:#005CAA;--acc-bg:#e6eff7;--err:#a51a1a;--err-bg:#fcf4f4;--lim:#b24b01;--lim-bg:#fef6f1;--cod:#7e521d;--cod-bg:#fbf7f0;--ok:#127e44;--video:#05080c;--plate:#ffffff}
+[data-theme]{--r-btn-sm:6px;--r-btn-md:8px;--w-strong:600;--dur:180ms;--ease:ease-out;--ctl-in:0px;--ctl-r:0px;--r-2xs:3px;--r-xs:4px;--r-sm:6px;--r-md:8px;--r-lg:10px;--r-xl:12px;--acc-ink:#fff;--vacc:#4085bf;--vacc-ink:#fff;--vacc-fg:#8eb7da;--pane:var(--panel);--blur:none;--bgfx:var(--bg);--ov1:rgba(5,8,12,.55);--ov2:rgba(5,8,12,.72);--ovblur:none}
+[data-glass="on"][data-theme="dark"]{--pane:rgba(16,24,36,.52);--bgfx:radial-gradient(60% 50% at 8% 0%,oklch(0.32 0.06 250 / .55),transparent 70%),radial-gradient(50% 45% at 100% 100%,oklch(0.3 0.05 200 / .45),transparent 70%),#080c12}
+[data-glass="on"][data-theme="light"]{--pane:rgba(255,255,255,.55);--bgfx:radial-gradient(60% 50% at 8% 0%,oklch(0.9 0.05 250 / .9),transparent 70%),radial-gradient(50% 45% at 100% 100%,oklch(0.92 0.04 200 / .9),transparent 70%),#f3f6fb}
+[data-glass="on"]{--blur:blur(22px) saturate(1.5);--ov1:rgba(10,15,22,.32);--ov2:rgba(10,15,22,.42);--ovblur:blur(18px) saturate(1.4);--line:rgba(160,190,225,.13)}
+[data-glass="on"][data-theme="light"]{--line:rgba(13,27,46,.08)}
+[data-style="fluent"]{--r-2xs:2px;--r-xs:4px;--r-sm:4px;--r-md:8px;--r-lg:8px;--r-xl:8px;--r-btn-sm:4px;--r-btn-md:4px;--w-strong:600;--dur:167ms;--ease:cubic-bezier(.33,0,.67,1);--ctl-in:8px;--ctl-r:8px;--moov-font-body:'Segoe UI Variable Text','Segoe UI',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--moov-font-heading:'Segoe UI Variable Display','Segoe UI',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--moov-font-mono:'Cascadia Mono','Cascadia Code',Consolas,ui-monospace,monospace}
+[data-style="fluent"][data-theme="dark"]{--bg:#202020;--panel:#1c1c1c;--card:#2b2b2b;--elev:#2d2d2d;--elev2:#3a3a3a;--hover:rgba(255,255,255,.06);--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--fg:#ffffff;--fg2:#d6d6d6;--fg3:#a3a3a3;--acc:#115ea3;--acc-ink:#ffffff;--acc-fg:#62abf5;--acc-bg:#0c2a45;--err:#e37d80;--err-bg:#3b0509;--lim:#faa06b;--lim-bg:#4a1e04;--cod:#ffd335;--cod-bg:#463100;--ok:#54b054;--plate:#ffffff;--vacc:#115ea3;--vacc-ink:#ffffff;--vacc-fg:#62abf5;--moov-shadow-md:0 0 2px rgba(0,0,0,.24),0 2px 4px rgba(0,0,0,.28);--moov-shadow-lg:0 0 2px rgba(0,0,0,.24),0 4px 8px rgba(0,0,0,.28);--moov-shadow-xl:0 0 2px rgba(0,0,0,.24),0 8px 16px rgba(0,0,0,.28);--moov-shadow-2xl:0 0 8px rgba(0,0,0,.24),0 14px 28px rgba(0,0,0,.28)}
+[data-style="fluent"][data-theme="light"]{--bg:#fafafa;--panel:#f0f0f0;--card:#ffffff;--elev:#ffffff;--elev2:#e6e6e6;--hover:rgba(0,0,0,.04);--line:rgba(0,0,0,.07);--line2:rgba(0,0,0,.16);--fg:#242424;--fg2:#424242;--fg3:#616161;--acc:#0f6cbd;--acc-ink:#ffffff;--acc-fg:#0f6cbd;--acc-bg:#ebf3fc;--err:#b10e1c;--err-bg:#fdf3f4;--lim:#bc4b09;--lim-bg:#fff9f5;--cod:#835b00;--cod-bg:#fff8df;--ok:#107c10;--plate:#ffffff;--vacc:#115ea3;--vacc-ink:#ffffff;--vacc-fg:#62abf5;--moov-shadow-md:0 0 2px rgba(0,0,0,.12),0 2px 4px rgba(0,0,0,.14);--moov-shadow-lg:0 0 2px rgba(0,0,0,.12),0 4px 8px rgba(0,0,0,.14);--moov-shadow-xl:0 0 2px rgba(0,0,0,.12),0 8px 16px rgba(0,0,0,.14);--moov-shadow-2xl:0 0 8px rgba(0,0,0,.12),0 14px 28px rgba(0,0,0,.14)}
+[data-style="fluent"][data-glass="on"][data-theme="dark"]{--pane:rgba(32,32,32,.74);--blur:blur(30px) saturate(1.25);--bgfx:#1e2126;--line:rgba(255,255,255,.07)}
+[data-style="fluent"][data-glass="on"][data-theme="light"]{--pane:rgba(243,243,243,.72);--blur:blur(30px) saturate(1.25);--bgfx:#eef1f6}
+
+/* --- Rappels de règles globales liées aux tokens (lignes 134-145) --------- */
+html,body{margin:0;height:100%;background:var(--bg,#202020)}
+*{box-sizing:border-box}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(128,160,200,.25);border-radius:var(--r-md);border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-track{background:transparent}
+input[type=range]{accent-color:var(--vacc)}
+:focus-visible{outline:2px solid var(--vacc-fg);outline-offset:1px}
+a{color:var(--vacc-fg)}
+a:hover{color:#e7edf4}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadein{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){*{animation-duration:0s!important;transition:none!important}}

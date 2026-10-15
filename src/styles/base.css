@@ -1,0 +1,45 @@
+/* Socle : densite et hierarchie typographique. Le brief vise >= 30 entrees
+   visibles en 1440p sans sensation d encombrement — la lisibilite vient du
+   corps et de la couleur, pas des bordures ni des cartes. */
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--bgfx, var(--bg));
+  color: var(--fg);
+  font-family: var(--moov-font-body);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { font-family: var(--moov-font-heading); font-weight: var(--w-strong); margin: 0; }
+h1 { font-size: 20px; }
+h2 { font-size: 16px; }
+h3 { font-size: 14px; }
+
+/* Durees, numeros de chaine et horaires du guide doivent s aligner (brief). */
+.num, time, .duree { font-variant-numeric: tabular-nums; }
+
+.secondaire { color: var(--fg2); }
+.tertiaire  { color: var(--fg3); }
+
+/* Troncature propre, libelle complet au survol via l attribut title. */
+.tronque { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+button {
+  font: inherit; color: inherit; background: none; border: 0;
+  border-radius: var(--r-btn-md); cursor: pointer;
+}
+button:hover { background: var(--hover); }
+
+input, select {
+  font: inherit; color: var(--fg);
+  background: var(--elev); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: 6px 10px;
+}
+
+/* Trois moments meritent une transition, et eux seuls (brief). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
