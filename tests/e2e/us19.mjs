@@ -35,7 +35,7 @@ async function nouvellePage(ctx, serveur) {
   const erreurs = []
   page.on('pageerror', (e) => erreurs.push(e.message))
   page.erreurs = erreurs
-  await page.goto(`${serveur.origine}/app/`)
+  await page.goto(`${serveur.origine}/`)
   return page
 }
 
@@ -263,13 +263,13 @@ const SCENARIOS = {
     await scenario(navigateur, {}, async ({ serveur, page }) => {
       await seConnecter(page)
       await attendre(catalogueComplet(page, serveur), { quoi: 'import' })
-      await page.goto(`${serveur.origine}/app/recherche?q=${encodeURIComponent('Film Test 12')}`)
+      await page.goto(`${serveur.origine}/recherche?q=${encodeURIComponent('Film Test 12')}`)
       await page.getByText('Film Test 12', { exact: true }).first().waitFor()
-      await page.goto(`${serveur.origine}/app/films`)
+      await page.goto(`${serveur.origine}/films`)
       await page.getByText('Film Test 1', { exact: false }).first().waitFor()
-      await page.goto(`${serveur.origine}/app/direct`)
+      await page.goto(`${serveur.origine}/direct`)
       await page.getByText('Chaîne 1', { exact: false }).first().waitFor()
-      await page.goto(`${serveur.origine}/app/series`)
+      await page.goto(`${serveur.origine}/series`)
       await page.getByText('Série Test 1', { exact: false }).first().waitFor()
     })
   },
@@ -279,7 +279,7 @@ const SCENARIOS = {
     await scenario(navigateur, {}, async ({ serveur, ctx, page }) => {
       await seConnecter(page)
       await attendre(catalogueComplet(page, serveur), { quoi: 'import' })
-      await page.goto(`${serveur.origine}/app/`)
+      await page.goto(`${serveur.origine}/`)
       const bouton = page.getByRole('button', { name: 'Ajouter aux favoris' }).first()
       await bouton.waitFor()
       await bouton.click()
@@ -319,7 +319,7 @@ const SCENARIOS = {
       }
 
       // Historique : ouvrir un film l'inscrit cote serveur sous son identifiant.
-      await page.goto(`${serveur.origine}/app/lecture/vod:iptva:5003`)
+      await page.goto(`${serveur.origine}/lecture/vod:iptva:5003`)
       await attendre(() => (serveur.etat.historique.get('p1')?.has('iptva:5003')), { delai: 10_000, quoi: 'PUT historique' })
 
       // Position de reprise : ecrite localement (comme le fait le lecteur), elle part au serveur...
@@ -341,7 +341,7 @@ const SCENARIOS = {
       }, { delai: 10_000, quoi: 'reprise recue du serveur' })
 
       // Episode : le serveur EXIGE la serie parente (le faux serveur renvoie 400 sinon).
-      await page.goto(`${serveur.origine}/app/serie/${encodeURIComponent('series:iptva:s5000')}`)
+      await page.goto(`${serveur.origine}/serie/${encodeURIComponent('series:iptva:s5000')}`)
       await page.getByText('Épisode 2').first().click()
       await attendre(() => [...(serveur.etat.historique.get('p1')?.values() ?? [])].some((h) => h.serie === 'iptva:s5000' && h.contenu.endsWith('.mkv')), { delai: 10_000, quoi: 'PUT historique episode avec serie' })
     })
@@ -456,7 +456,7 @@ const SCENARIOS = {
           tx.oncomplete = () => { db.close(); ok() }
         }
       }))
-      await page.goto(`${serveur.origine}/app/`)
+      await page.goto(`${serveur.origine}/`)
       await seConnecter(page)
       await attendre(catalogueComplet(page, serveur), { quoi: 'import apres migration' })
       assert.equal(await lireIdb(page, 'catalogue', 'live:123'), undefined, 'ancienne entree encore presente')
