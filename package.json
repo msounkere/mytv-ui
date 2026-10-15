@@ -3,13 +3,15 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Interface web de navigation et lecture pour le relais Xtream TuliProx",
+  "description": "Interface web de navigation et lecture pour le service mytv (API /api/v1)",
   "scripts": {
     "dev": "NODE_OPTIONS=--tls-max-v1.2 vite",
     "build": "tsc --noEmit && NODE_OPTIONS=--tls-max-v1.2 vite build",
     "preview": "NODE_OPTIONS=--tls-max-v1.2 vite preview",
     "check": "tsc --noEmit",
-    "test:unit": "node --test tests/unit/*.test.mjs"
+    "test:unit": "node --test tests/unit/*.test.mjs",
+    "test:e2e": "node tests/e2e/us19.mjs",
+    "test:dist": "node tests/dist-sans-secrets.mjs"
   },
   "dependencies": {
     "@solidjs/router": "^1.0.0",

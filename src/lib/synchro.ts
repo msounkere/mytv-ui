@@ -7,6 +7,7 @@ import {
   invaliderCategories, invaliderEpingles, invaliderFavoris, invaliderHistorique,
   invaliderReprises,
 } from './requetes'
+import { serieAssociee } from './series-episodes'
 import { fusionner, egaux, ecrireEnsemble, lireEnsemble, type Valeurs } from './reglages-fusion'
 import {
   cheminContenu, cleDe, clesCandidates, estIdentifiantEpisode, idServeurDeCle, serieDeCle,
@@ -121,7 +122,8 @@ async function envoyerGroupe(g: Groupe): Promise<boolean> {
   }
   // Le contrat EXIGE `serie` pour un episode et l'INTERDIT sinon (400) : sans
   // elle l'historique jugerait l'episode orphelin.
-  const serie = serieDeCle(id, r?.serie ? idServeurDeCle(r.serie) : undefined)
+  const serieLocale = r?.serie ?? h?.serie ?? serieAssociee(g.cle)
+  const serie = serieDeCle(id, serieLocale ? idServeurDeCle(serieLocale) : undefined)
   if (serie === 'requise') return false
   if (serie !== undefined) corps.serie = serie
   await envoyer(`/profil/historique/${chemin}`, { methode: 'PUT', corps })
@@ -246,8 +248,8 @@ async function tirerHistorique(): Promise<{ historique: boolean; reprises: boole
     if (gardees.has(cle)) continue
     const serie = l.serie ? cleDe('series', l.serie) : undefined
     const h = await db.historique.get(cle)
-    if (h?.ouvertLe !== vu) {
-      await db.historique.put({ cle, ouvertLe: vu })
+    if (h?.ouvertLe !== vu || h.serie !== serie) {
+      await db.historique.put({ cle, ouvertLe: vu, serie })
       historique = true
     }
     const rp = await db.reprises.get(cle)

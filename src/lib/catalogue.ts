@@ -3,6 +3,7 @@ import { db, type TypeContenu, type EntreeCatalogue } from './db'
 import { ErreurLecteur, type Couche } from './errors'
 import type { AvancementImport, DepuisWorker, VersWorker } from './import.worker'
 import { signalerSessionPerdue } from './api'
+import { estConnecte } from './auth'
 import { invaliderCatalogue } from './requetes'
 import { reindexer } from './recherche-client'
 
@@ -81,6 +82,8 @@ let enCours: Promise<ResultatImport | undefined> | undefined
  * declencheur automatique que personne n'attend.
  */
 export function mettreAJourCatalogue(force = false): Promise<ResultatImport | undefined> {
+  // Les minuteurs survivent a la deconnexion : sans session, il n'y a rien a demander.
+  if (!estConnecte()) return Promise.resolve(undefined)
   if (!enCours) {
     enCours = (async () => {
       poserEtatCatalogue('import')

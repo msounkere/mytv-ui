@@ -1,5 +1,6 @@
 import { db, type EntreeCatalogue } from './db'
 import { noterChangement } from './synchro'
+import { associerSerie, serieAssociee } from './series-episodes'
 import {
   invaliderFavoris, invaliderHistorique, invaliderReprises, invaliderReprisesRegroupees,
 } from './requetes'
@@ -44,20 +45,13 @@ export async function historiqueRecent(limite = 20): Promise<EntreeCatalogue[]> 
   return entrees.filter((e): e is EntreeCatalogue => e !== undefined)
 }
 
-/**
- * Série parente des épisodes en cours de lecture. Le serveur range l'historique
- * d'un épisode sous sa série et la REFUSE sans elle ; le lecteur, lui, ne
- * connaît que la clé de l'épisode. La fiche série (seule à savoir) la déclare
- * ici avant le lancement.
- */
-const seriesDesEpisodes = new Map<string, string>()
-
-export function associerSerie(episode: string, serie: string): void {
-  seriesDesEpisodes.set(episode, serie)
-}
+export { associerSerie }
 
 export async function noterOuverture(cle: string): Promise<unknown> {
-  const r = await db.historique.put({ cle, ouvertLe: Date.now() })
+  // Pour un episode, la serie voyage avec la trace : sans elle le service refuse
+  // l'ecriture, et l'envoi (differe, parfois apres un rechargement) ne saurait
+  // plus la retrouver.
+  const r = await db.historique.put({ cle, ouvertLe: Date.now(), serie: serieAssociee(cle) })
   // L'instant d'ouverture EST la valeur de l'historique : la fusion « dernier
   // changement gagne » revient donc exactement à « la dernière machine qui a
   // regardé fait foi », sans règle particulière à écrire côté serveur.
@@ -82,7 +76,7 @@ export async function reprisePour(cle: string): Promise<number | undefined> {
 
 export async function noterPosition(cle: string, position: number, duree: number): Promise<unknown> {
   if (!Number.isFinite(duree) || duree <= 0) return Promise.resolve()
-  const serie = seriesDesEpisodes.get(cle) ?? (await db.reprises.get(cle))?.serie
+  const serie = serieAssociee(cle) ?? (await db.reprises.get(cle))?.serie
   const r = await db.reprises.put({ cle, position, duree, vuLe: Date.now(), serie })
   noterChangement({ genre: 'reprise', cle, valeur: { position, duree } })
   // Regroupée : cet appel revient toutes les cinq secondes pendant la lecture.

@@ -105,7 +105,8 @@ async function cloisonner(identite: string): Promise<void> {
       if (/^(synchro\.|epingles\.)/.test(String(r.cle))) await db.reglages.delete(r.cle)
   })
   // Les categories masquees sont un reglage de profil, lui aussi.
-  await db.categories.where('masquee').equals(1).modify({ masquee: 0 }).catch(() => undefined)
+  for (const t of ['live', 'vod', 'series'])
+    await db.categories.where('[type+masquee]').equals([t, 1]).modify({ masquee: 0 })
   const { invaliderTout } = await import('./requetes')
   await invaliderTout()
 }
@@ -261,6 +262,11 @@ export async function supprimerProfil(id: string): Promise<void> {
 export async function choisirProfil(id: string): Promise<void> {
   const s = session()
   if (!s) return
+  // Les gestes du profil quitte qui attendent d'etre envoyes (hors ligne, delai
+  // de 2,5 s) partiraient sinon dans le vide : l'etat local est vide au
+  // changement de profil. Au mieux : si le service est muet, le changement
+  // lui-meme echouera juste apres et rien ne sera perdu.
+  await import('./synchro').then((m) => m.synchroniser())
   await envoyer('/compte/profil-actif', { methode: 'PUT', corps: { profil_id: id } })
   const suivant = { ...s, profilId: id }
   poserSessionInterne(suivant)

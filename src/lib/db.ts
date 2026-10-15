@@ -75,6 +75,8 @@ export interface Reprise {
 export interface Historique {
   cle: string
   ouvertLe: number
+  /** Episodes : serie parente (voir `Reprise.serie`). */
+  serie?: string
 }
 
 export interface Reglage {
