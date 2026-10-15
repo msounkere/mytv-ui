@@ -35,6 +35,19 @@ async function attendre(condition, { delai = 15_000, pas = 100, quoi = 'conditio
   }
 }
 
+const lireVersionImport = (page) =>
+  page.evaluate(() => new Promise((ok) => {
+    const r = indexedDB.open('mytv')
+    r.onerror = () => ok(undefined)
+    r.onsuccess = () => {
+      const d = r.result
+      if (!d.objectStoreNames.contains('reglages')) { d.close(); return ok(undefined) }
+      const q = d.transaction('reglages').objectStore('reglages').get('catalogue.version')
+      q.onsuccess = () => { d.close(); ok(q.result?.valeur) }
+      q.onerror = () => { d.close(); ok(undefined) }
+    }
+  }))
+
 async function scenario(navigateur, options, corps) {
   const serveur = await demarrerServeurFactice({ dist: DIST, ...options })
   const ctx = await contexte(navigateur, options.largeur)
@@ -48,6 +61,10 @@ async function scenario(navigateur, options, corps) {
     await page.getByRole('button', { name: 'Se connecter' }).click()
     await page.getByPlaceholder('Nom du profil').fill('Salon')
     await page.getByRole('button', { name: 'Créer et utiliser' }).click()
+    // Premier import termine, puis rechargement : « A la une » peut sinon rester vide si elle
+    // a lu le catalogue en cours d'import (course connue de l'Accueil, sans rapport avec les details).
+    await attendre(async () => (await lireVersionImport(page)) === serveur.etat.version, { quoi: 'import du catalogue' })
+    await page.reload()
     await corps({ serveur, page, ctx })
     assert.deepEqual(erreurs, [], `erreurs de page : ${erreurs.join(' | ')}`)
   } finally {
