@@ -5,3 +5,5 @@ captures/
 .env*.local
 test-results/
 playwright-report/
+
+tests/e2e/.dist-harnais/
