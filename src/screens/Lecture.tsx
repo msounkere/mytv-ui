@@ -600,7 +600,7 @@ export default function Lecture(props: {
   }
 
   const etatMini = () =>
-    erreur() ? 'Erreur de lecture' : chargement() ? 'Connexion…' : enPause() ? 'En pause' : undefined
+    erreur() ? (erreur()!.couche === 'fournisseur' ? 'Abonnement refusé' : 'Erreur de lecture') : chargement() ? 'Connexion…' : enPause() ? 'En pause' : undefined
 
   const horaireEnCours = createMemo(() => {
     const p = zapping.enCours()

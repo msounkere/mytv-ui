@@ -66,6 +66,8 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     latenceChunk,
     profilsMax: 10,
     sessionNom: false, // true : GET /compte rend `session.nom` (US-16b)
+    admin: false, // true : la session est celle d'un administrateur (US-25)
+    fournisseurs: [], // reponse de GET /admin/fournisseurs (US-25)
   }
   let nProfil = 0
   const reg = (p) => {
@@ -156,6 +158,8 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
         etat.historique.get(c.profil).set(c.contenu, { contenu: c.contenu, position: c.position, duree: c.duree, vu: new Date().toISOString() })
         return json(res, 200, {})
       }
+      if (op === 'admin') { etat.admin = !!c.actif; return json(res, 200, {}) }
+      if (op === 'fournisseurs') { etat.fournisseurs = c.lignes; return json(res, 200, {}) }
       if (op === 'session-nom') { etat.sessionNom = c.actif; return json(res, 200, {}) }
       if (op === 'latence') { etat.latenceChunk = c.ms; return json(res, 200, {}) }
       return erreur(res, 404, 'inconnu')
@@ -189,17 +193,21 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
       const j = crypto.randomBytes(16).toString('hex')
       etat.sessions.set(j, { profil: undefined })
       res.setHeader('Set-Cookie', `mytv=${j}; Path=/; HttpOnly; SameSite=Lax`)
-      return json(res, 200, { id: 's-' + j.slice(0, 6), admin: false, expire: new Date(Date.now() + 3600e3).toISOString() })
+      return json(res, 200, { id: 's-' + j.slice(0, 6), admin: etat.admin, expire: new Date(Date.now() + 3600e3).toISOString() })
     }
     if (!s) return erreur(res, 401, 'non_authentifie', 'Session absente ou expiree')
 
     if (p === '/deconnexion') { etat.sessions.delete(jeton(req)); res.setHeader('Set-Cookie', 'mytv=; Path=/; Max-Age=0; HttpOnly'); res.writeHead(204); return res.end() }
     if (p === '/compte') {
       return json(res, 200, {
-        session: { id: 's1', ...(etat.sessionNom ? { nom: COMPTE } : {}), admin: false, ...(s.profil ? { profil_id: s.profil } : {}), expire: new Date(Date.now() + 3600e3).toISOString() },
+        session: { id: 's1', ...(etat.sessionNom ? { nom: COMPTE } : {}), admin: etat.admin, ...(s.profil ? { profil_id: s.profil } : {}), expire: new Date(Date.now() + 3600e3).toISOString() },
         profils: etat.profils,
         limites: { pagination_max: 200, grille_fenetre: 21600, favoris_max: 500, historique_max: 500, reglages_octets_max: 8192 },
       })
+    }
+    if (p === '/admin/fournisseurs') {
+      if (!etat.admin) return erreur(res, 403, 'interdit', 'Reserve aux administrateurs')
+      return json(res, 200, { fournisseurs: etat.fournisseurs })
     }
     if (p === '/compte/profils' && req.method === 'GET') return json(res, 200, { elements: etat.profils })
     if (p === '/compte/profils' && req.method === 'POST') {

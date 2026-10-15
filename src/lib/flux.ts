@@ -140,7 +140,13 @@ export async function planVod(opts: OptionsPlan): Promise<Plan> {
   }
   if (!r.ok) {
     signalerSiNonAuthentifie(r.status)
-    throw erreurDeStatut(r.status, { retryAfter: r.headers.get('Retry-After'), contexte: 'film' })
+    // Pas de corps sur un HEAD : le code d'erreur est lu dans l'en-tete du serveur.
+    throw erreurDeStatut(r.status, {
+      retryAfter: r.headers.get('Retry-After'),
+      code: r.headers.get('X-Mytv-Erreur') ?? undefined,
+      expiration: r.headers.get('X-Mytv-Expiration'),
+      contexte: 'film',
+    })
   }
   const { mode, dureeSecondes } = lireEnTetesVod(r.headers)
   const viaService = mode !== 'direct'

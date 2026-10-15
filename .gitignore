@@ -6,3 +6,4 @@ captures/
 test-results/
 playwright-report/
 tests/e2e/.dist-harnais/
+tests/e2e/.dist-us25/

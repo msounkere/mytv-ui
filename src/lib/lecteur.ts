@@ -148,12 +148,12 @@ export async function attacher(
   }
 }
 
-/** `Retry-After` de la reponse en cause : hls.js la rend en XHR ou en Response. */
-function retryAfterDe(details: unknown): string | null {
+/** En-tete de la reponse en cause : hls.js la rend en XHR ou en Response. */
+function enteteDe(details: unknown, nom: string): string | null {
   const d = details as
     | { getResponseHeader?: (n: string) => string | null; headers?: { get?: (n: string) => string | null } }
     | undefined
-  return d?.getResponseHeader?.('Retry-After') ?? d?.headers?.get?.('Retry-After') ?? null
+  return d?.getResponseHeader?.(nom) ?? d?.headers?.get?.(nom) ?? null
 }
 
 export function traduireHls(
@@ -164,7 +164,14 @@ export function traduireHls(
   // Tout statut HTTP connu (401, 403, 404, 503...) a sa traduction : le 503
   // devient « place occupee » avec son delai, le 401 un retour a la connexion.
   if (code !== undefined && code >= 400)
-    return erreurDeStatut(code, { retryAfter: retryAfterDe(data.networkDetails), contexte: data.details })
+    return erreurDeStatut(code, {
+      retryAfter: enteteDe(data.networkDetails, 'Retry-After'),
+      // hls.js ne rend jamais le corps d'une reponse en echec : le serveur repete
+      // le code (et la date d'expiration) dans des en-tetes.
+      code: enteteDe(data.networkDetails, 'X-Mytv-Erreur') ?? undefined,
+      expiration: enteteDe(data.networkDetails, 'X-Mytv-Expiration'),
+      contexte: data.details,
+    })
   if (data.type === Ctor.ErrorTypes.NETWORK_ERROR)
     return new ErreurLecteur(
       'reseau',

@@ -1,4 +1,4 @@
-import { ErreurLecteur, type Couche } from './errors'
+import { ErreurLecteur, erreurFournisseur, type Couche } from './errors'
 
 // Couche reseau UNIQUE de l'interface vers `/api/v1` (contrat : docs/openapi.yaml
 // du serveur). Tout ce qui parle au service passe ici, pour que trois regles
@@ -20,6 +20,8 @@ export class ErreurApi extends Error {
     message: string,
     /** Secondes, quand le service demande d'attendre (429, 503). */
     readonly retryApres?: number,
+    /** Date d'expiration de l'abonnement (`fournisseur_compte_invalide`), si le serveur la donne. */
+    readonly expiration?: string,
   ) {
     super(message)
     this.name = 'ErreurApi'
@@ -70,14 +72,16 @@ function retryApres(r: Response): number | undefined {
 export async function erreurDe(r: Response): Promise<ErreurApi> {
   let code = 'inconnue'
   let message = `Reponse inattendue du service (${r.status}).`
+  let expiration: string | undefined
   try {
-    const c = (await r.json()) as { code?: unknown; message?: unknown }
+    const c = (await r.json()) as { code?: unknown; message?: unknown; expiration?: unknown }
     if (typeof c.code === 'string') code = c.code
     if (typeof c.message === 'string') message = c.message
+    if (typeof c.expiration === 'string') expiration = c.expiration
   } catch {
     // Corps illisible : le statut suffit.
   }
-  return new ErreurApi(r.status, code, message, retryApres(r))
+  return new ErreurApi(r.status, code, message, retryApres(r), expiration)
 }
 
 /** Appel brut : renvoie la reponse si 2xx ou 304, sinon leve `ErreurApi`. */
@@ -128,6 +132,9 @@ export function versErreurLecteur(e: unknown, action = 'Reessayer.'): ErreurLect
   if (e instanceof ErreurReseau)
     return new ErreurLecteur('reseau', 'Le service est injoignable.', 'Verifier la connexion, puis reessayer.', e.message)
   if (e instanceof ErreurApi) {
+    // Compte ou adresse refuses par le fournisseur : message dedie, pas un « relais » generique.
+    const f = e.statut === 502 ? erreurFournisseur(e.code, e.expiration, `HTTP ${e.statut} ${e.code}`) : undefined
+    if (f) return f
     const couche: Couche =
       e.statut === 401 || e.statut === 403 ? 'auth' : e.statut === 429 || e.statut === 503 ? 'limite' : 'relais'
     return new ErreurLecteur(couche, e.message, action, `HTTP ${e.statut} ${e.code}`)

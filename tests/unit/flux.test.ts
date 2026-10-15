@@ -71,6 +71,25 @@ test('503 : place occupee avec le Retry-After du serveur', async () => {
   )
 })
 
+// US-25 CA5 : un HEAD n'a pas de corps ; le code du fournisseur est dans l'en-tete.
+test('502 fournisseur_compte_invalide lu dans X-Mytv-Erreur (HEAD) : abonnement expire, sans reessai', async () => {
+  await assert.rejects(
+    planVod({
+      lecture: '/api/v1/vod/iptva:1',
+      fetchImpl: async () => reponse(502, { 'X-Mytv-Erreur': 'fournisseur_compte_invalide', 'X-Mytv-Expiration': '2026-10-01T00:00:00Z' }),
+    }),
+    (e: { couche: string; message: string }) => e.couche === 'fournisseur' && /Abonnement expiré ou refusé par le fournisseur \(.*1 octobre 2026\)/.test(e.message),
+  )
+  await assert.rejects(
+    planVod({ lecture: '/api/v1/vod/iptva:1', fetchImpl: async () => reponse(502, { 'X-Mytv-Erreur': 'fournisseur_adresse_refusee' }) }),
+    (e: { couche: string; message: string }) => e.couche === 'fournisseur' && /Adresse du serveur refusée/.test(e.message),
+  )
+  await assert.rejects(
+    planVod({ lecture: '/api/v1/vod/iptva:1', fetchImpl: async () => reponse(502, { 'X-Mytv-Erreur': 'fournisseur_indisponible' }) }),
+    (e: { couche: string }) => e.couche === 'relais',
+  )
+})
+
 test('401 : couche auth, et la session expiree est signalee', async () => {
   let signale = 0
   const g = globalThis as { window?: unknown }

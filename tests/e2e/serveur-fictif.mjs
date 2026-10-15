@@ -9,6 +9,11 @@
 //   chaine 1003  503 sans fin                  film iptva:102  415 format_non_lisible
 //   chaine 1004  401                           film iptva:103  503 une fois, puis normal
 //   chaine 1005  502 une fois, puis normale    film iptva:104  401
+//   chaine 1006  502 fournisseur_compte_invalide (expiration connue), jamais de reprise
+//   chaine 1007  502 fournisseur_adresse_refusee
+//   chaine 1008  502 fournisseur_compte_invalide sans date          film iptva:105  idem (HEAD sans corps)
+//   chaine 1009  les deux premiers segments passent, puis le compte « expire » : 502 fournisseur_compte_invalide
+//   (US-25 : comme le vrai serveur, le code est aussi dans l'en-tete X-Mytv-Erreur)
 import { createServer } from 'node:http'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
@@ -40,6 +45,13 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
     res.end(JSON.stringify(corps))
   }
   const erreur = (res, statut, code, message, entetes = {}) => json(res, statut, { code, message }, entetes)
+  const EXPIRATION = '2026-10-01T00:00:00Z'
+  /** 502 « fournisseur » comme le serveur : corps {code, message[, expiration]} + en-tetes. */
+  const refus = (res, code, avecDate = true) => {
+    const message = code === 'fournisseur_compte_invalide' ? 'abonnement expire ou refuse par le fournisseur' : 'adresse refusee'
+    const date = code === 'fournisseur_compte_invalide' && avecDate ? EXPIRATION : undefined
+    json(res, 502, { code, message, ...(date ? { expiration: date } : {}) }, { 'X-Mytv-Erreur': code, ...(date ? { 'X-Mytv-Expiration': date } : {}) })
+  }
 
   function playlist(chaine) {
     // Segments STABLES d'une playlist a l'autre : meme jeton pour meme numero.
@@ -73,6 +85,11 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
     const numero = id.replace(/^iptva:/, '')
     if (numero === '104') return erreur(res, 401, 'non_authentifie', 'session expiree')
     if (numero === '102') return erreur(res, 415, 'format_non_lisible', 'HEVC')
+    if (numero === '105') {
+      // Un HEAD n'a pas de corps : seuls les en-tetes disent pourquoi.
+      if (tete) return res.writeHead(502, { 'X-Mytv-Erreur': 'fournisseur_compte_invalide', 'X-Mytv-Expiration': EXPIRATION }), res.end()
+      return refus(res, 'fournisseur_compte_invalide')
+    }
     if (numero === '103' && fois('vod103') === 1) return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
     const remux = numero === '101'
     const entetes = { 'Content-Type': remux ? 'video/mp4' : 'audio/mpeg', 'Cache-Control': 'private, no-store' }
@@ -111,6 +128,9 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
       if ((m = /^\/live\/([A-Za-z0-9_-]+)\.m3u8$/.exec(r))) {
         const chaine = m[1]
         if (chaine === '1004') return erreur(res, 401, 'non_authentifie', 'session expiree')
+        if (chaine === '1006') return refus(res, 'fournisseur_compte_invalide')
+        if (chaine === '1007') return refus(res, 'fournisseur_adresse_refusee')
+        if (chaine === '1008') return refus(res, 'fournisseur_compte_invalide', false)
         if (chaine === '1003') return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
         if (chaine === '1002' && fois('live1002') <= 2) return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
         if (chaine === '1005' && fois('live1005') === 1) return erreur(res, 502, 'amont', 'amont indisponible')
@@ -118,6 +138,7 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
         return res.end(playlist(chaine))
       }
       if ((m = /^\/live\/([A-Za-z0-9_-]+)\/seg\/jeton(\d+)$/.exec(r))) {
+        if (m[1] === '1009' && Number(m[2]) >= 2) return refus(res, 'fournisseur_compte_invalide')
         res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' })
         return res.end(segmentTs(Number(m[2]), DUREE_SEGMENT))
       }
