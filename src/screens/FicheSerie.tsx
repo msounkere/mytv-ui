@@ -13,6 +13,10 @@ import {
 import ListeVirtuelle from '../components/ListeVirtuelle'
 import SubstitutLogo from '../components/SubstitutLogo'
 import EtiquettePays from '../components/EtiquettePays'
+import Icone from '../components/Icone'
+import ResumeContenu from '../components/ResumeContenu'
+import FaitsContenu from '../components/FaitsContenu'
+import { cibleDe, dureeLongue, useDetails } from '../lib/details'
 import { audioLisible, separerPrefixe } from '../lib/libelles'
 import { json, versErreurLecteur, type SaisonApi } from '../lib/api'
 import { cheminContenu } from '../lib/identifiants'
@@ -32,14 +36,16 @@ import type { EntreeCatalogue } from '../lib/db'
 // il est conserve pour ne pas reecrire l ecran. `fiche.json` le remplit depuis
 // `/series/{id}/saisons` (contrat v1) : saisons -> episodes, chacun avec son
 // identifiant `fournisseur:numero.ext` et son adresse de lecture relative.
-// Le contrat ne donne NI synopsis, NI genre, NI vignette d episode : ces champs
-// restent simplement absents, et l ecran les masque deja quand ils manquent.
+// Synopsis, genre, casting et bande-annonce de la SERIE viennent de `/series/{id}`
+// (details demandes a l'ouverture de la fiche, US-28) ; synopsis, vignette et date
+// de chaque EPISODE viennent des saisons. Tout champ absent est simplement masque.
 
 interface PisteFfprobe {
   codec_name?: string
 }
 
 interface InfoEpisodeBrut {
+  plot?: string
   duration_secs?: number
   duration?: string
   movie_image?: string
@@ -98,6 +104,7 @@ interface Episode {
   url: string
   extension: string
   vignette?: string
+  synopsis?: string
   dureeSecondes?: number
   /** Renseigne seulement si le navigateur ne saura pas le decoder. */
   codecAudioMuet?: string
@@ -172,7 +179,11 @@ export default function FicheSerie(props: {
     return brut ? separerPrefixe(brut).titre : props.serie.nom
   })
 
-  const jaquette = createMemo(() => fiche()?.info?.cover ?? props.serie.icone)
+  // Details de la serie, demandes A L'OUVERTURE de la fiche (jamais par carte de liste).
+  // Independants des saisons : un echec ici ne cache pas les episodes.
+  const [details, { refetch: relancerDetails }] = useDetails(() => cibleDe(props.serie))
+
+  const jaquette = createMemo(() => details()?.affiche ?? props.serie.icone)
 
   const saisons = createMemo<Saison[]>(() => {
     const f = fiche()
@@ -229,6 +240,7 @@ export default function FicheSerie(props: {
           url: e.lecture ?? '',
           extension,
           vignette: e.info?.movie_image || undefined,
+          synopsis: e.info?.plot || undefined,
           dureeSecondes: typeof e.info?.duration_secs === 'number' ? e.info.duration_secs : undefined,
           codecAudioMuet: codec && !audioLisible(codec) ? codec.toUpperCase() : undefined,
           diffuseLe: e.info?.air_date || undefined,
@@ -286,7 +298,7 @@ export default function FicheSerie(props: {
   const Ligne = (e: Episode) => (
     <button
       onClick={() => lire(e)}
-      title={`${e.titre}${e.dureeSecondes ? ` · ${dureeLisible(e.dureeSecondes)}` : ''}`}
+      title={`${e.titre}${e.dureeSecondes ? ` · ${dureeLisible(e.dureeSecondes)}` : ''}${e.synopsis ? `\n${e.synopsis}` : ''}`}
       style={{
         display: 'flex', 'align-items': 'center', gap: estMobile() ? '10px' : '12px',
         width: '100%', height: '100%', padding: estMobile() ? '8px 12px' : '8px 14px', 'text-align': 'left',
@@ -330,6 +342,11 @@ export default function FicheSerie(props: {
             )}
           </Show>
         </span>
+        <Show when={e.synopsis}>
+          {(r) => (
+            <span data-role="episode-resume" class="tertiaire tronque" style={{ display: 'block', 'font-size': '12px' }}>{r()}</span>
+          )}
+        </Show>
       </span>
 
       <Show when={etatDe(e.cle) === 'vu'}>
@@ -419,7 +436,7 @@ export default function FicheSerie(props: {
         </Match>
 
         <Match when={fiche()}>
-          {(f) => (
+          {(_f) => (
             <div style={{ display: 'grid', 'grid-template-rows': 'auto auto 1fr', 'min-height': 0 }}>
               <header
                 style={{
@@ -439,28 +456,51 @@ export default function FicheSerie(props: {
                     <h1 class="tronque" title={titreSerie()}>{titreSerie()}</h1>
                   </div>
 
-                  <p class="secondaire" style={{ margin: '4px 0 0', 'font-size': '13px' }}>
+                  <p class="secondaire" data-role="meta" style={{ margin: '4px 0 0', 'font-size': '13px' }}>
                     <span class="num">{saisons().length}</span> saison{saisons().length > 1 ? 's' : ''}
                     {' · '}
                     <span class="num">{totalEpisodes()}</span> épisodes
-                    <Show when={f().info?.genre}>{(g) => <> · <span class="tronque">{g()}</span></>}</Show>
-                    <Show when={anneeDe(f().info)}>{(a) => <> · <span class="num">{a()}</span></>}</Show>
-                    <Show when={f().info?.rating}>{(r) => <> · <span class="num">{r()}/10</span></>}</Show>
+                    <Show when={details()?.genre}>{(g) => <> · <span class="tronque">{g()}</span></>}</Show>
+                    <Show when={details()?.annee ?? (props.serie.annee ? String(props.serie.annee) : undefined)}>
+                      {(a) => <> · <span class="num">{a()}</span></>}
+                    </Show>
+                    <Show when={details()?.note ?? props.serie.note}>
+                      {(r) => <> · <span class="num">{r().toLocaleString('fr-FR', { maximumFractionDigits: 1 })}/10</span></>}
+                    </Show>
+                    <Show when={dureeLongue(details()?.dureeSecondes)}>
+                      {(d) => <> · <span class="num">{d()} par épisode</span></>}
+                    </Show>
                   </p>
 
-                  <Show
-                    when={f().info?.plot}
-                    fallback={<p class="tertiaire" style={{ margin: '8px 0 0', 'font-size': '13px' }}>Aucun resume fourni par le relais.</p>}
-                  >
-                    {(plot) => (
-                      <p
-                        class="secondaire"
-                        style={{ margin: '8px 0 0', 'max-height': '5.8em', overflow: 'auto', 'font-size': '13px' }}
-                      >
-                        {plot()}
-                      </p>
-                    )}
-                  </Show>
+                  <ResumeContenu
+                    details={details()}
+                    erreur={details.error}
+                    attendu={cibleDe(props.serie) !== undefined}
+                    surReessayer={() => void relancerDetails()}
+                    style={{ margin: '8px 0 0', 'max-height': '7.2em', overflow: 'auto', 'font-size': '13px', color: 'var(--fg2)' }}
+                  />
+
+                  <div style={{ 'margin-top': '8px', display: 'flex', 'flex-wrap': 'wrap', 'align-items': 'center', gap: '8px 16px' }}>
+                    <FaitsContenu details={details()} />
+                    <Show when={details()?.bandeAnnonce}>
+                      {(href) => (
+                        <a
+                          href={href()}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-role="bande-annonce"
+                          style={{
+                            display: 'flex', 'align-items': 'center', gap: '6px', padding: '4px 12px 4px 8px',
+                            border: '1px solid var(--line2)', 'border-radius': 'var(--r-btn-sm)', color: 'inherit',
+                            'text-decoration': 'none', 'min-height': hauteurCible(),
+                          }}
+                        >
+                          <Icone nom="movie" taille={16} />
+                          Bande-annonce
+                        </a>
+                      )}
+                    </Show>
+                  </div>
                 </div>
               </header>
 
@@ -539,7 +579,16 @@ export function versFiche(saisons: SaisonApi[]): FicheBrute | null {
       title: e.titre,
       container_extension: e.extension,
       season: s.numero,
-      info: e.duree > 0 ? { duration_secs: e.duree } : undefined,
+      info:
+        e.duree > 0 || e.synopsis || e.image || e.sortie
+          ? {
+              duration_secs: e.duree > 0 ? e.duree : undefined,
+              plot: e.synopsis,
+              movie_image: e.image,
+              air_date: e.sortie,
+              rating: e.note,
+            }
+          : undefined,
     }))
   return { episodes }
 }
@@ -577,10 +626,4 @@ function dureeLisible(secondes: number | undefined): string | undefined {
   const h = Math.floor(total / 3600)
   const m = Math.floor((total % 3600) / 60)
   return `${h} h ${String(m).padStart(2, '0')}`
-}
-
-function anneeDe(info: InfoSerieBrute | undefined): string | undefined {
-  const date = info?.releaseDate ?? info?.release_date
-  const m = date ? /\d{4}/.exec(date) : null
-  return m?.[0]
 }

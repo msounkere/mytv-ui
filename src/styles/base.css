@@ -43,3 +43,8 @@ input, select {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* Squelette de chargement (US-28) : un texte qui arrive plus tard garde sa place. */
+@keyframes pulse-squelette{50%{opacity:.45}}
+.squelette{display:block;height:12px;border-radius:var(--r-2xs, 2px);background:color-mix(in srgb, currentColor 18%, transparent);animation:pulse-squelette 1.4s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.squelette{animation:none}}

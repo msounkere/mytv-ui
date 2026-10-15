@@ -15,7 +15,7 @@ import { associerSerie } from './lib/preferences'
 // l'URL finit toujours par la contredire. Le bouton retour du navigateur, un
 // rechargement et un lien partagé reposent sur le même chemin que le rail.
 
-export type Ecran = 'accueil' | 'recherche' | 'parcours' | 'lecture' | 'serie' | 'guide' | 'reglages'
+export type Ecran = 'accueil' | 'recherche' | 'parcours' | 'lecture' | 'serie' | 'film' | 'guide' | 'reglages'
 
 /** Écrans qu'une URL désigne à elle seule, sans identifiant de contenu. */
 export type EcranSimple = 'accueil' | 'parcours' | 'guide' | 'reglages'
@@ -76,6 +76,8 @@ function ecranDuChemin(chemin: string): Ecran {
       return 'lecture'
     case 'serie':
       return 'serie'
+    case 'film':
+      return 'film'
     // Chemin vide comme chemin inconnu : le routeur renvoie déjà l'inconnu sur
     // l'accueil, et répondre « accueil » ici évite un écran vide entre-temps.
     default:
@@ -84,7 +86,7 @@ function ecranDuChemin(chemin: string): Ecran {
 }
 
 /** Clé du contenu portée par `/lecture/<clé>` ou `/serie/<clé>`. */
-function cleDuChemin(chemin: string, prefixe: 'lecture' | 'serie'): string | undefined {
+function cleDuChemin(chemin: string, prefixe: 'lecture' | 'serie' | 'film'): string | undefined {
   const parts = chemin.split('/').filter(Boolean)
   const cle = parts[1]
   return parts[0] === prefixe && cle ? decoder(cle) : undefined
@@ -121,6 +123,7 @@ export function brancherRouteur(chemin: () => string, navigation: Aller): void {
 export const ecran = (): Ecran => ecranDuChemin(lireChemin())
 export const cleLecture = (): string | undefined => cleDuChemin(lireChemin(), 'lecture')
 export const cleFiche = (): string | undefined => cleDuChemin(lireChemin(), 'serie')
+export const cleFicheFilm = (): string | undefined => cleDuChemin(lireChemin(), 'film')
 
 export function poserEcran(e: EcranSimple): void {
   aller(e === 'parcours' ? CHEMIN_ONGLET[onglet()] : CHEMIN[e])
@@ -153,8 +156,9 @@ const [selection, poserSelection] = createSignal<EntreeCatalogue | null>(null)
 const [urlEpisode, poserUrlEpisode] = createSignal<string | undefined>(undefined)
 const [episodeSuivant, poserEpisodeSuivant] = createSignal<Episode | undefined>(undefined)
 const [serieOuverte, poserSerieOuverte] = createSignal<EntreeCatalogue | null>(null)
+const [filmOuvert, poserFilmOuvert] = createSignal<EntreeCatalogue | null>(null)
 
-export { selection, poserSelection, urlEpisode, episodeSuivant, serieOuverte, poserSerieOuverte }
+export { selection, poserSelection, urlEpisode, episodeSuivant, serieOuverte, poserSerieOuverte, filmOuvert, poserFilmOuvert }
 
 const cheminLecture = (cle: string) => `/lecture/${cle}`
 
@@ -174,6 +178,20 @@ export function ouvrir(e: EntreeCatalogue): void {
     poserSelection(e)
     aller(cheminLecture(e.cle))
   })
+}
+
+/**
+ * Fiche d'un film (synopsis, genre, casting...) AVANT de le lancer : « Voir les
+ * details » de l'encart « A la une ». Cliquer un film dans une liste continue de
+ * le lire directement. Une serie a toujours sa fiche.
+ */
+export function ouvrirDetails(e: EntreeCatalogue): void {
+  if (e.type === 'vod') {
+    poserFilmOuvert(e)
+    aller(`/film/${e.cle}`)
+    return
+  }
+  ouvrir(e)
 }
 
 export function ouvrirFiche(e: EntreeCatalogue): void {
@@ -243,6 +261,7 @@ export function oublierContenuOuvert(): void {
   batch(() => {
     poserSelection(null)
     poserSerieOuverte(null)
+    poserFilmOuvert(null)
     poserUrlEpisode(undefined)
     poserEpisodeSuivant(undefined)
   })
