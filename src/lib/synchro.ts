@@ -2,13 +2,15 @@ import { createSignal } from 'solid-js'
 import { db, type Categorie, type GenreEtat, type LigneJournal, type TypeContenu } from './db'
 import { config, poserConfig } from '../config'
 import { ErreurApi, ErreurReseau, envoyer, json, type LectureApi, type Page, type ReglagesApi } from './api'
-import { estConnecte, profilActifId, signalerProfilRequis } from './auth'
+import { estConnecte, limites, profilActifId, signalerProfilRequis } from './auth'
 import {
   invaliderCategories, invaliderEpingles, invaliderFavoris, invaliderHistorique,
   invaliderReprises,
 } from './requetes'
 import { fusionner, egaux, ecrireEnsemble, lireEnsemble, type Valeurs } from './reglages-fusion'
-import { cheminContenu, serieDeCle } from './identifiants'
+import {
+  cheminContenu, cleDe, clesCandidates, estIdentifiantEpisode, idServeurDeCle, serieDeCle,
+} from './identifiants'
 
 /**
  * Reprise de l'etat personnel d'une machine a l'autre, via `/profil/*`.
@@ -100,7 +102,9 @@ function grouper(lignes: LigneJournal[]): Groupe[] {
  * a rien d'envoyable (episode dont la serie est inconnue).
  */
 async function envoyerGroupe(g: Groupe): Promise<boolean> {
-  const chemin = cheminContenu(g.cle)
+  // Le serveur range tout par identifiant seul : la cle locale perd son type ici.
+  const id = idServeurDeCle(g.cle)
+  const chemin = cheminContenu(id)
   if (g.classe === 'favori') {
     const present = (await db.favoris.get(g.cle)) !== undefined
     await envoyer(`/profil/favoris/${chemin}`, { methode: present ? 'PUT' : 'DELETE' })
@@ -117,7 +121,7 @@ async function envoyerGroupe(g: Groupe): Promise<boolean> {
   }
   // Le contrat EXIGE `serie` pour un episode et l'INTERDIT sinon (400) : sans
   // elle l'historique jugerait l'episode orphelin.
-  const serie = serieDeCle(g.cle, r?.serie)
+  const serie = serieDeCle(id, r?.serie ? idServeurDeCle(r.serie) : undefined)
   if (serie === 'requise') return false
   if (serie !== undefined) corps.serie = serie
   await envoyer(`/profil/historique/${chemin}`, { methode: 'PUT', corps })
@@ -162,19 +166,50 @@ async function enAttente(): Promise<{ favoris: Set<string>; lectures: Set<string
   return { favoris, lectures }
 }
 
+/**
+ * Identifiants recus du serveur -> cles locales. Le serveur ne dit pas le TYPE
+ * d'un contenu (`iptva:5521` : film ? chaine ?) : le catalogue local le sait.
+ * Un identifiant que le catalogue ne connait pas encore (premiere ouverture,
+ * import en cours) est simplement ignore cette fois -- l'import terminé relance
+ * une synchronisation. Un episode, lui, n'est jamais au catalogue et son type
+ * est toujours `series`.
+ */
+async function resoudreCles(ids: string[]): Promise<Map<string, string>> {
+  const resolus = new Map<string, string>()
+  const aChercher = ids.filter((id) => !estIdentifiantEpisode(id))
+  for (const id of ids) if (estIdentifiantEpisode(id)) resolus.set(id, cleDe('series', id))
+  const candidats = aChercher.flatMap(clesCandidates)
+  const trouves = new Set(
+    ((await db.catalogue.bulkGet(candidats)) as Array<{ cle: string } | undefined>)
+      .filter((e): e is { cle: string } => e !== undefined)
+      .map((e) => e.cle),
+  )
+  for (const id of aChercher) {
+    const cle = clesCandidates(id).find((c) => trouves.has(c))
+    if (cle) resolus.set(id, cle)
+  }
+  return resolus
+}
+
 /** Ancre des dates de favoris recus : le serveur ne donne que l'ORDRE d'ajout. */
 const ANCRE_FAVORIS = 1_000_000_000_000
 
-async function tirerFavoris(): Promise<boolean> {
+async function tirerFavoris(limite: number | undefined): Promise<boolean> {
   const ids: string[] = []
   let decalage: number | null = 0
+  const param = limite ? `limite=${limite}&` : ''
   for (let page = 0; decalage !== null && page < PAGES_MAX; page++) {
-    const p: Page<string> = await json<Page<string>>(`/profil/favoris?decalage=${decalage}`)
+    const p: Page<string> = await json<Page<string>>(`/profil/favoris?${param}decalage=${decalage}`)
     ids.push(...p.elements)
     decalage = p.suivant
   }
+  const resolus = await resoudreCles(ids)
+  const cles = ids.flatMap((id) => {
+    const c = resolus.get(id)
+    return c ? [c] : []
+  })
   const { favoris: gardes } = await enAttente()
-  const serveur = new Set(ids)
+  const serveur = new Set(cles)
   let change = false
   const locaux = await db.favoris.toArray()
   const connus = new Map(locaux.map((f) => [f.cle, f]))
@@ -183,11 +218,11 @@ async function tirerFavoris(): Promise<boolean> {
       await db.favoris.delete(f.cle)
       change = true
     }
-  for (const [i, id] of ids.entries()) {
-    if (gardes.has(id) || connus.has(id)) continue
+  for (const [i, cle] of cles.entries()) {
+    if (gardes.has(cle) || connus.has(cle)) continue
     // Un favori recu prend un rang qui respecte l'ordre du serveur, et reste
     // anterieur a tout ajout local (Date.now() >> l'ancre).
-    await db.favoris.put({ cle: id, ajouteLe: ANCRE_FAVORIS + i })
+    await db.favoris.put({ cle, ajouteLe: ANCRE_FAVORIS + i })
     change = true
   }
   return change
@@ -195,31 +230,34 @@ async function tirerFavoris(): Promise<boolean> {
 
 async function tirerHistorique(): Promise<{ historique: boolean; reprises: boolean }> {
   const r = await json<{ elements: LectureApi[] }>('/profil/historique')
+  const resolus = await resoudreCles(r.elements.map((l) => l.contenu))
   const { lectures: gardees } = await enAttente()
   const vues = new Set<string>()
   let historique = false
   let reprises = false
   let plusAncien = Infinity
   for (const l of r.elements) {
-    vues.add(l.contenu)
     const vu = Date.parse(l.vu) || Date.now()
     plusAncien = Math.min(plusAncien, vu)
-    if (gardees.has(l.contenu)) continue
-    const h = await db.historique.get(l.contenu)
+    const cle = resolus.get(l.contenu)
+    // Inconnu du catalogue local pour l'instant : ni affichable ni utile.
+    if (!cle) continue
+    vues.add(cle)
+    if (gardees.has(cle)) continue
+    const serie = l.serie ? cleDe('series', l.serie) : undefined
+    const h = await db.historique.get(cle)
     if (h?.ouvertLe !== vu) {
-      await db.historique.put({ cle: l.contenu, ouvertLe: vu })
+      await db.historique.put({ cle, ouvertLe: vu })
       historique = true
     }
-    const rp = await db.reprises.get(l.contenu)
+    const rp = await db.reprises.get(cle)
     if (l.duree > 0) {
-      if (!rp || rp.position !== l.position || rp.duree !== l.duree || rp.serie !== l.serie) {
-        await db.reprises.put({
-          cle: l.contenu, position: l.position, duree: l.duree, vuLe: vu, serie: l.serie,
-        })
+      if (!rp || rp.position !== l.position || rp.duree !== l.duree || rp.serie !== serie) {
+        await db.reprises.put({ cle, position: l.position, duree: l.duree, vuLe: vu, serie })
         reprises = true
       }
     } else if (rp) {
-      await db.reprises.delete(l.contenu)
+      await db.reprises.delete(cle)
       reprises = true
     }
   }
@@ -394,7 +432,7 @@ async function executer(): Promise<Resultat> {
   try {
     const { envoyes } = await pousserJournal()
     let recus = 0
-    if (await tirerFavoris()) {
+    if (await tirerFavoris(limites()?.pagination_max)) {
       recus++
       await invaliderFavoris()
     }

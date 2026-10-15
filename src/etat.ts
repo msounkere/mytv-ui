@@ -1,5 +1,6 @@
 import { batch, createComputed, createSignal } from 'solid-js'
 import type { EntreeCatalogue, TypeContenu } from './lib/db'
+import { idServeurDeCle } from './lib/identifiants'
 import { associerSerie } from './lib/preferences'
 
 // Navigation : l'URL est la source de vérité de l'écran courant.
@@ -192,9 +193,9 @@ export function lireEpisode(ep: Episode & { suivant?: Episode }): void {
     poserSelection({
       cle: ep.cle,
       type: 'series',
-      // Un episode n'est pas au catalogue : son identifiant serveur est sa cle,
-      // et son adresse de lecture est celle que la fiche a recue de l'API.
-      idServeur: ep.cle,
+      // Un episode n'est pas au catalogue : son identifiant serveur se lit dans
+      // sa cle, et son adresse de lecture est celle que la fiche a recue de l'API.
+      idServeur: idServeurDeCle(ep.cle),
       lecture: ep.url,
       serie: serie?.cle,
       id: 0,

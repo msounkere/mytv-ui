@@ -143,7 +143,7 @@ export default function FicheSerie(props: {
   // pas — le `Switch` plus bas montre un diagnostic et un bouton « Reessayer ».
   const [fiche, { refetch }] = requeteClefee<string, FicheBrute | null>(
     (id) => cles.serie(id),
-    () => props.serie.cle,
+    () => props.serie.idServeur,
     async (id) => {
       try {
         const r = await json<{ elements: SaisonApi[] }>(`/series/${cheminContenu(id)}/saisons`)
@@ -219,9 +219,10 @@ export default function FicheSerie(props: {
         const extension = e.container_extension || 'mp4'
         const codec = codecAudio(e.info)
         return {
-          // L identifiant serveur de l episode EST sa cle : l historique et les
-          // reprises le rangent sous ce nom, sans traduction.
-          cle: e.id,
+          // Cle locale d un episode : `series:` + son identifiant serveur
+          // (`series:iptva:77123.mkv`). Il n est pas au catalogue ; l historique
+          // et les reprises le rangent sous ce nom.
+          cle: `series:${e.id}`,
           numero,
           titre: titreLisible(e.title, nomBrutSerie, numero),
           nom: `${titreSerie()} — ${repere(saison, numero)}`,

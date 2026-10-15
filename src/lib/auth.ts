@@ -1,7 +1,7 @@
 import { createSignal } from 'solid-js'
 import {
   ErreurApi, ErreurReseau, abonnerSessionPerdue, envoyer, json,
-  type CompteApi, type ProfilApi, type SessionApi,
+  type CompteApi, type LimitesApi, type ProfilApi, type SessionApi,
 } from './api'
 
 /**
@@ -38,8 +38,10 @@ export interface Session {
 const [session, poserSessionInterne] = createSignal<Session | undefined>()
 const [etatAuth, poserEtatAuth] = createSignal<EtatAuth>('inconnu')
 const [profils, poserProfils] = createSignal<ProfilApi[]>([])
+/** Bornes de la configuration du serveur (`GET /compte`) : taille de page, plage de la grille... */
+const [limites, poserLimites] = createSignal<LimitesApi | undefined>()
 
-export { session, etatAuth, profils }
+export { session, etatAuth, profils, limites }
 
 /** Nom du compte saisi a la derniere connexion sur CETTE machine : non secret,
  *  il sert a l'affichage et a ne pas melanger l'etat de deux comptes. */
@@ -115,6 +117,7 @@ function identiteDe(s: Session): string {
 
 async function accepter(compte: CompteApi): Promise<void> {
   poserProfils(compte.profils)
+  poserLimites(compte.limites)
   let s = versSession(compte.session)
   // Un seul profil et aucun actif : le choisir est la seule action possible, la
   // demander a l'utilisateur serait un clic pour rien.
@@ -165,6 +168,13 @@ export async function verifierSession(): Promise<EtatAuth> {
 abonnerSessionPerdue(() => {
   if (etatAuth() === 'connecte') void verifierSession()
 })
+
+// Les modules de lecture, d'EPG et de diagnostic (qui ne passent pas par
+// `api.ts`) annoncent un 401 par cet evenement de fenetre : meme traitement.
+if (typeof window !== 'undefined')
+  window.addEventListener('mytv:session-expiree', () => {
+    if (etatAuth() === 'connecte') void verifierSession()
+  })
 
 export async function connexion(identifiant: string, motDePasse: string): Promise<Echec | undefined> {
   try {

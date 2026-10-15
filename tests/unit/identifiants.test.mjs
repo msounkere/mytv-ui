@@ -28,3 +28,19 @@ test('serie : requise pour un episode, interdite sinon', () => {
   assert.equal(serieDeCle('iptva:77123.mkv', 'pas un id'), 'requise')
   assert.equal(serieDeCle('iptva:845410', 'iptva:77'), undefined)
 })
+
+import { cleDe, clesCandidates, idServeurDeCle, numeroDeCle } from '../../src/lib/identifiants.ts'
+
+test('cle locale <-> identifiant serveur', () => {
+  assert.equal(cleDe('vod', 'iptva:5521'), 'vod:iptva:5521')
+  assert.equal(idServeurDeCle('vod:iptva:5521'), 'iptva:5521')
+  assert.equal(idServeurDeCle('series:iptva:77123.mkv'), 'iptva:77123.mkv')
+  // Sans prefixe de type connu : rendue telle quelle (jamais de troncature surprise).
+  assert.equal(idServeurDeCle('iptva:5521'), 'iptva:5521')
+  assert.equal(numeroDeCle('live:iptva:845410'), 845410)
+})
+
+test('le type d\'un identifiant serveur est cherche au catalogue, sauf pour un episode', () => {
+  assert.deepEqual(clesCandidates('iptva:5521'), ['live:iptva:5521', 'vod:iptva:5521', 'series:iptva:5521'])
+  assert.deepEqual(clesCandidates('iptva:77123.mkv'), ['series:iptva:77123.mkv'])
+})

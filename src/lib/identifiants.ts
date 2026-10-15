@@ -34,3 +34,39 @@ export function serieDeCle(id: string, serie: string | undefined): string | unde
   if (!estIdentifiantEpisode(id)) return undefined
   return serie && estIdentifiantValide(serie) ? serie : 'requise'
 }
+
+// --- Cle locale <-> identifiant serveur ---------------------------------------
+// La cle locale d'un contenu est `${type}:${idServeur}` (`vod:iptva:5521`) : le
+// type en prefixe evite qu'une serie et un film de meme numero se confondent
+// dans les tables locales. Le SERVEUR, lui, range favoris et historique par
+// identifiant seul -- c'est donc a cette frontiere (et seulement la) qu'on
+// traduit.
+
+export const TYPES_CONTENU = ['live', 'vod', 'series'] as const
+export type TypeCle = (typeof TYPES_CONTENU)[number]
+
+export function cleDe(type: TypeCle, idServeur: string): string {
+  return `${type}:${idServeur}`
+}
+
+/** `vod:iptva:5521` -> `iptva:5521` ; une chaine sans prefixe de type est rendue telle quelle. */
+export function idServeurDeCle(cle: string): string {
+  const i = cle.indexOf(':')
+  return i > 0 && (TYPES_CONTENU as readonly string[]).includes(cle.slice(0, i)) ? cle.slice(i + 1) : cle
+}
+
+/** Partie numerique finale d'une cle (`vod:iptva:5521` -> 5521), NaN sinon. */
+export function numeroDeCle(cle: string): number {
+  return Number(cle.slice(cle.lastIndexOf(':') + 1))
+}
+
+/**
+ * Cles locales candidates pour un identifiant recu du serveur. Un episode est
+ * toujours `series` ; sinon le type est inconnu (le serveur ne le dit pas) et
+ * c'est le catalogue local qui tranche -- voir `synchro.ts`.
+ */
+export function clesCandidates(idServeur: string): string[] {
+  return estIdentifiantEpisode(idServeur)
+    ? [cleDe('series', idServeur)]
+    : TYPES_CONTENU.map((t) => cleDe(t, idServeur))
+}

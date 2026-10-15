@@ -95,6 +95,9 @@ export function mettreAJourCatalogue(force = false): Promise<ResultatImport | un
           // recherche, lui, vit dans un worker et garde l'ancien catalogue.
           await invaliderCatalogue()
           reindexer()
+          // Les favoris et l'historique recus avant l'import n'ont pas pu etre
+          // resolus (le serveur ne dit pas le type) : on les relit maintenant.
+          void import('./synchro').then((m) => m.synchroniser())
         }
         poserDernierImport(await dateDernierImport())
         poserEtatCatalogue('a-jour')

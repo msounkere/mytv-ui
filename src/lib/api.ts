@@ -151,9 +151,20 @@ export interface ProfilApi {
   nom: string
 }
 
+export interface LimitesApi {
+  /** Taille maximale d'une page ET nombre maximal de chaines d'un appel `/epg/grille`. */
+  pagination_max: number
+  /** Plage maximale d'un appel `/epg/grille`, en secondes. */
+  grille_fenetre: number
+  favoris_max: number
+  historique_max: number
+  reglages_octets_max: number
+}
+
 export interface CompteApi {
   session: SessionApi
   profils: ProfilApi[]
+  limites?: LimitesApi
 }
 
 export interface CategorieApi {

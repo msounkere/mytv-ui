@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie'
-import { estIdentifiantEpisode } from './identifiants'
+import { cleDe, estIdentifiantEpisode } from './identifiants'
 import type { CategorieApi, ChaineApi, FilmApi, SerieApi, TypeApi } from './api'
 
 // 21 791 chaines + 106 973 films ne peuvent pas etre re-telecharges a chaque
@@ -10,19 +10,17 @@ export type TypeContenu = TypeApi
 
 export interface EntreeCatalogue {
   /**
-   * Identifiant du contenu tel que l'API le donne : `fournisseur:numero`
-   * (`iptva:845410`). C'est AUSSI la cle de toutes les tables locales et celle
-   * des favoris et de l'historique cote serveur : une seule orthographe d'un
-   * contenu, donc aucune traduction a faire aux frontieres. Pour un EPISODE,
-   * l'identifiant porte l'extension (`iptva:77123.mkv`).
+   * Cle locale : `${type}:${idServeur}` (`vod:iptva:5521`). Le type en prefixe
+   * evite qu'une serie et un film de meme numero se confondent. Pour un
+   * EPISODE : `series:iptva:77123.mkv` (l'extension suit le numero).
    */
   cle: string
   type: TypeContenu
-  /** Meme valeur que `cle`, nommee pour ce qu'elle designe : c'est ce que les
-   *  routes `/vod/{id}`, `/epg/...` et le diagnostic attendent. */
+  /** Identifiant tel que l'API le donne : `fournisseur:numero` (`iptva:845410`).
+   *  C'est ce que les routes `/vod/{id}`, `/epg/...` et le diagnostic attendent. */
   idServeur: string
   /** Adresse de lecture RELATIVE donnee par l'API (jamais d'identifiants). */
-  lecture: string
+  lecture?: string
   /** OBSOLETE : partie numerique de `idServeur` (0 pour un episode). Conserve le
    *  temps que les ecrans de lecture/EPG migrent vers `idServeur` ; ne plus lire. */
   id: number
@@ -179,7 +177,7 @@ export function versEntree(
   const annee = 'annee' in brut ? Number(brut.annee) : NaN
   const image = type === 'live' ? (brut as ChaineApi).logo : (brut as FilmApi | SerieApi).image
   return {
-    cle: brut.id,
+    cle: cleDe(type, brut.id),
     type,
     idServeur: brut.id,
     lecture: 'lecture' in brut ? brut.lecture : brut.saisons,
