@@ -1,5 +1,7 @@
-// Identifiants de contenu de l'API v1 : `fournisseur:numero` (contrat, schema
-// `ContenuID`). Module PUR : aucune dependance, il se teste sous node.
+// Identifiants de contenu de l'API v1 (contrat, schema `ContenuID`) :
+// `iptva:845410` (chaine, film), `iptva:s77` (serie), `iptva:77123.mkv` (episode).
+// Ils sont OPAQUES : aucun code ne doit en lire le numero, seulement le motif.
+// Module PUR : aucune dependance, il se teste sous node.
 
 /** Exactement le motif du contrat : rien d'autre ne doit finir dans une URL. */
 const MOTIF = /^[A-Za-z0-9_-]{1,32}:[A-Za-z0-9_.-]{1,64}$/
@@ -53,11 +55,6 @@ export function cleDe(type: TypeCle, idServeur: string): string {
 export function idServeurDeCle(cle: string): string {
   const i = cle.indexOf(':')
   return i > 0 && (TYPES_CONTENU as readonly string[]).includes(cle.slice(0, i)) ? cle.slice(i + 1) : cle
-}
-
-/** Partie numerique finale d'une cle (`vod:iptva:5521` -> 5521), NaN sinon. */
-export function numeroDeCle(cle: string): number {
-  return Number(cle.slice(cle.lastIndexOf(':') + 1))
 }
 
 /**

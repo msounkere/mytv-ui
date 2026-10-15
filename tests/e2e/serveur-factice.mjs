@@ -44,9 +44,9 @@ function genererCatalogue({ chaines, films, series }) {
     annee: String(2000 + (i % 24)), ajoute: iso(maintenant - i * 3_600_000), lecture: `/api/v1/vod/iptva:${5000 + i}`,
   }))
   const sr = Array.from({ length: series }, (_, i) => ({
-    id: `iptva:${700 + i}`, nom: `Série Test ${i}`, image: `/img/serie${i}.jpg`,
+    id: `iptva:s${5000 + i}`, nom: `Série Test ${i}`, image: `/img/serie${i}.jpg`,
     categorie: parType('series')[i % 3].id, note: 5 + (i % 40) / 10, annee: String(2010 + (i % 12)),
-    ajoute: iso(maintenant - i * 7_200_000), saisons: `/api/v1/series/iptva:${700 + i}/saisons`,
+    ajoute: iso(maintenant - i * 7_200_000), saisons: `/api/v1/series/iptva:s${5000 + i}/saisons`,
   }))
   return { categories, live, vod, series: sr }
 }
@@ -65,6 +65,7 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     requetes: [],
     latenceChunk,
     profilsMax: 10,
+    sessionNom: false, // true : GET /compte rend `session.nom` (US-16b)
   }
   let nProfil = 0
   const reg = (p) => {
@@ -155,6 +156,7 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
         etat.historique.get(c.profil).set(c.contenu, { contenu: c.contenu, position: c.position, duree: c.duree, vu: new Date().toISOString() })
         return json(res, 200, {})
       }
+      if (op === 'session-nom') { etat.sessionNom = c.actif; return json(res, 200, {}) }
       if (op === 'latence') { etat.latenceChunk = c.ms; return json(res, 200, {}) }
       return erreur(res, 404, 'inconnu')
     }
@@ -194,7 +196,7 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     if (p === '/deconnexion') { etat.sessions.delete(jeton(req)); res.setHeader('Set-Cookie', 'mytv=; Path=/; Max-Age=0; HttpOnly'); res.writeHead(204); return res.end() }
     if (p === '/compte') {
       return json(res, 200, {
-        session: { id: 's1', admin: false, ...(s.profil ? { profil_id: s.profil } : {}), expire: new Date(Date.now() + 3600e3).toISOString() },
+        session: { id: 's1', ...(etat.sessionNom ? { nom: COMPTE } : {}), admin: false, ...(s.profil ? { profil_id: s.profil } : {}), expire: new Date(Date.now() + 3600e3).toISOString() },
         profils: etat.profils,
         limites: { pagination_max: 200, grille_fenetre: 21600, favoris_max: 500, historique_max: 500, reglages_octets_max: 8192 },
       })
@@ -230,7 +232,9 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     if (p === '/catalogue/export') return exporter(req, res, url.searchParams.get('type'))
     m = /^\/series\/([^/]+)\/saisons$/.exec(p)
     if (m) {
-      const num = Number(m[1].split(':')[1])
+      // Les identifiants de series sont `fournisseur:s<numero>` : leur numero recoupe
+      // volontairement celui de films (5000..), pour prouver que l'interface ne les confond pas.
+      const num = Number(m[1].split(':s')[1])
       return json(res, 200, {
         elements: [1, 2].map((sn) => ({
           numero: sn,
