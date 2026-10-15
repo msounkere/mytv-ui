@@ -1,0 +1,180 @@
+// Faux serveur mytv pour les tests de parcours de l'interface. Il parle le
+// contrat /api/v1 (lecture, EPG, diagnostic) et sert l'interface construite. Il
+// n'ecoute QUE sur 127.0.0.1, sur un port que le systeme choisit, et ne
+// contacte jamais personne : aucun fournisseur, aucun hote externe.
+//
+// Les scenarios se choisissent par l'identifiant du contenu :
+//   chaine 1001  normale                       film iptva:100  lecture directe (Range)
+//   chaine 1002  503 deux fois, puis normale   film iptva:101  remux (Accept-Ranges: none, ?t=)
+//   chaine 1003  503 sans fin                  film iptva:102  415 format_non_lisible
+//   chaine 1004  401                           film iptva:103  503 une fois, puis normal
+//   chaine 1005  502 une fois, puis normale    film iptva:104  401
+import { createServer } from 'node:http'
+import { readFileSync, existsSync, statSync } from 'node:fs'
+import { extname, join, normalize } from 'node:path'
+import { mp3, segmentTs } from './media.mjs'
+
+const TYPES = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json',
+}
+
+const DUREE_SEGMENT = 2
+const NB_SEGMENTS = 6
+const FILM = mp3(20)
+
+export async function demarrerServeur({ dossier, limites = { pagination_max: 200, grille_fenetre: 172800 } } = {}) {
+  /** Toutes les requetes recues, dans l'ordre. */
+  const journal = []
+  /** Compteurs de scenarios (503 n fois...), remis a zero par /__reinit. */
+  let etat = new Map()
+  const evenements = []
+  const fois = (cle) => {
+    const n = (etat.get(cle) ?? 0) + 1
+    etat.set(cle, n)
+    return n
+  }
+
+  const json = (res, statut, corps, entetes = {}) => {
+    res.writeHead(statut, { 'Content-Type': 'application/json; charset=utf-8', ...entetes })
+    res.end(JSON.stringify(corps))
+  }
+  const erreur = (res, statut, code, message, entetes = {}) => json(res, statut, { code, message }, entetes)
+
+  function playlist(chaine) {
+    // Segments STABLES d'une playlist a l'autre : meme jeton pour meme numero.
+    const lignes = ['#EXTM3U', '#EXT-X-VERSION:3', `#EXT-X-TARGETDURATION:${DUREE_SEGMENT}`, '#EXT-X-MEDIA-SEQUENCE:0']
+    for (let i = 0; i < NB_SEGMENTS; i++) {
+      lignes.push(`#EXTINF:${DUREE_SEGMENT}.000,`, `/api/v1/live/${chaine}/seg/jeton${i}`)
+    }
+    lignes.push('#EXT-X-ENDLIST')
+    return lignes.join('\n') + '\n'
+  }
+
+  function grille(chaines, de, a) {
+    // Un programme par heure UTC, titre = heure UTC : la page doit l'afficher en heure locale.
+    const out = {}
+    for (const id of chaines) {
+      const liste = []
+      for (let t = Math.floor(de / 3_600_000) * 3_600_000; t < a; t += 3_600_000) {
+        if (t + 3_600_000 <= de) continue
+        liste.push({
+          debut: new Date(t).toISOString(), fin: new Date(t + 3_600_000).toISOString(),
+          titre: `Prog ${id} ${new Date(t).toISOString().slice(11, 13)}hUTC`,
+        })
+      }
+      out[id] = liste
+    }
+    return out
+  }
+
+  function repondreFilm(req, res, url, id) {
+    const tete = req.method === 'HEAD'
+    const numero = id.replace(/^iptva:/, '')
+    if (numero === '104') return erreur(res, 401, 'non_authentifie', 'session expiree')
+    if (numero === '102') return erreur(res, 415, 'format_non_lisible', 'HEVC')
+    if (numero === '103' && fois('vod103') === 1) return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
+    const remux = numero === '101'
+    const entetes = { 'Content-Type': remux ? 'video/mp4' : 'audio/mpeg', 'Cache-Control': 'private, no-store' }
+    if (remux) {
+      res.writeHead(200, { ...entetes, 'Accept-Ranges': 'none', 'X-Mytv-Duree': '120', 'X-Mytv-Mode': 'remux' })
+      return res.end(tete ? undefined : FILM)
+    }
+    const plage = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
+    if (plage) {
+      const debut = plage[1] === '' ? Math.max(0, FILM.length - Number(plage[2])) : Number(plage[1])
+      const fin = plage[1] === '' || plage[2] === '' ? FILM.length - 1 : Math.min(Number(plage[2]), FILM.length - 1)
+      if (debut >= FILM.length) return erreur(res, 416, 'plage_invalide', 'hors fichier')
+      res.writeHead(206, { ...entetes, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${debut}-${fin}/${FILM.length}`, 'Content-Length': fin - debut + 1 })
+      return res.end(tete ? undefined : FILM.subarray(debut, fin + 1))
+    }
+    res.writeHead(200, { ...entetes, 'Accept-Ranges': 'bytes', 'Content-Length': FILM.length })
+    return res.end(tete ? undefined : FILM)
+  }
+
+  const serveur = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    const chemin = decodeURIComponent(url.pathname)
+    journal.push({ methode: req.method, chemin, requete: url.search, t: Date.now() })
+
+    if (chemin === '/__journal') return json(res, 200, journal)
+    if (chemin === '/__evenements') return json(res, 200, evenements)
+    if (chemin === '/__reinit') {
+      journal.length = 0; evenements.length = 0; etat = new Map()
+      return json(res, 200, { ok: true })
+    }
+
+    if (chemin.startsWith('/api/v1/')) {
+      const r = chemin.slice('/api/v1'.length)
+      if (r === '/compte') return json(res, 200, { session: { id: 's', identifiant: 'test' }, profils: [], limites })
+      let m
+      if ((m = /^\/live\/([A-Za-z0-9_-]+)\.m3u8$/.exec(r))) {
+        const chaine = m[1]
+        if (chaine === '1004') return erreur(res, 401, 'non_authentifie', 'session expiree')
+        if (chaine === '1003') return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
+        if (chaine === '1002' && fois('live1002') <= 2) return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
+        if (chaine === '1005' && fois('live1005') === 1) return erreur(res, 502, 'amont', 'amont indisponible')
+        res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' })
+        return res.end(playlist(chaine))
+      }
+      if ((m = /^\/live\/([A-Za-z0-9_-]+)\/seg\/jeton(\d+)$/.exec(r))) {
+        res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' })
+        return res.end(segmentTs(Number(m[2]), DUREE_SEGMENT))
+      }
+      if ((m = /^\/live\/([A-Za-z0-9_-]+)\/fin$/.exec(r)) && req.method === 'POST') {
+        res.writeHead(204)
+        return res.end()
+      }
+      if ((m = /^\/vod\/(.+)$/.exec(r)) && (req.method === 'GET' || req.method === 'HEAD')) return repondreFilm(req, res, url, m[1])
+      if (r === '/epg/grille') {
+        const chaines = (url.searchParams.get('chaines') ?? '').split(',').filter(Boolean)
+        const de = Date.parse(url.searchParams.get('de') ?? '')
+        const a = Date.parse(url.searchParams.get('a') ?? '')
+        if (!chaines.length || Number.isNaN(de) || Number.isNaN(a) || a <= de) return erreur(res, 400, 'requete_invalide', 'plage')
+        if (chaines.length > limites.pagination_max) return erreur(res, 400, 'requete_invalide', 'trop de chaines')
+        return json(res, 200, { chaines: grille(chaines, de, a) })
+      }
+      if ((m = /^\/epg\/chaines\/([^/]+)\/maintenant$/.exec(r))) {
+        const t = Math.floor(Date.now() / 3_600_000) * 3_600_000
+        return json(res, 200, {
+          courant: { debut: new Date(t).toISOString(), fin: new Date(t + 3_600_000).toISOString(), titre: `Journal ${m[1]}` },
+          suivant: { debut: new Date(t + 3_600_000).toISOString(), fin: new Date(t + 7_200_000).toISOString(), titre: `Film ${m[1]}` },
+        })
+      }
+      if (r === '/diagnostic/evenements' && req.method === 'POST') {
+        const morceaux = []
+        req.on('data', (c) => morceaux.push(c))
+        req.on('end', () => {
+          try {
+            const corps = JSON.parse(Buffer.concat(morceaux).toString('utf8'))
+            evenements.push(...corps.evenements.map((e) => ({ ...e, __appareil: corps.appareil })))
+            json(res, 200, { recus: corps.evenements.length, ignores: 0 })
+          } catch {
+            erreur(res, 400, 'requete_invalide', 'corps')
+          }
+        })
+        return
+      }
+      return erreur(res, 404, 'introuvable', r)
+    }
+
+    // Tout le reste : l'interface construite.
+    if (!dossier) return erreur(res, 404, 'introuvable', chemin)
+    let fichier = normalize(join(dossier, chemin === '/' ? 'index.html' : chemin))
+    if (!fichier.startsWith(dossier)) return erreur(res, 403, 'interdit', 'chemin')
+    if (!existsSync(fichier) || statSync(fichier).isDirectory()) fichier = join(dossier, 'index.html')
+    res.writeHead(200, { 'Content-Type': TYPES[extname(fichier)] ?? 'application/octet-stream' })
+    return res.end(readFileSync(fichier))
+  })
+
+  await new Promise((ok) => serveur.listen(0, '127.0.0.1', ok))
+  const { port } = serveur.address()
+  return {
+    port,
+    origine: `http://127.0.0.1:${port}`,
+    journal: () => journal,
+    evenements: () => evenements,
+    reinit: () => { journal.length = 0; evenements.length = 0; etat = new Map() },
+    fermer: () => new Promise((ok) => { serveur.closeAllConnections?.(); serveur.close(ok) }),
+  }
+}

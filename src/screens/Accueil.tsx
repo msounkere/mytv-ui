@@ -11,7 +11,7 @@ import { anneeDuTitre, titreCourt } from '../components/titres'
 import { ecran, poserOnglet } from '../etat'
 import { db, type EntreeCatalogue, type TypeContenu } from '../lib/db'
 import { numeroDeCle } from '../lib/identifiants'
-import { chainesGuidePartagees, grillesFenetre, programmeEnCours } from '../lib/epg'
+import { chainesAvecGuide, programmesEnCours as programmesDuMoment } from '../lib/chaines-guide'
 import { basculerFavori, marquerVu, oublierReprise } from '../lib/preferences'
 import { gabarit as gabaritCoque } from '../lib/gabarit'
 import {
@@ -204,27 +204,16 @@ async function favorisTries(): Promise<{ chaines: EntreeCatalogue[]; medias: Ent
 // ─── Guide ──────────────────────────────────────────────────────────────────
 
 /**
- * Programmes en cours d'un lot de chaînes, lus dans le XMLTV déjà importé.
- * Aucun appel au relais : « En direct maintenant » doit se peindre sans
- * dépendre du réseau, et le guide local couvre 4 042 chaînes sur 21 791.
+ * Programmes en cours d'un lot de chaînes, demandés au serveur en UN appel de
+ * grille (voir `lib/chaines-guide`). Sans réponse, les cartes s'affichent sans
+ * programme : l'accueil ne dépend jamais du guide pour se peindre.
  */
 async function programmesEnCours(chaines: EntreeCatalogue[]): Promise<Map<string, ProgrammeCourant>> {
-  const par = new Map<string, ProgrammeCourant>()
-  if (chaines.length === 0) return par
-  const maintenant = Date.now()
-  const guide = new Map((await chainesGuidePartagees()).map((c) => [c.streamId, c.epg]))
-  const couvertes = chaines.filter((c) => guide.has(c.id))
-  if (couvertes.length === 0) return par
-  const grilles = await grillesFenetre(
-    [...new Set(couvertes.map((c) => guide.get(c.id)!))],
-    maintenant,
-    maintenant + 1,
-  )
-  for (const c of couvertes) {
-    const p = programmeEnCours(grilles.get(guide.get(c.id)!) ?? [], maintenant)
-    if (p) par.set(c.cle, { titre: p.titre, debut: p.debut, fin: p.fin })
+  try {
+    return await programmesDuMoment(chaines)
+  } catch {
+    return new Map()
   }
-  return par
 }
 
 async function chainesFavorites(): Promise<ChaineFavorite[]> {
@@ -273,20 +262,16 @@ async function chainesRecentes(): Promise<ChaineFavorite[]> {
  * qui place les généralistes en tête.
  */
 async function enDirectMaintenant(): Promise<Direct[]> {
-  const avecGuide = await chainesGuidePartagees()
+  const avecGuide = await chainesAvecGuide()
   if (avecGuide.length === 0) return []
   const prioritaires = new Set<string>()
   for (const f of await db.favoris.toArray()) prioritaires.add(f.cle)
   for (const h of await db.historique.orderBy('ouvertLe').reverse().limit(40).toArray()) prioritaires.add(h.cle)
 
-  const classees = avecGuide
-    .map((c) => ({ cle: `live:${c.streamId}`, nom: c.nom }))
+  const entrees = avecGuide
     .filter((c) => !DOUBLON_TECHNIQUE.test(c.nom))
     .sort((a, b) => Number(prioritaires.has(b.cle)) - Number(prioritaires.has(a.cle)))
     .slice(0, CANDIDATS_DIRECT)
-
-  const entrees = (await db.catalogue.bulkGet(classees.map((c) => c.cle)))
-    .filter((e): e is EntreeCatalogue => e !== undefined)
   const programmes = await programmesEnCours(entrees)
   return entrees
     .flatMap((entree) => {

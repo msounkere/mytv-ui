@@ -12,31 +12,26 @@ import SubstitutLogo from '../components/SubstitutLogo'
 import Icone from '../components/Icone'
 import EtiquettePays from '../components/EtiquettePays'
 import { db, normaliser, type EntreeCatalogue } from '../lib/db'
-import {
-  chainesGuidePartagees,
-  etatGuide,
-  grillesFenetre,
-  programmeEnCours,
-  type ChaineGuide,
-  type Programme,
-} from '../lib/epg'
-import type { AvancementGuide, DepuisXmltv, VersXmltv } from '../lib/xmltv.worker'
-import { cles, invaliderGuide, requete } from '../lib/requetes'
+import { debutDemiHeureLocale, epg, programmeEnCours, type Programme } from '../lib/epg'
+import { chainesAvecGuide } from '../lib/chaines-guide'
+import { idServeurDe } from '../lib/source-lecture'
+import { ErreurLecteur } from '../lib/errors'
+import { cles, requete } from '../lib/requetes'
 import { ecran } from '../etat'
 import { estBureau, estMobile } from '../lib/gabarit'
 
 // Grille EPG : lignes = chaînes (virtualisées), colonnes = temps.
 //
-// Choix d'architecture — le XMLTV complet est parsé une fois dans un worker et
-// indexé en base, plutôt que d'appeler `get_short_epg` chaîne par chaîne pour
-// les lignes visibles. Deux raisons tranchent :
-//   • une grille affiche 20 lignes à la fois et défile ; le chargement à la
-//     demande ferait 20 requêtes HTTP par cran de molette, sur le même relais
-//     que la vidéo en cours de lecture ;
-//   • `get_short_epg` ne rend que les prochains programmes d'une chaîne, donc
-//     aucun défilement vers l'heure passée, qui est la moitié d'un guide.
-// Une fois en base, une fenêtre de 2 h sur 25 chaînes se lit en une requête
-// indexée, sous la milliseconde, et le fil principal ne parse jamais de XML.
+// Choix d'architecture — le serveur détient le guide, l'interface ne demande que
+// ce qu'elle montre. Les lignes visibles s'inscrivent (virtualisation), puis UN
+// appel `/epg/grille` — débouncé, par blocs de temps alignés et mis en cache
+// (`lib/epg`) — sert tout le lot : jamais un appel par chaîne visible, et faire
+// glisser la fenêtre ne redemande que les blocs qu'on n'a pas encore. Le XMLTV
+// complet (61 Mo, parsé dans un worker) a disparu.
+//
+// Heures : le serveur parle UTC, l'affichage est en heure locale du navigateur
+// (Intl sans fuseau imposé), et les graduations tombent sur les demi-heures
+// LOCALES, y compris sur un fuseau décalé de 30 ou 45 minutes.
 
 /** Hauteur de ligne imposée par le brief. */
 const HAUTEUR_LIGNE = 56
@@ -55,12 +50,10 @@ const PAS = 30 * MINUTE
 
 const HEURE = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' })
 const JOUR = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
-const DATE_COURTE = new Intl.DateTimeFormat('fr-FR', {
-  day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-})
 
 interface Ligne {
-  chaine: ChaineGuide
+  /** Identifiant API de la chaîne : la clé de la grille. */
+  id: string
   entree: EntreeCatalogue
 }
 
@@ -68,10 +61,9 @@ export default function Guide(props: {
   surOuvrir: (e: EntreeCatalogue) => void
 }) {
   const [maintenant, poserMaintenant] = createSignal(Date.now())
-  const [debutFenetre, poserDebutFenetre] = createSignal(alignerSurPas(Date.now() - 15 * MINUTE))
+  const [debutFenetre, poserDebutFenetre] = createSignal(debutDemiHeureLocale(Date.now() - 15 * MINUTE))
   const [largeur, poserLargeur] = createSignal(0)
   const [filtre, poserFiltre] = createSignal('')
-  const [avancement, poserAvancement] = createSignal<AvancementGuide | null>(null)
   const [echec, poserEchec] = createSignal<string | null>(null)
 
   const finFenetre = createMemo(() => debutFenetre() + (largeur() / pxMinute()) * MINUTE)
@@ -88,10 +80,8 @@ export default function Guide(props: {
     onCleanup(() => clearInterval(t))
   })
 
-  // La base du guide n'est écrite QUE par le worker XMLTV, au clic sur
-  // « Charger le guide » : ces trois lectures n'ont aucune raison de se
-  // revalider seules, et c'est la fin de l'import qui les périme.
-  const [etat] = requete(cles.epgEtat, etatGuide)
+  // Les chaînes qui ont un guide viennent du catalogue (`epg_id`) : elles ne
+  // changent qu'à l'import, et rien ici ne se revalide seul.
   const [lignes] = requete(cles.epgLignes, chargerLignes)
   const [totalLive] = requete(cles.nombre('live'), () =>
     db.catalogue.where('type').equals('live').count(),
@@ -103,48 +93,10 @@ export default function Guide(props: {
     return f ? liste.filter((l) => l.entree.recherche.includes(f)) : liste
   })
 
-  // ── Chargement du guide (worker) ───────────────────────────────────────────
-  let worker: Worker | undefined
-
-  function arreterWorker() {
-    worker?.terminate()
-    worker = undefined
-  }
-
-  function chargerGuide() {
-    if (avancement()) return
-    poserEchec(null)
-    poserAvancement({ etape: 'Démarrage', part: 0 })
-    arreterWorker()
-    worker = new Worker(new URL('../lib/xmltv.worker.ts', import.meta.url), { type: 'module' })
-    worker.onmessage = (e: MessageEvent<DepuisXmltv>) => {
-      const m = e.data
-      if (m.type === 'avancement') return poserAvancement(m.avancement)
-      // L'écran n'est plus démonté en quittant le Guide : c'est donc ici, et
-      // non dans `onCleanup`, que le worker XMLTV doit rendre sa mémoire.
-      arreterWorker()
-      if (m.type === 'fini') {
-        poserAvancement(null)
-        viderCache()
-        // 201 315 programmes et 4 048 chaînes viennent de remplacer les
-        // précédents : l'état du guide, ses lignes, la jointure que Direct
-        // utilise et les deux rangées de chaînes de l'Accueil parlaient tous de
-        // la base d'avant.
-        void invaliderGuide()
-      } else {
-        poserAvancement(null)
-        poserEchec(`${m.message} — ${m.action}`)
-      }
-    }
-    worker.postMessage({ type: 'charger' } satisfies VersXmltv)
-  }
-
-  onCleanup(arreterWorker)
-
   // ── Grilles des lignes visibles ────────────────────────────────────────────
   // Chaque ligne montée s'inscrit ; une requête groupée, débouncée, sert tout
-  // le lot. Interroger la base ligne par ligne au défilement multiplierait les
-  // transactions pour exactement le même résultat.
+  // le lot. Interroger le serveur ligne par ligne au défilement multiplierait
+  // les appels pour exactement le même résultat.
   const inscrites = new Map<string, number>()
   const [visibles, poserVisibles] = createSignal<string[]>([])
   let minuterie: ReturnType<typeof setTimeout> | undefined
@@ -169,13 +121,7 @@ export default function Guide(props: {
   let cleCache = ''
   const [revision, poserRevision] = createSignal(0)
 
-  function viderCache() {
-    cache = new Map()
-    cleCache = ''
-    poserRevision((v) => v + 1)
-  }
-
-  /** Lecture réactive : `revision` republie les grilles arrivées de la base. */
+  /** Lecture réactive : `revision` republie les grilles arrivées du serveur. */
   function grilleDe(epg: string): Programme[] {
     revision()
     return cache.get(epg) ?? []
@@ -197,15 +143,21 @@ export default function Guide(props: {
     const manquants = epgs.filter((e) => !cache.has(e))
     if (manquants.length === 0) return
 
-    let annule = false
-    onCleanup(() => {
-      annule = true
-    })
-    void grillesFenetre(manquants, t0, t1).then((m) => {
-      if (annule || cleCache !== cle) return
-      for (const [k, v] of m) cache.set(k, v)
-      poserRevision((v) => v + 1)
-    })
+    const abandon = new AbortController()
+    onCleanup(() => abandon.abort())
+    poserEchec(null)
+    epg
+      .grille(manquants, t0, t1, abandon.signal)
+      .then((m) => {
+        if (abandon.signal.aborted || cleCache !== cle) return
+        for (const [k, v] of m) cache.set(k, v)
+        poserRevision((v) => v + 1)
+      })
+      .catch((e: unknown) => {
+        if (abandon.signal.aborted) return
+        // Le guide est secondaire : l'écran le dit et reste utilisable.
+        poserEchec(e instanceof ErreurLecteur ? `${e.message} — ${e.action}` : String(e))
+      })
   })
 
   // ── Navigation temporelle ──────────────────────────────────────────────────
@@ -215,7 +167,7 @@ export default function Guide(props: {
 
   function revenirMaintenant() {
     poserMaintenant(Date.now())
-    poserDebutFenetre(alignerSurPas(Date.now() - 15 * MINUTE))
+    poserDebutFenetre(debutDemiHeureLocale(Date.now() - 15 * MINUTE))
   }
 
   function molette(e: WheelEvent) {
@@ -231,7 +183,11 @@ export default function Guide(props: {
     const t0 = debutFenetre()
     const t1 = finFenetre()
     const out: number[] = []
-    for (let t = Math.ceil(t0 / PAS) * PAS; t < t1 && out.length < 64; t += PAS) out.push(t)
+    // Demi-heures LOCALES : on repart du fuseau a chaque pas, ce qui reste juste
+    // quand un changement d'heure tombe dans la fenetre.
+    let t = debutDemiHeureLocale(t0)
+    if (t < t0) t = debutDemiHeureLocale(t + PAS + 1)
+    for (; t < t1 && out.length < 64; t = debutDemiHeureLocale(t + PAS + 1)) out.push(t)
     return out
   })
 
@@ -279,12 +235,6 @@ export default function Guide(props: {
     poserLargeur(el.clientWidth)
     onCleanup(() => observateur.disconnect())
   })
-
-  // Seul le marqueur de fin d'import fait foi. Compter les programmes
-  // laisserait un import interrompu passer pour un guide complet : la base
-  // contient alors des dizaines de milliers de programmes et aucune chaîne.
-  const guideCharge = () => etat()?.complet === true
-  const guideIncomplet = () => etat() !== undefined && !guideCharge() && (etat()?.programmes ?? 0) > 0
 
   /** Cible tactile de 44 px sur mobile (cahier des charges, §6). */
   const btn = () => ({ ...BTN, ...(estMobile() ? { 'min-height': '44px', 'flex': '0 0 auto' } : {}) })
@@ -353,19 +303,10 @@ export default function Guide(props: {
             }}
           >
             <BoutonsNavigation />
-            <Show when={guideCharge() && !avancement()}>
-              <button onClick={chargerGuide} style={{ ...btn(), border: '1px solid var(--line2)' }}>
-                Recharger le guide
-              </button>
-            </Show>
           </div>
         </Show>
       </header>
 
-      {/* Mobile : une fois le guide chargé, cette rangée ne sert plus qu'à le
-          recharger, et ce bouton file dans la barre de navigation — la grille
-          gagne ainsi 56 px sur un écran qui n'en a que 844. */}
-      <Show when={!estMobile() || !guideCharge() || !!avancement()}>
       <div
         style={{
           display: 'flex', 'align-items': 'center', gap: '10px', flex: '0 0 auto',
@@ -379,34 +320,13 @@ export default function Guide(props: {
             ...(estBureau() ? {} : { flex: 1, 'min-width': 0, overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }),
           }}
         >
-          <Show when={!lignes.loading} fallback="Lecture du guide en base…">
+          <Show when={!lignes.loading} fallback="Lecture du catalogue…">
             {lignesFiltrees().length.toLocaleString('fr-FR')} chaîne(s) affichée(s) ·{' '}
             {(lignes()?.length ?? 0).toLocaleString('fr-FR')} avec guide sur{' '}
             {(totalLive() ?? 0).toLocaleString('fr-FR')} chaînes en direct
           </Show>
-          <Show when={etat()?.chargeLe}>
-            {(t) => (
-              <> · guide du {DATE_COURTE.format(new Date(t()))} ·{' '}
-                {(etat()?.programmes ?? 0).toLocaleString('fr-FR')} programmes</>
-            )}
-          </Show>
         </p>
-        <Show
-          when={avancement()}
-          fallback={
-            <button onClick={chargerGuide} style={{ ...btn(), 'margin-left': 'auto', border: '1px solid var(--line2)' }}>
-              {guideCharge() ? 'Recharger le guide' : guideIncomplet() ? 'Reprendre le chargement' : 'Charger le guide'}
-            </button>
-          }
-        >
-          {(a) => (
-            <span class="num secondaire" style={{ 'margin-left': 'auto', 'font-size': '12px' }}>
-              {a().etape} — {Math.round(a().part * 100)} %
-            </span>
-          )}
-        </Show>
       </div>
-      </Show>
 
       <Show when={echec()}>
         {(m) => (
@@ -486,40 +406,13 @@ export default function Guide(props: {
           onPointerUp={finGlisse}
           onPointerCancel={finGlisse}
         >
-          <Show
-            when={guideCharge()}
-            fallback={
-              <div style={{ padding: '24px', 'max-width': '560px' }}>
-                <Show
-                  when={guideIncomplet()}
-                  fallback={
-                    <p class="secondaire" style={{ 'margin-top': 0 }}>
-                      Le guide n'est pas encore en base. Le relais publie un XMLTV de 61 Mo
-                      couvrant environ deux jours ; il est téléchargé et indexé une fois,
-                      hors du fil principal.
-                    </p>
-                  }
-                >
-                  <p style={{ 'margin-top': 0, color: 'var(--lim)' }}>
-                    Import interrompu : la base contient{' '}
-                    <span class="num">{(etat()?.programmes ?? 0).toLocaleString('fr-FR')}</span>{' '}
-                    programmes mais aucune table de chaînes. L'import dure environ
-                    40 s et ne survit pas à un rechargement de page.
-                  </p>
-                </Show>
-                <button onClick={chargerGuide} style={{ ...BTN, border: '1px solid var(--line2)' }}>
-                  {guideIncomplet() ? 'Reprendre le chargement' : 'Charger le guide'}
-                </button>
-              </div>
-            }
-          >
             <ListeVirtuelle
               elements={lignesFiltrees()}
               hauteurLigne={HAUTEUR_LIGNE}
               marge={4}
               vide={
                 <p class="tertiaire" style={{ padding: '16px' }}>
-                  Aucune chaîne ne correspond — ou le catalogue n'est pas importé.
+                  Aucune chaîne ne correspond — ou le catalogue n'est pas importé, ou aucune chaîne n'annonce de guide.
                 </p>
               }
               ligne={(l) => (
@@ -555,7 +448,6 @@ export default function Guide(props: {
                 </div>
               )}
             </Show>
-          </Show>
         </div>
       </div>
     </div>
@@ -573,9 +465,9 @@ function LigneChaine(props: {
 }) {
   // L'inscription vit le temps de la ligne montée : le lot interrogé suit
   // exactement la fenêtre visible du virtualiseur.
-  props.inscrire(props.ligne.chaine.epg)
+  props.inscrire(props.ligne.id)
 
-  const programmes = () => props.grille(props.ligne.chaine.epg)
+  const programmes = () => props.grille(props.ligne.id)
   const courant = () => programmeEnCours(programmes(), props.maintenant)
 
   return (
@@ -658,27 +550,13 @@ const BTN = {
   'white-space': 'nowrap',
 } as const
 
-/** La fenêtre commence toujours sur une demi-heure : la règle reste lisible. */
-function alignerSurPas(t: number): number {
-  return Math.floor(t / PAS) * PAS
-}
-
 /**
- * Les chaînes affichables sont l'intersection de trois choses : le catalogue
- * importé, les flux porteurs d'un `epg_channel_id`, et le XMLTV qui en parle
- * vraiment. Les deux dernières sont déjà réduites par le worker.
+ * Les chaînes affichables : celles du direct dont le catalogue annonce un guide
+ * (`epg_id`). Triées par nom, comme le reste de l'interface.
  */
 async function chargerLignes(): Promise<Ligne[]> {
-  const chaines = await chainesGuidePartagees()
-  if (chaines.length === 0) return []
-  const entrees = await db.catalogue.bulkGet(chaines.map((c) => `live:${c.streamId}`))
-
-  const lignes: Ligne[] = []
-  for (const [i, c] of chaines.entries()) {
-    const e = entrees[i]
-    if (!e) continue // flux disparu du catalogue depuis le dernier import
-    lignes.push({ chaine: c, entree: e })
-  }
-  lignes.sort((a, b) => a.entree.nom.localeCompare(b.entree.nom, 'fr'))
-  return lignes
+  const entrees = await chainesAvecGuide()
+  return entrees
+    .map((entree): Ligne => ({ id: idServeurDe(entree), entree }))
+    .sort((a, b) => a.entree.nom.localeCompare(b.entree.nom, 'fr'))
 }

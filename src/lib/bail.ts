@@ -1,0 +1,101 @@
+import { signalerSiNonAuthentifie } from './session-expiree'
+
+// Rendre la place du fournisseur quand on a fini de lire un direct.
+//
+// POURQUOI ce module existe : le fournisseur n'accorde qu'UNE connexion. Le
+// serveur ne rend la place d'un direct qu'a l'expiration de son bail (90 s) ou
+// quand une requete de segment EN VOL est annulee. Entre deux segments, rien
+// n'est en vol : sans cet appel, fermer le lecteur laissait la place prise
+// pendant plus d'une minute, et le contenu suivant se heurtait a un 503.
+//
+// POURQUOI l'appel est DIFFERE : zapper ferme une chaine puis en ouvre une
+// autre, et le serveur ne rend la place que si la session lit « encore » la
+// chaine fermee. Si l'appel arrivait avant la premiere requete de la nouvelle
+// chaine, il libererait la place... que la nouvelle chaine vient justement
+// reprendre — et le fournisseur, qui ne l'oublie qu'apres ~100 s, refuserait
+// la reprise. On attend donc un instant ; toute nouvelle ouverture annule.
+
+/** Delai pendant lequel une nouvelle ouverture peut encore annuler la fin. */
+export const DELAI_FIN_MS = 1500
+
+type Minuteur = ReturnType<typeof setTimeout>
+
+export interface DependancesBail {
+  fetch: typeof fetch
+  setTimeout: (f: () => void, ms: number) => Minuteur
+  clearTimeout: (m: Minuteur) => void
+}
+
+export function creerBail(dep: DependancesBail) {
+  let minuteur: Minuteur | undefined
+  /** Fin programmee, pas encore partie. */
+  let enAttente: string | undefined
+  /** Direct actuellement ouvert : c'est lui qu'une fermeture de page doit rendre. */
+  let courante: string | undefined
+
+  /** Envoi sans attente. `keepalive` le laisse partir meme si la page se ferme. */
+  function envoyerFin(chaine: string): void {
+    void dep
+      .fetch(`/api/v1/live/${encodeURIComponent(chaine)}/fin`, {
+        method: 'POST',
+        keepalive: true,
+        credentials: 'same-origin',
+      })
+      .then((r) => signalerSiNonAuthentifie(r.status))
+      // Un echec n'est pas grave : le bail expirera de lui-meme.
+      .catch(() => {})
+  }
+
+  function annulerFin(): void {
+    if (minuteur !== undefined) dep.clearTimeout(minuteur)
+    minuteur = undefined
+    enAttente = undefined
+  }
+
+  return {
+    /**
+     * Une lecture s'ouvre (direct ou film) : elle reprend la place, il n'y a plus
+     * rien a rendre. `chaine` n'est donnee que pour un direct.
+     */
+    lectureOuverte(chaine?: string): void {
+      annulerFin()
+      courante = chaine
+    },
+    /** Le lecteur a lache cette chaine : la fin partira si rien ne la remplace. */
+    lectureArretee(chaine: string): void {
+      annulerFin()
+      if (courante === chaine) courante = undefined
+      enAttente = chaine
+      minuteur = dep.setTimeout(() => {
+        const c = enAttente
+        minuteur = undefined
+        enAttente = undefined
+        if (c) envoyerFin(c)
+      }, DELAI_FIN_MS)
+    },
+    /** Une ouverture est en route (sonde, attente) : elle annule la fin differee. */
+    annulerFin,
+    /** La page se ferme : plus le temps d'attendre, et le direct ouvert est rendu aussi. */
+    fermeturePage(): void {
+      const c = enAttente ?? courante
+      annulerFin()
+      courante = undefined
+      if (c) envoyerFin(c)
+    },
+    enAttente: () => enAttente,
+    courante: () => courante,
+  }
+}
+
+const bailGlobal = creerBail({
+  fetch: (...a) => fetch(...a),
+  setTimeout: (f, ms) => setTimeout(f, ms),
+  clearTimeout: (m) => clearTimeout(m),
+})
+
+export const lectureOuverte = bailGlobal.lectureOuverte
+export const lectureArretee = bailGlobal.lectureArretee
+export const annulerFinDifferee = bailGlobal.annulerFin
+
+if (typeof addEventListener === 'function')
+  addEventListener('pagehide', () => bailGlobal.fermeturePage())

@@ -1,8 +1,8 @@
 import { createMemo } from 'solid-js'
 import type { ProgrammeCourant } from '../../components/PlaqueChaine'
 import { entreesDeCategorie } from '../../lib/catalogue'
-import { chainesGuidePartagees, grillesFenetre, programmeEnCours } from '../../lib/epg'
-import { FRAICHEUR, cles, donneePartagee, requeteClefee } from '../../lib/requetes'
+import { programmesEnCours } from '../../lib/chaines-guide'
+import { FRAICHEUR, cles, requeteClefee } from '../../lib/requetes'
 import { normaliser, type EntreeCatalogue } from '../../lib/db'
 
 // Les chaînes d'une catégorie et ce qui y passe en ce moment : deux lectures
@@ -10,27 +10,13 @@ import { normaliser, type EntreeCatalogue } from '../../lib/db'
 // toute la catégorie — suivre les lignes visibles au défilement multiplierait
 // les transactions pour exactement le même résultat.
 
-/** Au-delà, interroger le guide pour toute la catégorie coûterait plus que ce
- *  que le spectateur verra jamais : les cartes s'affichent sans programme. */
-const PLAFOND_EPG = 1200
-
-/** Fenêtre demandée au guide : une heure suffit à « ce qui passe en ce moment ». */
-const FENETRE_EPG = 3_600_000
-
 /**
- * Index `stream_id → identifiant XMLTV`. La table de jointure compte 4 048
- * lignes et ne change QU'AU rechargement du guide — mais la promesse mémorisée
- * ici auparavant ne le savait pas : recharger le guide laissait Direct sur
- * l'ancienne jointure jusqu'au prochain rechargement de page. La clé partagée,
- * elle, est périmée par `invaliderGuide`.
+ * Au-delà, interroger le guide pour toute la catégorie coûterait plus que ce
+ * que le spectateur verra jamais : les cartes s'affichent sans programme. Le
+ * plafond vaut deux appels de grille (le serveur en accepte 200 chaînes par
+ * appel) : le guide n'est plus dans une base locale, chaque chaîne coûte.
  */
-function indexGuide(): Promise<Map<number, string>> {
-  return donneePartagee(
-    cles.epgJointure,
-    () => chainesGuidePartagees().then((l) => new Map(l.map((c) => [c.streamId, c.epg]))),
-    FRAICHEUR.guide,
-  )
-}
+const PLAFOND_EPG = 400
 
 export function creerListeChaines(opts: {
   categorieActive: () => string | null
@@ -56,19 +42,11 @@ export function creerListeChaines(opts: {
       return liste && id ? { id, liste } : undefined
     },
     async ({ liste }) => {
-      const par = new Map<string, ProgrammeCourant>()
-      if (liste.length === 0 || liste.length > PLAFOND_EPG) return par
-      const jointure = await indexGuide()
-      const epgs = [...new Set(liste.map((e) => jointure.get(e.id)).filter(Boolean))] as string[]
-      if (epgs.length === 0) return par
-      const t0 = Date.now()
-      const grilles = await grillesFenetre(epgs, t0, t0 + FENETRE_EPG)
-      for (const e of liste) {
-        const cle = jointure.get(e.id)
-        const p = cle ? programmeEnCours(grilles.get(cle) ?? [], t0) : undefined
-        if (p) par.set(e.cle, { titre: p.titre, debut: p.debut, fin: p.fin })
-      }
-      return par
+      const vide = new Map<string, ProgrammeCourant>()
+      if (liste.length === 0 || liste.length > PLAFOND_EPG) return vide
+      // Une requête de grille pour le lot, jamais une par carte ; les chaînes
+      // sans `epg_id` n'en font pas partie.
+      return programmesEnCours(liste)
     },
     { fraicheur: FRAICHEUR.horloge },
   )

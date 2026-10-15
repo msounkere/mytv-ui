@@ -1,52 +1,30 @@
 import { createSignal, onCleanup } from 'solid-js'
-import { ErreurLecteur, type Couche } from '../../lib/errors'
-import type { Forcage, Plan } from '../../lib/flux'
+import { ErreurLecteur } from '../../lib/errors'
+import { noter } from '../../lib/diagnostic'
+import { decider, ESSAIS_MAX, type MotifReprise } from '../../lib/politique-reprise'
 
-// La politique de reprise sur panne, et elle seule : trois essais annoncés,
-// puis l'échelle de transcodage imposé. Le dossier interdit l'écran noir
-// silencieux — tant qu'un essai reste, on dit lequel et quand.
+// La reprise sur panne cote ecran : l'etat visible (essai n sur N, decompte) et
+// le minuteur. La DECISION — reessayer ou abandonner, apres combien de temps —
+// est dans `lib/politique-reprise`, testee seule. Le dossier interdit l'ecran
+// noir silencieux : tant qu'un essai reste, on dit lequel et quand.
+//
+// Plus d'echelle de transcodage impose : c'est le serveur qui choisit remux ou
+// reencodage audio, et qui refuse (415) ce qu'il ne sait pas rendre lisible.
+// Un format illisible n'est donc plus « reessayable » : il est nomme.
 
-/** Reconnexion : trois essais avant de nommer la panne. */
-export const ESSAIS_MAX = 3
-const DELAI_RECONNEXION = 3
-
-/** Pannes qu'une nouvelle tentative peut lever : inutile de réessayer un EAC3. */
-const RECUPERABLE: readonly Couche[] = ['reseau', 'relais', 'limite']
-
-/**
- * Mesuré sur TF1 : une même chaîne change d'encodage en cours de journée. Le
- * verdict de la sonde devient faux en pleine lecture, et le navigateur rend
- * la main sur un `fragParsingError`.
- *
- * Repasser par le service ne suffisait pas : consulté à nouveau il rendait le
- * même verdict, donc la même redirection vers le même flux illisible. On lui
- * impose donc la sortie, qui ne dépend plus d'aucun diagnostic.
- *
- * L'échelle monte d'un cran par échec : l'audio d'abord — seul défaut mesuré,
- * et 2,5 % d'un cœur —, l'image ensuite, parce qu'elle coûte 78 à 106 % d'un
- * cœur et passe donc par l'accord de l'utilisateur.
- */
-const ECHELLE: readonly Forcage[] = ['audio', 'video']
+export { ESSAIS_MAX }
 
 export function creerReprisePanne(opts: {
-  /** Clé du contenu courant : un forçage ne vaut que pour celui qui a échoué. */
-  cle: () => string
-  plan: () => Plan | null
   poserErreur: (e: ErreurLecteur | null) => void
 }) {
-  const [reconnexion, poserReconnexion] = createSignal<{ essai: number; dans: number } | null>(null)
+  const [reconnexion, poserReconnexion] = createSignal<
+    { essai: number; total: number; dans: number; motif: MotifReprise } | null
+  >(null)
   const [relance, poserRelance] = createSignal(0)
-  const [forcage, poserForcage] = createSignal<{ cle: string; mode: Forcage } | null>(null)
 
-  /** Le forçage ne vaut que pour le contenu qui a échoué, jamais pour le suivant. */
-  const forcageActif = (): Forcage | undefined => {
-    const f = forcage()
-    return f && f.cle === opts.cle() ? f.mode : undefined
-  }
-
-  // Volontairement hors réactivité : le compteur d'essais est LU par le calque
-  // d'erreur au moment où il se monte, et le rendre réactif ferait se repeindre
-  // le message à chaque tentative.
+  // Volontairement hors reactivite : le compteur d'essais est LU par le calque
+  // d'erreur au moment ou il se monte, et le rendre reactif ferait se repeindre
+  // le message a chaque tentative.
   let essais = 0
   let minuteur: ReturnType<typeof setInterval> | undefined
 
@@ -60,33 +38,22 @@ export function creerReprisePanne(opts: {
     poserRelance((n) => n + 1)
   }
 
-  function imposerTranscodage(): boolean {
-    if (!opts.plan()) return false
-    const courant = forcageActif()
-    // Le verdict de la sonde n'est volontairement PAS oublié : il ne décide
-    // plus de rien ici, et le réinterroger dépenserait la connexion unique
-    // pour un renseignement d'affichage.
-    const suivant = ECHELLE[courant === undefined ? 0 : ECHELLE.indexOf(courant) + 1]
-    if (!suivant) return false
-    poserForcage({ cle: opts.cle(), mode: suivant })
-    relancer()
-    return true
-  }
-
   function signalerErreur(e: ErreurLecteur) {
-    if (e.couche === 'codec' && imposerTranscodage()) return
-    if (!RECUPERABLE.includes(e.couche) || essais >= ESSAIS_MAX) {
+    const decision = decider(e, essais)
+    if (decision.action === 'abandonner') {
+      noter('lecture:abandon', { couche: e.couche, essais, detail: e.detail })
       arreter()
       opts.poserErreur(e)
       return
     }
-    essais += 1
-    poserReconnexion({ essai: essais, dans: DELAI_RECONNEXION })
+    essais = decision.essai
+    noter('lecture:reessai', { couche: e.couche, essai: decision.essai, delai: decision.delai, motif: decision.motif })
+    poserReconnexion({ essai: decision.essai, total: decision.total, dans: decision.delai, motif: decision.motif })
     clearInterval(minuteur)
     minuteur = setInterval(() => {
       const r = reconnexion()
       if (!r) return arreter()
-      if (r.dans > 1) return poserReconnexion({ essai: r.essai, dans: r.dans - 1 })
+      if (r.dans > 1) return poserReconnexion({ ...r, dans: r.dans - 1 })
       arreter()
       relancer()
     }, 1000)
@@ -100,9 +67,6 @@ export function creerReprisePanne(opts: {
     relancer,
     signalerErreur,
     arreter,
-    forcageActif,
-    /** Un réessai explicite rend le transcodage imposé à nouveau négociable. */
-    oublierForcage: () => poserForcage(null),
     essais: () => essais,
     remettreAZero: () => {
       essais = 0

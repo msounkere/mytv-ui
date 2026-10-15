@@ -1,11 +1,10 @@
-import { createMemo, createSignal } from 'solid-js'
+import { createEffect, createMemo, createSignal, onCleanup } from 'solid-js'
 import { fenetreAutour } from '../../components/MiniGuide'
 import type { NotificationLecteur } from '../../components/Notification'
-import { ClientXtream } from '../../lib/xtream'
-import { config } from '../../config'
 import { entreesDeCategorie } from '../../lib/catalogue'
-import { epgChaine, programmeEnCours, type Programme } from '../../lib/epg'
-import { FRAICHEUR, cles, donneePartagee } from '../../lib/requetes'
+import { epg, type EnCours } from '../../lib/epg'
+import { idServeurDe } from '../../lib/source-lecture'
+import { donneePartagee, cles } from '../../lib/requetes'
 import { db, type EntreeCatalogue } from '../../lib/db'
 import { donnee } from './donnee'
 
@@ -15,19 +14,16 @@ import { donnee } from './donnee'
 // est ce qui garantit qu'une seule lecture du catalogue les sert toutes.
 //
 // Rien ici ne passe par une requête lue pendant le rendu : voir `donnee`.
+//
+// EPG : la chaîne regardée interroge `/epg/chaines/{id}/maintenant` ; les huit
+// lignes du mini-guide, UN SEUL appel de grille (jamais un appel par ligne).
+// Le cache est celui du client EPG (`lib/epg`), pas celui de TanStack : il sait
+// quand un programme finit, ce qu'un délai fixe ignore.
 
-/**
- * Grille courte d'une chaîne, mise en cache sous `['epg', <stream_id>]`.
- *
- * UNE SEULE LIMITE pour tous les appelants : la colonne du lecteur en
- * demandait six et le mini-guide quatre, ce qui ferait deux caches pour la même
- * chaîne. L'échec n'est pas mis en cache — il est rattrapé ici, après la clé,
- * pour qu'un relais momentanément muet ne fige pas une grille vide.
- */
-function grilleCourte(c: ClientXtream, id: number): Promise<Programme[]> {
-  return donneePartagee(cles.epgChaine(id), () => epgChaine(c, id, 6), FRAICHEUR.horloge, 600_000)
-    .catch(() => [] as Programme[])
-}
+/** Les programmes ne changent qu'à des heures rondes : une minute suffit. */
+const RAFRAICHISSEMENT_MS = 30_000
+
+const VIDE: EnCours = { courant: undefined, suivant: undefined }
 
 export function creerZapping(opts: {
   entree: () => EntreeCatalogue
@@ -37,8 +33,6 @@ export function creerZapping(opts: {
   surChanger: (e: EntreeCatalogue) => void
   notifier: (message: string, ton?: NotificationLecteur['ton']) => void
 }) {
-  const client = () => new ClientXtream(config())
-
   const [filtre, poserFiltre] = createSignal('')
   const [derniereChaine, poserDerniereChaine] = createSignal<EntreeCatalogue | null>(null)
 
@@ -69,19 +63,51 @@ export function creerZapping(opts: {
     undefined as string | undefined,
   )
 
-  // Programme en cours, uniquement en direct et seulement si la chaîne est
-  // rattachée à l'EPG — 5 503 chaînes sur 21 791 le sont.
-  const grille = donnee(
-    () => (opts.direct() ? opts.entree().id : undefined),
-    (id) => (id === undefined ? Promise.resolve([]) : grilleCourte(client(), id)),
-    [] as Programme[],
-  )
+  // Programme en cours et suivant, uniquement en direct. Le serveur répond
+  // « null » pour une chaîne sans guide : l'écran le dit, sans erreur.
+  const [tic, poserTic] = createSignal(0)
+  createEffect(() => {
+    if (!opts.direct()) return
+    const t = setInterval(() => poserTic((n) => n + 1), RAFRAICHISSEMENT_MS)
+    onCleanup(() => clearInterval(t))
+  })
 
-  const enCours = () => programmeEnCours(grille(), Date.now())
-  const ensuite = (): Programme | undefined => {
-    const p = enCours()
-    return p ? grille().find((x) => x.debut >= p.fin) : undefined
-  }
+  const [enCoursSuivant, poserEnCoursSuivant] = createSignal<EnCours>(VIDE)
+  let chaineCourante: string | undefined
+  createEffect(() => {
+    tic()
+    if (!opts.direct()) {
+      chaineCourante = undefined
+      poserEnCoursSuivant(VIDE)
+      return
+    }
+    const id = idServeurDe(opts.entree())
+    // Zapper efface le programme de l'ancienne chaîne ; un simple
+    // rafraîchissement, lui, garde l'affichage jusqu'à la réponse.
+    if (id !== chaineCourante) poserEnCoursSuivant(VIDE)
+    chaineCourante = id
+    let annule = false
+    onCleanup(() => {
+      annule = true
+    })
+    epg
+      .maintenant(id)
+      .then((v) => {
+        if (!annule) poserEnCoursSuivant(v)
+      })
+      .catch(() => {
+        // Un guide muet ne doit jamais gêner la lecture.
+      })
+  })
+
+  /** Le programme n'est « en cours » que tant qu'il l'est : la minute le périme. */
+  const enCours = createMemo(() => {
+    tic()
+    const c = enCoursSuivant().courant
+    const t = Date.now()
+    return c && c.debut <= t && t < c.fin ? c : undefined
+  })
+  const ensuite = () => (enCours() ? enCoursSuivant().suivant : undefined)
 
   // Le dossier est explicite : ↑ ↓ parcourent la LISTE D'ORIGINE, pas la
   // colonne filtrée. Filtrer sert à retrouver une chaîne, pas à restreindre le
@@ -107,31 +133,23 @@ export function creerZapping(opts: {
       : [],
   )
 
-  // Une grille par chaîne montrée, demandée seulement quand le mini-guide est
-  // ouvert : huit appels à la demande, zéro au repos. Volontairement un signal
-  // et non une ressource — une ressource en attente, lue pendant le rendu,
-  // suspendrait la coque entière et décrocherait le lecteur de la page.
+  // Les huit lignes du mini-guide en UN appel, demandé seulement quand il est
+  // ouvert : zéro au repos. Volontairement un signal et non une ressource — une
+  // ressource en attente, lue pendant le rendu, suspendrait la coque entière et
+  // décrocherait le lecteur de la page.
   const grillesGuide = donnee(
-    () => chainesGuide().map((c) => c.id),
-    async (ids) => {
-      if (ids.length === 0) return new Map<number, Programme[]>()
-      const c = client()
-      const grilles = await Promise.all(ids.map((id) => grilleCourte(c, id)))
-      return new Map(ids.map((id, i) => [id, grilles[i]!]))
-    },
-    new Map<number, Programme[]>(),
+    () => chainesGuide().map(idServeurDe),
+    (ids) =>
+      ids.length === 0
+        ? Promise.resolve(new Map<string, EnCours>())
+        : epg.enCoursPour(ids).catch(() => new Map<string, EnCours>()),
+    new Map<string, EnCours>(),
   )
 
-  const programmeDe = (e: EntreeCatalogue): Programme | undefined => {
-    if (e.cle === opts.entree().cle) return enCours()
-    const g = grillesGuide().get(e.id)
-    return g ? programmeEnCours(g, Date.now()) : undefined
-  }
-  const ensuiteDe = (e: EntreeCatalogue): Programme | undefined => {
-    const g = e.cle === opts.entree().cle ? grille() : grillesGuide().get(e.id)
-    const p = programmeDe(e)
-    return g && p ? g.find((x) => x.debut >= p.fin) : undefined
-  }
+  const programmeDe = (e: EntreeCatalogue) =>
+    e.cle === opts.entree().cle ? enCours() : grillesGuide().get(idServeurDe(e))?.courant
+  const ensuiteDe = (e: EntreeCatalogue) =>
+    e.cle === opts.entree().cle ? ensuite() : grillesGuide().get(idServeurDe(e))?.suivant
 
   return {
     filtre, poserFiltre,

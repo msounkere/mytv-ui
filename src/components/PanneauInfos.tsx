@@ -6,7 +6,7 @@ import { ENCRE, ENCRE2 } from './ControlesLecteur'
 import { avancement, plage } from './MiniGuide'
 import type { Programme } from '../lib/epg'
 import type { EntreeCatalogue } from '../lib/db'
-import { LIBELLE_STRATEGIE, TEINTE_STRATEGIE, strategieEffective, type Plan } from '../lib/flux'
+import { LIBELLE_MODE, TEINTE_MODE, type Plan } from '../lib/flux'
 
 // Le dossier est formel : s'informer ne coupe pas la lecture. Ce panneau se
 // pose à droite de l'image, la vidéo continue derrière, et il se referme sur
@@ -23,7 +23,7 @@ export default function PanneauInfos(props: {
   categorie?: string
   enCours?: Programme
   ensuite?: Programme
-  /** Chaîne de traitement réellement appliquée au flux ouvert. */
+  /** Traitement que le serveur applique au flux ouvert. */
   flux?: Plan | null
   favori: boolean
   surFavori: () => void
@@ -154,18 +154,12 @@ export default function PanneauInfos(props: {
 
 /**
  * Ce qui arrive au flux, dit sobrement : l'utilisateur doit pouvoir savoir si
- * son processeur travaille pour lui, et pourquoi. Discret parce que, dans
- * l'immense majorité des cas, la réponse est « rien du tout ».
+ * le serveur travaille pour lui. Discret parce que, dans l'immense majorité des
+ * cas, la réponse est « rien du tout ». Un direct n'a pas de mode : le serveur
+ * relaie la playlist et les segments tels quels.
  */
 function BlocFlux(props: { plan: Plan }) {
-  const sonde = () => props.plan.sonde
-  // Apres un forcage, la sonde dit ce qu'on AURAIT fait et le forcage ce qu'on
-  // fait : c'est le second que l'utilisateur doit lire.
-  const strategie = () => strategieEffective(props.plan)
-  const source = () =>
-    [sonde()?.conteneur, [sonde()?.video, sonde()?.audio].filter(Boolean).join('/'), sonde()?.hauteur ? `${sonde()!.hauteur}p` : '']
-      .filter(Boolean)
-      .join(' · ')
+  const mode = () => props.plan.mode
 
   return (
     <div
@@ -188,42 +182,11 @@ function BlocFlux(props: { plan: Plan }) {
       <span
         style={{
           'font-size': '13px', 'font-weight': 'var(--w-strong)',
-          color: strategie() ? TEINTE_STRATEGIE[strategie()!] : ENCRE,
+          color: mode() ? TEINTE_MODE[mode()!] : ENCRE,
         }}
       >
-        {strategie()
-          ? LIBELLE_STRATEGIE[strategie()!]
-          : 'Lecture directe depuis le relais, sans intermédiaire'}
+        {mode() ? LIBELLE_MODE[mode()!] : 'Relais tel quel par le serveur'}
       </span>
-
-      <Show when={source()}>
-        {(s) => (
-          <span class="num" style={{ 'font-size': '11px', color: ENCRE2 }}>
-            Source : {s()}
-          </span>
-        )}
-      </Show>
-
-      <Show when={props.plan.viaService && sonde()}>
-        {(s) => (
-          <>
-            <span style={{ 'font-size': '12px', 'line-height': '17px', color: ENCRE2 }}>
-              {s().pourquoi}
-            </span>
-            <span class="num" style={{ 'font-size': '11px', color: ENCRE2 }}>
-              Processeur : {s().coutCpu}
-            </span>
-          </>
-        )}
-      </Show>
-
-      <Show when={props.plan.repli}>
-        {(r) => (
-          <span style={{ 'font-size': '12px', 'line-height': '17px', color: 'var(--lim)' }}>
-            Repli : {r()}
-          </span>
-        )}
-      </Show>
     </div>
   )
 }

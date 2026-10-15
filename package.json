@@ -9,8 +9,8 @@
     "build": "tsc --noEmit && NODE_OPTIONS=--tls-max-v1.2 vite build",
     "preview": "NODE_OPTIONS=--tls-max-v1.2 vite preview",
     "check": "tsc --noEmit",
-    "test:unit": "node --test tests/unit/*.test.mjs",
-    "test:e2e": "node tests/e2e/us19.mjs",
+    "test:unit": "node --test tests/unit/*.test.mjs && node tests/unit/lancer.mjs",
+    "test:e2e": "node tests/e2e/us19.mjs && node tests/e2e/us20-lecture.mjs && node tests/e2e/us21-guide.mjs",
     "test:dist": "node tests/dist-sans-secrets.mjs"
   },
   "dependencies": {

@@ -1,107 +1,49 @@
-import Dexie, { type Table } from 'dexie'
-import { ErreurLecteur, depuisReponse } from './errors'
-import { FRAICHEUR, cles, donneePartagee } from './requetes'
-import { URL_XMLTV, type ClientXtream } from './xtream'
+import { ErreurLecteur, erreurDeStatut } from './errors'
+import { cheminContenu } from './identifiants'
+import { signalerSiNonAuthentifie } from './session-expiree'
 
-// TuliProx relaie l EPG du fournisseur par les routes Xtream standard. On ne
-// les atteint plus en direct : le service les relaie sous /flux/relais/ et y
-// injecte les identifiants, de sorte qu ils ne figurent plus ni dans l URL ni
-// en memoire de la page.
-//   player_api.php?action=get_short_epg&stream_id=<id>&limit=<n>   → la grille d une chaine
-//   player_api.php?action=get_simple_data_table&stream_id=<id>     → idem, format long
-//   xmltv.php                                                      → le XMLTV complet
+// Le guide des programmes vient du serveur, par fenetre de temps :
+//   GET /api/v1/epg/grille?chaines=a,b,c&de=<RFC3339>&a=<RFC3339>
+//       tous les programmes qui chevauchent [de, a[ pour plusieurs chaines
+//   GET /api/v1/epg/chaines/{id}/maintenant
+//       programme en cours et suivant d'UNE chaine
+//
+// Le XMLTV complet (61 Mo, parse dans un worker, indexe en base locale) a
+// disparu : le serveur le fait une fois pour tout le monde. La contrepartie est
+// qu'un appel par ligne visible serait deux cents requetes au defilement — d'ou
+// ce client, qui demande les chaines VISIBLES en un seul appel, par blocs de temps
+// alignes, et ne redemande jamais un bloc qu'il a deja.
 
 export interface Programme {
-  /** `epg_channel_id` du flux, lien avec ChaineXtream.epg_channel_id. */
+  /** Identifiant de la chaine (`fournisseur:numero`), celui de l'API. */
   chaine: string
   titre: string
   description?: string
+  /** Millisecondes Unix. Le serveur parle UTC ; l'affichage est en heure locale. */
   debut: number
   fin: number
 }
 
-/** L API Xtream encode titres et descriptions en base64. */
-function deBase64(v: string | undefined): string {
-  if (!v) return ''
-  try {
-    return new TextDecoder().decode(Uint8Array.from(atob(v), (c) => c.charCodeAt(0)))
-  } catch {
-    return v // deja en clair chez certains relais
+interface ProgrammeBrut {
+  debut?: string
+  fin?: string
+  titre?: string
+  description?: string
+}
+
+/** Programme du contrat → programme de l'interface. Rejette les dates illisibles. */
+export function versProgramme(chaine: string, b: ProgrammeBrut | null | undefined): Programme | null {
+  if (!b) return null
+  const debut = Date.parse(b.debut ?? '')
+  const fin = Date.parse(b.fin ?? '')
+  if (Number.isNaN(debut) || Number.isNaN(fin) || fin <= debut) return null
+  return {
+    chaine,
+    titre: b.titre?.trim() || 'Programme sans titre',
+    description: b.description?.trim() || undefined,
+    debut,
+    fin,
   }
-}
-
-interface EpgCourtBrut {
-  epg_listings?: Array<{
-    title?: string
-    description?: string
-    start?: string
-    end?: string
-    start_timestamp?: string
-    stop_timestamp?: string
-    channel_id?: string
-  }>
-}
-
-/** Grille d une seule chaine — suffisant pour « programme en cours » en lecture. */
-export async function epgChaine(
-  client: ClientXtream,
-  streamId: number,
-  limite = 12,
-  signal?: AbortSignal,
-): Promise<Programme[]> {
-  const brut = await client.appelBrut<EpgCourtBrut>(
-    'get_short_epg',
-    { stream_id: streamId, limit: limite },
-    signal,
-  )
-  return (brut.epg_listings ?? []).map((p) => ({
-    chaine: p.channel_id ?? String(streamId),
-    titre: deBase64(p.title) || 'Programme sans titre',
-    description: deBase64(p.description) || undefined,
-    debut: horodatage(p.start_timestamp, p.start),
-    fin: horodatage(p.stop_timestamp, p.end),
-  }))
-}
-
-function horodatage(ts: string | undefined, texte: string | undefined): number {
-  if (ts) return Number(ts) * 1000
-  if (texte) {
-    const t = Date.parse(texte.replace(' ', 'T'))
-    if (!Number.isNaN(t)) return t
-  }
-  return 0
-}
-
-/**
- * XMLTV complet, pour la grille EPG multi-chaines. Le fichier pese plusieurs
- * dizaines de Mo : il est recupere en flux et parse dans un worker, jamais sur
- * le fil principal.
- */
-export async function telechargerXmltv(
-  signal?: AbortSignal,
-): Promise<ReadableStream<Uint8Array>> {
-  let r: Response
-  try {
-    // Le service comprime sa reponse : les 61 Mo du guide arrivent en 12 Mo,
-    // et le navigateur les decomprime au fil de la lecture du flux.
-    r = await fetch(URL_XMLTV, { signal, credentials: 'same-origin' })
-  } catch (e) {
-    if (e instanceof DOMException && e.name === 'AbortError') throw e
-    throw new ErreurLecteur(
-      'reseau',
-      'Le guide des programmes est injoignable.',
-      'Reessayer ; la navigation reste utilisable sans EPG.',
-      String(e),
-    )
-  }
-  if (!r.ok) throw depuisReponse(r, 'xmltv.php')
-  if (!r.body)
-    throw new ErreurLecteur(
-      'donnees',
-      'Le relais a renvoye un guide vide.',
-      'Verifier qu une source EPG est configuree dans TuliProx.',
-    )
-  return r.body
 }
 
 /** Programme en cours dans une grille triee. */
@@ -109,157 +51,319 @@ export function programmeEnCours(grille: Programme[], maintenant: number): Progr
   return grille.find((p) => p.debut <= maintenant && maintenant < p.fin)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Base dediee a la grille EPG
-// ─────────────────────────────────────────────────────────────────────────────
-// Le XMLTV du relais pese 61,5 Mo pour 200 050 programmes repartis sur 2 950
-// chaines, soit environ deux jours de grille. On le parse une fois dans un
-// worker puis on l interroge par index : la grille multi-chaines a besoin d un
-// acces aleatoire (n importe quelle chaine, n importe quelle heure, en arriere
-// comme en avant), ce que `get_short_epg` ne sait pas faire — il ne rend que
-// les prochains programmes d UNE chaine, au prix d un aller-retour HTTP par
-// ligne visible, sur le meme relais que la video.
-//
-// Base distincte de `mytv` (db.ts) a dessein : le schema du catalogue est
-// partage, celui du guide est jetable — on peut le vider et le recharger sans
-// toucher aux favoris ni aux reprises.
-
-/** Lien stream_id ↔ identifiant XMLTV, etabli depuis `get_live_streams`. */
-export interface ChaineGuide {
-  streamId: number
-  /** `epg_channel_id` — cle de jointure avec les programmes. */
-  epg: string
-  nom: string
-  icone?: string
+/** Premier programme qui commence apres la fin du courant. */
+export function programmeSuivant(grille: Programme[], courant: Programme | undefined): Programme | undefined {
+  return courant ? grille.find((p) => p.debut >= courant.fin) : undefined
 }
 
-interface ProgrammeStocke extends Programme {
-  /** Cle auto-incrementee ; absente a l insertion. */
-  n?: number
+// --- Fuseau et alignement ---------------------------------------------------
+
+const MINUTE = 60_000
+const HEURE = 60 * MINUTE
+
+/**
+ * Debut de la demi-heure LOCALE contenant `t`. POURQUOI pas un simple
+ * `floor(t / 30 min)` : sur un fuseau decale de 45 min (Nepal) ou de 30 min
+ * (Inde), les epoques UTC tombent a XX:15 ou XX:30 locales, et la regle horaire
+ * de la grille afficherait des graduations a 14:15, 14:45.
+ */
+export function debutDemiHeureLocale(t: number, decalageMinutes = new Date(t).getTimezoneOffset()): number {
+  const pas = 30 * MINUTE
+  const local = t - decalageMinutes * MINUTE
+  return Math.floor(local / pas) * pas + decalageMinutes * MINUTE
 }
 
-interface MetaGuide {
-  cle: string
-  valeur: unknown
-}
+// --- Limites annoncees par le serveur ---------------------------------------
 
-export const dbEpg = new Dexie('mytv-epg') as Dexie & {
-  programmes: Table<ProgrammeStocke, number>
-  chaines: Table<ChaineGuide, number>
-  meta: Table<MetaGuide, string>
-}
-
-dbEpg.version(1).stores({
-  // `[chaine+debut]` est le seul acces utile : « cette chaine, entre t0 et t1 ».
-  programmes: '++n, [chaine+debut]',
-  chaines: 'streamId, epg',
-  meta: 'cle',
-})
-
-export interface EtatGuide {
-  /** Horodatage du dernier import XMLTV reussi, absent si jamais charge. */
-  chargeLe?: number
-  /**
-   * Faux tant qu un import n a pas ete mene a son terme. Un rechargement de
-   * page pendant l import tue le worker : la base garde alors des programmes
-   * sans table de chaines, et doit se declarer incomplete plutot que de
-   * laisser l ecran afficher « 0 chaine » sans explication.
-   */
-  complet: boolean
+export interface LimitesEpg {
+  /** Nombre maximal de chaines d'un appel `/epg/grille`. */
   chaines: number
-  programmes: number
+  /** Plage maximale d'un appel, en millisecondes. */
+  fenetreMs: number
 }
 
-/** Pose au debut de l import, remplace par `complet` a la toute fin. */
-export const MARQUEUR_EN_COURS = 'en-cours'
-export const MARQUEUR_COMPLET = 'complet'
+/**
+ * Valeurs de repli, volontairement inferieures aux defauts du serveur (200
+ * chaines, 48 h) : si `/compte` est injoignable, un appel trop gros serait un
+ * 400, alors qu'un appel trop petit ne coute qu'une requete de plus.
+ */
+export const LIMITES_PAR_DEFAUT: LimitesEpg = { chaines: 100, fenetreMs: 6 * HEURE }
 
-export async function etatGuide(): Promise<EtatGuide> {
-  const [horodatage, marqueur, chaines, programmes] = await Promise.all([
-    dbEpg.meta.get('chargeLe'),
-    dbEpg.meta.get('etat'),
-    dbEpg.chaines.count(),
-    dbEpg.programmes.count(),
-  ])
-  const v = horodatage?.valeur
+export function limitesDepuisCompte(corps: unknown): LimitesEpg {
+  const l = (corps as { limites?: { pagination_max?: unknown; grille_fenetre?: unknown } } | null)?.limites
+  const chaines = Number(l?.pagination_max)
+  const fenetreS = Number(l?.grille_fenetre)
   return {
-    chargeLe: typeof v === 'number' ? v : undefined,
-    complet: marqueur?.valeur === MARQUEUR_COMPLET && chaines > 0,
-    chaines,
-    programmes,
+    chaines: Number.isInteger(chaines) && chaines >= 1 ? chaines : LIMITES_PAR_DEFAUT.chaines,
+    fenetreMs: Number.isFinite(fenetreS) && fenetreS >= 60 ? fenetreS * 1000 : LIMITES_PAR_DEFAUT.fenetreMs,
   }
 }
 
-/** Les chaines pour lesquelles le XMLTV contient reellement des programmes. */
-export function chainesGuide(): Promise<ChaineGuide[]> {
-  return dbEpg.chaines.toArray()
+// --- Decoupage en blocs -----------------------------------------------------
+
+/** Taille d'un bloc de cache : une soiree entiere tient dans deux blocs. */
+export const BLOC_MS = 3 * HEURE
+/** Un appel ne depasse jamais l'URL de 4096 caracteres de `chaines`. */
+const LONGUEUR_MAX_CHAINES = 3800
+
+export function tailleBloc(limites: LimitesEpg): number {
+  return Math.max(MINUTE, Math.min(BLOC_MS, limites.fenetreMs))
 }
 
-/**
- * Meme table, mais lue UNE fois pour toute l'application.
- *
- * POURQUOI : ces 4 048 lignes etaient relues par chaque appelant -- trois
- * rangees de l'Accueil, la colonne de Direct, les lignes du Guide --, soit cinq
- * lectures de la meme table pour peindre un seul ecran. La table ne change
- * qu'au rechargement du guide, et c'est `invaliderGuide` qui la perime.
- */
-export function chainesGuidePartagees(): Promise<ChaineGuide[]> {
-  return donneePartagee(cles.epgChaines, chainesGuide, FRAICHEUR.guide)
+/** Debuts des blocs alignes (UTC) qui couvrent [debut, fin[. */
+export function blocsCouvrant(debut: number, fin: number, taille: number): number[] {
+  if (!(fin > debut)) return []
+  const out: number[] = []
+  for (let b = Math.floor(debut / taille) * taille; b < fin && out.length < 64; b += taille) out.push(b)
+  return out
 }
 
-/**
- * Un programme peut avoir commence bien avant la fenetre affichee : on remonte
- * la borne basse de la requete pour ne pas perdre la case en cours.
- */
-const DEBORDEMENT = 8 * 3_600_000
+/** Paquets de `taille` elements au plus. */
+export function paquets<T>(liste: readonly T[], taille: number): T[][] {
+  const n = Math.max(1, taille)
+  const out: T[][] = []
+  for (let i = 0; i < liste.length; i += n) out.push(liste.slice(i, i + n))
+  return out
+}
 
-/** Grilles de plusieurs chaines sur une fenetre temporelle, en une requete. */
-export async function grillesFenetre(
-  epgs: string[],
-  debut: number,
-  fin: number,
-): Promise<Map<string, Programme[]>> {
-  const par = new Map<string, Programme[]>()
-  for (const e of epgs) par.set(e, [])
-  if (epgs.length === 0 || fin <= debut) return par
+/** Un programme a cheval sur deux blocs revient dans les deux : on ne le garde qu'une fois. */
+export function fusionner(listes: Programme[][]): Programme[] {
+  const vus = new Set<string>()
+  const out: Programme[] = []
+  for (const l of listes)
+    for (const p of l) {
+      const k = `${p.debut}|${p.fin}|${p.titre}`
+      if (!vus.has(k)) {
+        vus.add(k)
+        out.push(p)
+      }
+    }
+  return out.sort((a, b) => a.debut - b.debut || a.fin - b.fin)
+}
 
-  const lignes = await dbEpg.programmes
-    .where('[chaine+debut]')
-    .inAnyRange(
-      epgs.map((e) => [
-        [e, debut - DEBORDEMENT],
-        [e, fin],
-      ]),
-      { includeUppers: false },
-    )
-    .toArray()
+// --- Client -----------------------------------------------------------------
 
-  for (const p of lignes) {
-    if (p.fin <= debut) continue // deborde par le bas : deja termine
-    par.get(p.chaine)?.push({
-      chaine: p.chaine,
-      titre: p.titre,
-      description: p.description,
-      debut: p.debut,
-      fin: p.fin,
-    })
+/** Un bloc deja passe ne change plus ; le bloc du moment, si (mise a jour du guide). */
+const VALIDITE_BLOC_PASSE = 60 * MINUTE
+const VALIDITE_BLOC_COURANT = 10 * MINUTE
+const VALIDITE_MAINTENANT_MAX = 5 * MINUTE
+const VALIDITE_MAINTENANT_VIDE = 2 * MINUTE
+/** Plafond de blocs gardes : un guide parcouru pendant des heures reste borne. */
+const BLOCS_MAX = 4000
+
+interface BlocGarde {
+  programmes: Programme[]
+  charge: number
+  fin: number
+}
+
+export interface EnCours {
+  courant: Programme | undefined
+  suivant: Programme | undefined
+}
+
+export interface OptionsClientEpg {
+  fetch?: typeof fetch
+  maintenant?: () => number
+}
+
+export function creerClientEpg(opts: OptionsClientEpg = {}) {
+  const appel = (...a: Parameters<typeof fetch>) => (opts.fetch ?? fetch)(...a)
+  const horloge = opts.maintenant ?? Date.now
+
+  const blocs = new Map<string, BlocGarde>()
+  const enVol = new Map<string, Promise<void>>()
+  const courants = new Map<string, { valeur: EnCours; expire: number }>()
+  const courantsEnVol = new Map<string, Promise<EnCours>>()
+  let limites: Promise<LimitesEpg> | undefined
+
+  async function json(url: string, signal?: AbortSignal): Promise<unknown> {
+    let r: Response
+    try {
+      r = await appel(url, { credentials: 'same-origin', signal })
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') throw e
+      throw new ErreurLecteur(
+        'reseau', 'Le guide des programmes est injoignable.',
+        'Réessayer ; la navigation reste utilisable sans guide.', String(e),
+      )
+    }
+    if (!r.ok) {
+      signalerSiNonAuthentifie(r.status)
+      let code: string | undefined
+      try {
+        code = ((await r.json()) as { code?: string }).code
+      } catch {
+        // Corps absent ou illisible : le statut suffit.
+      }
+      throw erreurDeStatut(r.status, { retryAfter: r.headers.get('Retry-After'), code, contexte: 'guide des programmes' })
+    }
+    return r.json()
   }
-  for (const liste of par.values()) liste.sort((a, b) => a.debut - b.debut)
-  return par
+
+  /** `/compte` une fois : les bornes du serveur ne changent pas en cours de session. */
+  function lireLimites(): Promise<LimitesEpg> {
+    limites ??= json('/api/v1/compte')
+      .then(limitesDepuisCompte)
+      .catch(() => {
+        limites = undefined // un echec n'est pas un verdict : on reessaiera
+        return LIMITES_PAR_DEFAUT
+      })
+    return limites
+  }
+
+  function elaguer() {
+    // Map conserve l'ordre d'insertion : on retire les plus anciens.
+    for (const k of blocs.keys()) {
+      if (blocs.size <= BLOCS_MAX) break
+      blocs.delete(k)
+    }
+  }
+
+  const cleBloc = (id: string, debut: number) => `${id}|${debut}`
+
+  function frais(id: string, debut: number, taille: number): boolean {
+    const b = blocs.get(cleBloc(id, debut))
+    if (!b) return false
+    const maintenant = horloge()
+    const validite = debut + taille <= maintenant ? VALIDITE_BLOC_PASSE : VALIDITE_BLOC_COURANT
+    return maintenant - b.charge < validite
+  }
+
+  /** UN appel serveur : des chaines, UN bloc. */
+  async function chargerBloc(ids: string[], debut: number, taille: number, signal?: AbortSignal): Promise<void> {
+    const fin = debut + taille
+    const url =
+      '/api/v1/epg/grille?' +
+      new URLSearchParams({
+        chaines: ids.join(','),
+        de: new Date(debut).toISOString(),
+        a: new Date(fin).toISOString(),
+      }).toString()
+    const corps = (await json(url, signal)) as { chaines?: Record<string, ProgrammeBrut[]> }
+    const charge = horloge()
+    for (const id of ids) {
+      const liste = (corps.chaines?.[id] ?? [])
+        .map((b) => versProgramme(id, b))
+        .filter((p): p is Programme => p !== null)
+      // Une chaine sans programme est gardee VIDE : sans cela, chaque
+      // defilement la redemanderait.
+      blocs.set(cleBloc(id, debut), { programmes: liste, charge, fin })
+    }
+    elaguer()
+  }
+
+  /**
+   * Programmes de plusieurs chaines sur [debut, fin[, tries par debut.
+   * Ne demande au serveur que les (chaine, bloc) absents ou perimes.
+   */
+  async function grille(
+    ids: readonly string[],
+    debut: number,
+    fin: number,
+    signal?: AbortSignal,
+  ): Promise<Map<string, Programme[]>> {
+    const uniques = [...new Set(ids)]
+    const lim = await lireLimites()
+    const taille = tailleBloc(lim)
+    const debuts = blocsCouvrant(debut, fin, taille)
+    const maxId = uniques.reduce((m, id) => Math.max(m, id.length), 1)
+    const parAppel = Math.max(1, Math.min(lim.chaines, Math.floor(LONGUEUR_MAX_CHAINES / (maxId + 1))))
+
+    const taches: Promise<void>[] = []
+    for (const d of debuts) {
+      const manquantes = uniques.filter((id) => !frais(id, d, taille))
+      for (const lot of paquets(manquantes, parAppel)) {
+        // Un meme lot demande deux fois en meme temps (defilement rapide) ne
+        // part qu'une fois.
+        const cle = `${d}|${lot.join(',')}`
+        let p = enVol.get(cle)
+        if (!p) {
+          p = chargerBloc(lot, d, taille, signal).finally(() => enVol.delete(cle))
+          enVol.set(cle, p)
+        }
+        taches.push(p)
+      }
+    }
+    await Promise.all(taches)
+
+    const out = new Map<string, Programme[]>()
+    for (const id of uniques) {
+      const morceaux = debuts.map((d) => blocs.get(cleBloc(id, d))?.programmes ?? [])
+      out.set(id, fusionner(morceaux).filter((p) => p.fin > debut && p.debut < fin))
+    }
+    return out
+  }
+
+  /** Programme en cours et suivant d'une chaine (`/maintenant`), mis en cache. */
+  async function maintenant(id: string, signal?: AbortSignal): Promise<EnCours> {
+    const t = horloge()
+    const gardee = courants.get(id)
+    if (gardee && t < gardee.expire) return gardee.valeur
+    let p = courantsEnVol.get(id)
+    if (!p) {
+      p = json(`/api/v1/epg/chaines/${cheminContenu(id)}/maintenant`, signal)
+        .then((corps) => {
+          const c = corps as { courant?: ProgrammeBrut | null; suivant?: ProgrammeBrut | null }
+          const valeur: EnCours = {
+            courant: versProgramme(id, c.courant) ?? undefined,
+            suivant: versProgramme(id, c.suivant) ?? undefined,
+          }
+          // Expire quand le programme finit : l'affichage ne ment pas apres la coupure.
+          const maintenantMs = horloge()
+          const expire = valeur.courant
+            ? Math.min(valeur.courant.fin, maintenantMs + VALIDITE_MAINTENANT_MAX)
+            : maintenantMs + VALIDITE_MAINTENANT_VIDE
+          courants.set(id, { valeur, expire })
+          return valeur
+        })
+        .finally(() => courantsEnVol.delete(id))
+      courantsEnVol.set(id, p)
+    }
+    return p
+  }
+
+  /**
+   * En cours / suivant de PLUSIEURS chaines en UN appel de grille (mini-guide,
+   * accueil) : huit appels `/maintenant` pour huit lignes visibles seraient
+   * exactement l'appel-par-chaine que le dossier interdit.
+   */
+  async function enCoursPour(
+    ids: readonly string[],
+    signal?: AbortSignal,
+    /** Combien de temps regarder devant soi pour trouver le « suivant ». */
+    horizonMs = 3 * HEURE,
+  ): Promise<Map<string, EnCours>> {
+    const t = horloge()
+    const g = await grille(ids, t, t + horizonMs, signal)
+    const out = new Map<string, EnCours>()
+    for (const [id, liste] of g) {
+      const courant = programmeEnCours(liste, t)
+      out.set(id, { courant, suivant: courant ? programmeSuivant(liste, courant) : liste.find((p) => p.debut >= t) })
+    }
+    return out
+  }
+
+  function vider() {
+    blocs.clear()
+    courants.clear()
+    limites = undefined
+  }
+
+  return { grille, maintenant, enCoursPour, vider, lireLimites }
 }
 
-/**
- * Horodatage XMLTV : « 20261011040000 +0000 ». Le fuseau est porte par la
- * valeur elle-meme ; l ignorer decalerait la grille de plusieurs heures.
- */
-export function horodatageXmltv(v: string): number {
-  const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\s*([+-])(\d{2})(\d{2}))?/.exec(v)
-  if (!m) return 0
-  const base = Date.UTC(
-    Number(m[1]), Number(m[2]) - 1, Number(m[3]),
-    Number(m[4]), Number(m[5]), Number(m[6]),
-  )
-  if (!m[7]) return base
-  const decalage = (Number(m[8]) * 60 + Number(m[9])) * 60_000
-  return m[7] === '+' ? base - decalage : base + decalage
+export const epg = creerClientEpg()
+
+/** Grille de plusieurs chaines sur une fenetre (compatible avec l'ancien nom). */
+export const grillesFenetre = epg.grille
+
+// L'ancienne base locale du guide (XMLTV indexe) n'est plus lue par personne :
+// on la supprime pour rendre ses ~200 000 lignes au navigateur.
+if (typeof indexedDB !== 'undefined') {
+  try {
+    indexedDB.deleteDatabase('mytv-epg')
+  } catch {
+    // Mode prive : rien a purger.
+  }
 }

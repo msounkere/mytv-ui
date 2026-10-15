@@ -12,19 +12,20 @@ import PanneauInfos from '../components/PanneauInfos'
 import MiniLecteur, { MARGE_MINI, hauteurMini } from '../components/MiniLecteur'
 import Notification, { type NotificationLecteur } from '../components/Notification'
 import {
-  BandeauReconnexion, DialogueReprise, ProchainEpisode, AvertissementCout, SEUIL_REPRISE,
+  BandeauReconnexion, DialogueReprise, ProchainEpisode, SEUIL_REPRISE,
 } from '../components/CalquesLecture'
-import { config } from '../config'
 import { estBureau, estMobile } from '../lib/gabarit'
 import { ecran, poserEcran, revenirAuLecteur } from '../etat'
 import { attacher, type Attache } from '../lib/lecteur'
-import {
-  planifier, referenceDe, urlFlux, oublierSonde, deplacementParService, coutAVertir,
-  strategieEffective, justification, BADGE_STRATEGIE, type Plan,
-} from '../lib/flux'
+import { planDirect, planVod, urlVod, deplacementParService, BADGE_MODE, type Plan } from '../lib/flux'
+import { lectureDe } from '../lib/source-lecture'
+import { annulerFinDifferee } from '../lib/bail'
 import { ErreurLecteur } from '../lib/errors'
 import { noterOuverture, noterPosition, reprisePour, estFavori, basculerFavori } from '../lib/preferences'
-import { creerDiffusion, preparerDiffusion, urlPourDiffusion, diffusionResoutLeCodec, type EtatDiffusion } from '../lib/cast'
+import {
+  creerDiffusion, preparerDiffusion, urlPourDiffusion, diffusionResoutLeCodec, diffusionPossible,
+  type EtatDiffusion,
+} from '../lib/cast'
 import { modePipDisponible, ouvrirPipDocument, basculerPipNatif } from '../lib/pip'
 import type { EntreeCatalogue } from '../lib/db'
 import ColonnePistes from './lecture/ColonnePistes'
@@ -33,8 +34,8 @@ import { creerCalques } from './lecture/calques'
 import { brancherClavier } from './lecture/clavier'
 import { heure } from './lecture/format'
 import { creerPistes } from './lecture/pistes'
-import { ESSAIS_MAX, creerReprisePanne } from './lecture/reconnexion'
-import { urlDirecte, urlMasquee } from './lecture/sources'
+import { creerReprisePanne } from './lecture/reconnexion'
+import { urlMasquee } from './lecture/sources'
 import { creerZapping } from './lecture/zapping'
 
 // Le lecteur occupe la surface principale ; la colonne de droite permet de
@@ -48,10 +49,9 @@ import { creerZapping } from './lecture/zapping'
 // notifications — passe donc par un portail, hors de la couche masquée.
 //
 // CE QUI RESTE ICI, et pourquoi : l'ouverture du flux. Un seul effet décide de
-// la source, et il est indivisible — la sonde, l'accord sur le coût, le
-// transcodage imposé, le point atteint et le détachement propre du flux
-// précédent sont les étapes d'une même décision, qui tient la connexion unique
-// de l'abonnement. Ce qui s'en détachait sans l'affaiblir est dans
+// la source, et il est indivisible — la vérification en tête d'un film, le point
+// atteint et le détachement propre du flux précédent sont les étapes d'une même
+// décision, qui tient la connexion unique de l'abonnement. Ce qui s'en détachait sans l'affaiblir est dans
 // `./lecture/` : les voisines, les calques, les raccourcis, les pistes.
 
 /** Hauteur réelle de la barre de contrôles, mesurée sur la maquette. */
@@ -69,8 +69,8 @@ const DELAI_DEPLACEMENT = 600
 
 export default function Lecture(props: {
   entree: EntreeCatalogue
-  /** URL déjà construite, pour un épisode de série dont l'identifiant de flux
-      n'est pas celui du catalogue. */
+  /** Adresse de lecture (champ `lecture` de l'API) d'un épisode de série, dont
+      l'identifiant n'est pas celui d'une entrée du catalogue. */
   urlForcee?: string
   /** Épisode qui suit, quand la fiche série le connaît : c'est lui que le
       compte à rebours de fin enchaîne. Facultatif — sans lui, aucun décompte. */
@@ -101,30 +101,28 @@ export default function Lecture(props: {
   const [miniReduit, poserMiniReduit] = createSignal(false)
   const [notification, poserNotification] = createSignal<NotificationLecteur | null>(null)
 
-  // --- Service de remux ---------------------------------------------------
+  // --- Ce que le serveur fait du flux --------------------------------------
   const [plan, poserPlan] = createSignal<Plan | null>(null)
-  const [sondage, poserSondage] = createSignal(false)
+  /** Vrai pendant la vérification en tête d'un film (statut, mode). */
+  const [verification, poserVerification] = createSignal(false)
   /** Décalage appliqué par le dernier `?t=` : à ajouter au temps du média. */
   const [decalage, poserDecalage] = createSignal(0)
   /** Position demandée mais pas encore appliquée : la poignée doit la suivre. */
   const [positionVisee, poserPositionVisee] = createSignal<number | null>(null)
-  /** Clé du contenu dont le réencodage coûteux a été accepté. */
-  const [coutAccepte, poserCoutAccepte] = createSignal('')
-  /** Clé du contenu dont l'avertissement a été écarté sans lancer le service. */
-  const [coutEcarte, poserCoutEcarte] = createSignal('')
 
   const direct = () => props.entree.type === 'live'
 
-  // Le service fabrique le MP4 à la volée : sa durée propre n'a aucun sens, et
-  // après un `?t=` ses horodatages repartent de zéro. La durée vient donc de la
-  // sonde, et la position affichée est celle du FILM, décalage compris.
-  const dureeSonde = () => {
+  // Le serveur fabrique le MP4 à la volée quand il remuxe : sa durée propre n'a
+  // aucun sens, et après un `?t=` ses horodatages repartent de zéro. La durée
+  // vient donc de ce que le serveur annonce, et la position affichée est celle
+  // du FILM, décalage compris.
+  const dureeAnnoncee = () => {
     const p = plan()
     if (direct() || !p?.viaService) return undefined
-    const d = p.sonde?.dureeSecondes ?? 0
+    const d = p.dureeSecondes ?? 0
     return d > 0 ? d : undefined
   }
-  const duree = () => dureeSonde() ?? dureeBrute()
+  const duree = () => dureeAnnoncee() ?? dureeBrute()
   const position = () => positionVisee() ?? decalage() + positionBrute()
   /** La coque garde le lecteur monté : il n'est « parti » que visuellement. */
   const horsLecteur = () => ecran() !== 'lecture'
@@ -150,30 +148,13 @@ export default function Lecture(props: {
 
   const pistes = creerPistes(() => video)
 
-  const panne = creerReprisePanne({
-    cle: () => props.entree.cle,
-    plan,
-    poserErreur,
-  })
-
-  /**
-   * Le réencodage vidéo coûte 78 à 106 % d'un cœur sur cette machine, sans
-   * GPU : on ne le déclenche pas dans le dos de l'utilisateur.
-   */
-  const avertirCout = () => {
-    const p = plan()
-    return !!p && coutAVertir(p) && coutAccepte() !== props.entree.cle
-  }
-
-  /** L'avertissement reste à l'écran tant qu'il n'a pas été tranché. */
-  const avertissementVisible = () =>
-    avertirCout() && !erreur() && coutEcarte() !== props.entree.cle
+  const panne = creerReprisePanne({ poserErreur })
 
   const calques = creerCalques({
     cle: () => props.entree.cle,
     // Ce que le MÉDIA attend d'une décision ; les calques y ajoutent les leurs.
     decisionEnAttente: () =>
-      enPause() || chargement() || !!erreur() || avertissementVisible() ||
+      enPause() || chargement() || !!erreur() ||
       !!panne.reconnexion() || etatDiffusion() === 'diffusion',
     suivant: () => props.suivant,
     duree,
@@ -189,15 +170,12 @@ export default function Lecture(props: {
     notifier,
   })
 
-  /** URL TuliProx de référence : celle du catalogue, ou celle de l'épisode. */
-  function urlDe(e: EntreeCatalogue): string {
-    return urlDirecte(e, props.urlForcee && e.cle === props.entree.cle ? props.urlForcee : undefined)
+  /** Adresse de lecture du serveur : celle de l'entrée, ou celle de l'épisode. */
+  function lectureEntree(e: EntreeCatalogue): string {
+    return lectureDe(e, props.urlForcee && e.cle === props.entree.cle ? props.urlForcee : undefined)
   }
 
-  /** Ce que le service de remux sait nommer pour ce contenu. */
-  const reference = () => referenceDe(props.entree, props.urlForcee)
-
-  const urlAffichee = () => urlMasquee(plan()?.url ?? urlDe(props.entree))
+  const urlAffichee = () => urlMasquee(plan()?.url ?? lectureEntree(props.entree))
 
   // Un seul effet pilote la source : changer d'entrée détache proprement le
   // flux précédent avant d'en ouvrir un autre.
@@ -213,9 +191,6 @@ export default function Lecture(props: {
     const entree = props.entree
     // Lu pour que la reconnexion rouvre réellement le flux.
     panne.relance()
-    // Lus pour que l'acceptation du coût, et le forçage, rouvrent le flux.
-    const accepte = coutAccepte() === entree.cle
-    const impose = panne.forcageActif()
     let attache: Attache | undefined
     let annule = false
     const abandon = new AbortController()
@@ -235,50 +210,53 @@ export default function Lecture(props: {
       pointAtteint = 0
     }
     precedente = entree
+    // Une fin de lecture différée (zapping) ne doit plus partir : ce qui
+    // s'ouvre reprend la place que l'ancienne chaîne allait rendre.
+    annulerFinDifferee()
 
     poserErreur(null)
     poserChargement(true)
     poserImageDisponible(false)
     poserPositionBrute(0)
     poserDureeBrute(0)
-    poserDecalage(pointAtteint)
+    poserDecalage(0)
     poserPositionVisee(null)
-    // Le verdict précédent ne vaut rien ici : il décidait d'un autre flux.
+    // Le plan précédent ne vaut rien ici : il décrivait un autre flux.
     poserPlan(null)
     calques.poserReprise(null)
     void noterOuverture(entree.cle)
 
     void (async () => {
       try {
-        // Une sonde, une seule, par contenu ouvert : elle consomme la connexion
-        // unique quand le service ne l'a pas déjà en cache.
-        poserSondage(true)
-        const p = await planifier({
-          reference: reference(),
-          urlDirecte: urlDe(entree),
-          decalage: pointAtteint,
-          forcer: impose,
-          signal: abandon.signal,
-        })
-        poserSondage(false)
+        // Direct : aucune requête préalable, hls.js ouvre la playlist. Film : une
+        // vérification en tête (statut, mode) car <video> ne rend ni l'un ni l'autre.
+        const lecture = lectureEntree(entree)
+        let p: Plan
+        if (entree.type === 'live') p = planDirect(lecture)
+        else {
+          poserVerification(true)
+          try {
+            p = await planVod({ lecture, decalage: pointAtteint, signal: abandon.signal })
+          } finally {
+            poserVerification(false)
+          }
+        }
         if (annule) return
         poserPlan(p)
-        // Un repli ne reste jamais silencieux : il se dit, et il s'explique
-        // ensuite dans le panneau d'informations.
-        if (p.repli) notifier(`Analyse du flux : ${p.repli}`, 'limite')
-        // Réencodage vidéo : on attend l'accord avant de faire chauffer le
-        // processeur, et on propose le téléviseur qui décode nativement.
-        if (coutAVertir(p) && !accepte) {
-          poserChargement(false)
-          return
-        }
+        // Un film remuxé repart de `pointAtteint` par `?t=` ; un fichier servi tel
+        // quel reprend, lui, par un déplacement natif une fois ses métadonnées lues.
+        poserDecalage(p.viaService ? pointAtteint : 0)
 
         const source =
-          entree.type === 'live'
-            ? ({ kind: 'hls', url: p.url } as const)
+          p.genre === 'live'
+            ? ({ kind: 'hls', url: p.url, chaine: p.chaine } as const)
             : ({ kind: 'fichier', url: p.url } as const)
         attache = await attacher(video, source, panne.signalerErreur)
         if (annule) return attache.detacher()
+        if (p.genre === 'vod' && !p.viaService && pointAtteint > 0) {
+          const reprise = pointAtteint
+          video.addEventListener('loadedmetadata', () => { video.currentTime = reprise }, { once: true })
+        }
 
         // La reprise est proposée, jamais imposée : sous une minute, rouvrir
         // au début ne coûte rien et évite une question de plus.
@@ -290,15 +268,15 @@ export default function Lecture(props: {
           /* lecture différée jusqu'au geste de l'utilisateur */
         })
       } catch (e) {
-        poserSondage(false)
+        poserVerification(false)
         if (!annule) panne.signalerErreur(e instanceof ErreurLecteur ? e : new ErreurLecteur('relais', String(e), 'Réessayer.'))
       }
     })()
 
     onCleanup(() => {
       annule = true
-      // Zapper pendant une sonde doit libérer le fournisseur tout de suite :
-      // le service tue son ffprobe quand le client s'en va.
+      // Zapper pendant la vérification d'un film l'annule : le serveur rend la
+      // place dès que le client s'en va.
       abandon.abort()
       attache?.detacher()
     })
@@ -379,10 +357,14 @@ export default function Lecture(props: {
   })
 
   async function diffuser() {
-    // Le Chromecast va chercher le flux lui-même : on lui donne l'adresse
-    // locale du relais pour qu'il reste en plein débit, et non le domaine
-    // public qu'il résoudrait vers le tunnel.
-    const locale = urlPourDiffusion(urlDe(props.entree), config().hoteLocal)
+    if (!diffusionPossible()) {
+      notifier('La diffusion n’est possible que depuis le réseau local', 'limite')
+      return
+    }
+    // L'appareil va chercher le flux lui-même, sans cookie : le serveur le
+    // reconnaît à son adresse réseau (compte technique local). On lui donne donc
+    // l'adresse de lecture, absolue, sur l'origine de cette page.
+    const locale = urlPourDiffusion(lectureEntree(props.entree))
 
     // En direct la vidéo est portée par MSE, que la diffusion ne sait pas
     // envoyer : on repose une URL simple et on attend que les appareils se
@@ -448,7 +430,7 @@ export default function Lecture(props: {
     poserImageDisponible(false)
     // L'écouteur d'erreur posé par `attacher` reste en place : seule la source
     // change, et le flux précédent est fermé par le navigateur lui-même.
-    video.src = urlFlux(p!.reference, borne, p!.forcer)
+    video.src = urlVod(p!.lecture, borne)
     void video.play().catch(() => {
       /* lecture différée jusqu'au geste de l'utilisateur */
     })
@@ -559,6 +541,7 @@ export default function Lecture(props: {
       libelle: 'Diffuser vers un téléviseur',
       titre: 'Diffuser vers un téléviseur (C)',
       actif: etatDiffusion() === 'diffusion',
+      desactive: !diffusionPossible(),
       surAction: () => calques.poserDiffusionOuverte((v) => !v),
     },
     {
@@ -573,17 +556,15 @@ export default function Lecture(props: {
     { icone: 'fullscreen', libelle: 'Plein écran', titre: 'Plein écran', surAction: pleinEcran },
   ]
 
-  // Ce que le flux EST, et ce qu'on lui fait : la sonde connaît les vrais
-  // codecs, là où l'extension du catalogue se trompe une fois sur trois.
+  // Ce que le flux EST, et ce qu'on lui fait : le conteneur annoncé par le
+  // catalogue, la hauteur réellement décodée et le traitement du serveur.
   const ligneTechnique = () => {
-    const s = plan()?.sonde
-    const conteneur = direct() ? 'HLS' : (s?.conteneur ?? props.entree.extension ?? 'mp4')
-    const hauteur = hauteurImage() || s?.hauteur || 0
+    const mode = plan()?.mode
+    const conteneur = direct() ? 'HLS' : (props.entree.extension ?? 'mp4')
     return [
       conteneur.toUpperCase(),
-      s?.video || s?.audio ? [s?.video, s?.audio].filter(Boolean).join('/') : null,
-      hauteur ? `${hauteur}p` : null,
-      strategieEffective(plan()) ? BADGE_STRATEGIE[strategieEffective(plan())!] : null,
+      hauteurImage() ? `${hauteurImage()}p` : null,
+      mode ? BADGE_MODE[mode] : null,
     ]
       .filter(Boolean)
       .join(' · ')
@@ -601,11 +582,6 @@ export default function Lecture(props: {
       surAction: () => {
         panne.remettreAZero()
         poserErreur(null)
-        // Un réessai explicite repart d'une page blanche : un service tombé
-        // puis revenu ne doit pas rester condamné par un verdict gardé, et le
-        // transcodage imposé par l'échec précédent redevient négociable.
-        oublierSonde(reference())
-        panne.oublierForcage()
         panne.relancer()
       },
     })
@@ -762,8 +738,8 @@ export default function Lecture(props: {
                 }}
               />
               <span style={{ 'font-size': '12px', color: ENCRE2 }}>
-                {sondage()
-                  ? 'Analyse des codecs du flux…'
+                {verification()
+                  ? 'Vérification du film…'
                   : direct()
                     ? 'Ouverture du flux HLS…'
                     : 'Ouverture du fichier…'}
@@ -772,7 +748,7 @@ export default function Lecture(props: {
           </Show>
 
           <Show when={panne.reconnexion()}>
-            {(r) => <BandeauReconnexion essai={r().essai} total={ESSAIS_MAX} dans={r().dans} />}
+            {(r) => <BandeauReconnexion essai={r().essai} total={r().total} dans={r().dans} motif={r().motif} />}
           </Show>
 
           <Show when={calques.bandeau() > 0 && direct() && !erreur()}>
@@ -848,33 +824,15 @@ export default function Lecture(props: {
               etat={etatDiffusion()}
               basPx={HAUTEUR_CONTROLES[direct() ? 'live' : 'vod'] + 16}
               resoutLeCodec={
-                // La sonde connaît la piste audio réelle ; l'extension du
-                // catalogue, elle, ne dit rien du codec.
-                diffusionResoutLeCodec(plan()?.sonde?.audio ?? props.entree.extension) ||
+                // L'extension du catalogue ne dit rien du codec : on ne propose
+                // la diffusion « pour le codec » que sur une erreur de format.
+                diffusionResoutLeCodec(props.entree.extension) ||
                 erreur()?.couche === 'codec'
               }
               surChoisir={() => void diffuser()}
               surArreter={() => void arreterDiffusion()}
               surFermer={() => calques.poserDiffusionOuverte(false)}
             />
-          </Show>
-
-          <Show when={avertissementVisible() ? plan() : undefined}>
-            {(p) => (
-              <AvertissementCout
-                pourquoi={justification(p()).pourquoi}
-                coutCpu={justification(p()).coutCpu}
-                diffusionPossible={etatDiffusion() !== 'indisponible'}
-                surLancer={() => poserCoutAccepte(props.entree.cle)}
-                surDiffuser={() => {
-                  // Le téléviseur décode le format d'origine : on écarte
-                  // l'avertissement sans lancer le réencodage pour autant.
-                  poserCoutEcarte(props.entree.cle)
-                  void diffuser()
-                }}
-                surRetour={props.surFermer}
-              />
-            )}
           </Show>
 
           <Show when={erreur()}>
