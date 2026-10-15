@@ -3,20 +3,20 @@ import assert from 'node:assert/strict'
 import { chaineDeLecture, estDirect, idServeurDe, lectureDe, numeroDe, epgIdDe } from '../../src/lib/source-lecture'
 
 test("l'adresse du serveur prime, puis celle imposee d'un episode", () => {
-  const chaine = { type: 'live' as const, id: 845410, idServeur: 'iptva:845410', lecture: '/api/v1/live/845410.m3u8' }
+  const chaine = { type: 'live' as const, idServeur: 'iptva:845410', lecture: '/api/v1/live/845410.m3u8' }
   assert.equal(lectureDe(chaine), '/api/v1/live/845410.m3u8')
-  const film = { type: 'vod' as const, id: 1, idServeur: 'iptva:5521', lecture: '/api/v1/vod/iptva:5521' }
+  const film = { type: 'vod' as const, idServeur: 'iptva:5521', lecture: '/api/v1/vod/iptva:5521' }
   assert.equal(lectureDe(film), '/api/v1/vod/iptva:5521')
   assert.equal(lectureDe(film, '/api/v1/vod/iptva:77123.mkv'), '/api/v1/vod/iptva:77123.mkv')
 })
 
 test("repli sans champ de l'API : adresses du contrat, jamais d'identifiants", () => {
-  assert.equal(lectureDe({ type: 'live', id: 12, idServeur: 'iptva:12' }), '/api/v1/live/12.m3u8')
-  assert.equal(lectureDe({ type: 'vod', id: 9, idServeur: 'iptva:9' }), '/api/v1/vod/iptva%3A9')
+  assert.equal(lectureDe({ type: 'live', idServeur: 'iptva:12' }), '/api/v1/live/12.m3u8')
+  assert.equal(lectureDe({ type: 'vod', idServeur: 'iptva:9' }), '/api/v1/vod/iptva:9')
 })
 
 test('identifiant et numero', () => {
-  assert.equal(idServeurDe({ type: 'live', id: 7, idServeur: 'iptva:7' }), 'iptva:7')
+  assert.equal(idServeurDe({ type: 'live', idServeur: 'iptva:7' }), 'iptva:7')
   assert.equal(numeroDe('iptva:845410'), '845410')
   assert.equal(numeroDe('845410'), '845410')
 })
@@ -30,6 +30,6 @@ test('numero de chaine pour /live/{chaine}/fin', () => {
 })
 
 test('epgId vide = pas de guide', () => {
-  assert.equal(epgIdDe({ type: 'live', id: 1, epgId: '' }), undefined)
-  assert.equal(epgIdDe({ type: 'live', id: 1, epgId: 'tf1.fr' }), 'tf1.fr')
+  assert.equal(epgIdDe({ type: 'live', idServeur: 'iptva:1', epgId: '' }), undefined)
+  assert.equal(epgIdDe({ type: 'live', idServeur: 'iptva:1', epgId: 'tf1.fr' }), 'tf1.fr')
 })

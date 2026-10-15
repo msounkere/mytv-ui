@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js'
-import { config } from './config'
+import { origineLocale } from './lib/cast'
 
 // Le débit affiché par l'en-tête était une constante (« 24 Mbit/s ») reprise de
 // la maquette. Sur cette installation la valeur est doublement fausse : le
@@ -7,30 +7,9 @@ import { config } from './config'
 // mieux. Un chiffre décoratif à cet endroit est pire que pas de chiffre, parce
 // que c'est précisément sur lui qu'on décide d'une qualité de flux.
 
-/** Hôtes que l'on ne peut pas joindre autrement que par le réseau local. */
-const PRIVE = /^(localhost$|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/
-
-/**
- * Hôte d'une adresse saisie par l'utilisateur, avec ou sans schéma.
- * `new URL('http://' + valeur)` ne suffit pas : quand la valeur porte déjà son
- * schéma, l'URL obtenue a pour hôte « http », et la comparaison avec
- * `location.hostname` échoue toujours — le mode local n'était donc jamais
- * détecté, quelle que soit la machine.
- */
-function hoteDe(brut: string): string {
-  try {
-    return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(brut) ? brut : `http://${brut}`).hostname
-  } catch {
-    return ''
-  }
-}
-
 /** Vrai quand la page est servie sans passer par le tunnel. */
 export function enLocal(): boolean {
-  const hote = location.hostname
-  if (PRIVE.test(hote)) return true
-  const declare = hoteDe(config().hoteLocal ?? '')
-  return declare.length > 0 && declare === hote
+  return origineLocale(location.hostname)
 }
 
 export interface MesureReseau {

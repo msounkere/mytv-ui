@@ -1,28 +1,18 @@
 import type { EntreeCatalogue } from './db'
+import { cheminContenu } from './identifiants'
 
 // UN SEUL point de contact entre la lecture/l'EPG et la forme de l'entree du
-// catalogue. La couche de donnees (US-19) y ajoute les champs que l'API rend :
-// l'identifiant `fournisseur:numero`, l'adresse de lecture relative, l'id EPG.
-// Tant qu'ils manquent, on les derive : ce fichier est alors le SEUL a changer
-// quand l'entree prendra sa forme definitive.
+// catalogue : ce que les routes /live, /vod et /epg attendent (identifiant
+// `fournisseur:numero`, adresse de lecture relative, identifiant de guide). Si
+// l'entree change de forme, c'est ce fichier — et lui seul — qu'on ajuste.
 
-/** Champs de l'API portes par l'entree du catalogue (voir demande S4). */
-export interface ChampsServeur {
-  /** `fournisseur:numero`, tel que l'API le rend (`iptva:845410`). */
-  idServeur?: string
-  /** Champ `lecture` de l'API : adresse relative de la playlist ou du film. */
-  lecture?: string
-  /** Champ `epg_id` d'une chaine. */
-  epgId?: string
-}
-
-export type EntreeLisible = Pick<EntreeCatalogue, 'type' | 'id'> & ChampsServeur
+export type EntreeLisible = Pick<EntreeCatalogue, 'type' | 'idServeur' | 'lecture' | 'epgId'>
 
 const PREFIXE_API = '/api/v1'
 
 /** Identifiant a donner a l'API pour ce contenu. */
 export function idServeurDe(e: EntreeLisible): string {
-  return e.idServeur ?? String(e.id)
+  return e.idServeur
 }
 
 /**
@@ -34,8 +24,8 @@ export function lectureDe(e: EntreeLisible, imposee?: string): string {
   if (imposee) return imposee
   if (e.lecture) return e.lecture
   const id = idServeurDe(e)
-  if (e.type === 'live') return `${PREFIXE_API}/live/${encodeURIComponent(numeroDe(id))}.m3u8`
-  return `${PREFIXE_API}/vod/${encodeURIComponent(id)}`
+  if (e.type === 'live') return `${PREFIXE_API}/live/${numeroDe(id)}.m3u8`
+  return `${PREFIXE_API}/vod/${cheminContenu(id)}`
 }
 
 /** `iptva:845410` → `845410` ; un identifiant sans fournisseur reste tel quel. */

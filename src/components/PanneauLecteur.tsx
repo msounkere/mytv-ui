@@ -1,6 +1,5 @@
 import { For, Show, onMount } from 'solid-js'
 import Icone from './Icone'
-import { config } from '../config'
 import { qualite, poserQualite, lectureEnCours, type ClefQualite } from '../etat'
 import { enLocal, formaterDebit, mesurerDebit, sonde } from '../sonde-debit'
 
@@ -66,7 +65,7 @@ export default function PanneauLecteur(props: {
       ['Échantillon', m ? `${(m.octets / 1024 / 1024).toFixed(1).replace('.', ',')} Mo` : '—'],
       ['Flux actifs', `${props.flux.actifs} sur ${props.flux.max} autorisé${props.flux.max > 1 ? 's' : ''}`],
       ['En lecture', l ? l.titre : '—'],
-      ['Relais', config().base.length > 0 ? config().base : location.host],
+      ['Serveur', location.host],
     ]
   }
 

@@ -1,30 +1,20 @@
 import { createSignal } from 'solid-js'
-import type { Identifiants } from './lib/xtream'
 
 // La configuration locale ne garde plus que des preferences d'affichage.
 //
 // POURQUOI plus aucun identifiant de relais : l'API v1 n'en expose JAMAIS au
 // navigateur (cookie de session HttpOnly, contenus designes par
-// `fournisseur:numero`, adresses de lecture relatives). Les champs `base`,
-// `username` et `password` ne subsistent, toujours VIDES, que pour que les
-// fichiers de lecture/EPG (US-20/21) compilent tant qu'ils n'ont pas migre ;
-// rien ne les renseigne.
+// `fournisseur:numero`, adresses de lecture relatives).
 
 const CLE = 'mytv.config'
 
-export interface Config extends Identifiants {
-  /** Hote local du relais, pour que la diffusion reste sur le reseau local. */
-  hoteLocal?: string
+export interface Config {
   theme: 'dark' | 'light'
 }
 
 // Sans session, l'application n'a aucun relais : elle affiche la page de
 // connexion, et n'appelle donc personne.
 const DEFAUT: Config = {
-  base: '',
-  username: '',
-  password: '',
-  hoteLocal: undefined,
   theme: 'dark',
 }
 
@@ -46,7 +36,7 @@ function lire(): Config {
     // seul. On reecrit l'entree des la premiere lecture -- `aEcrire` ne laisse
     // passer que le theme, donc la reecriture EST la suppression -- plutot que
     // d'attendre un hypothetique changement de preference.
-    if (vu.username || vu.password || vu.base) ecrire(propre)
+    if ('username' in vu || 'password' in vu || 'base' in vu) ecrire(propre)
     return propre
   } catch {
     return DEFAUT

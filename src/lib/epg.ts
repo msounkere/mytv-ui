@@ -1,4 +1,5 @@
 import { ErreurLecteur, erreurDeStatut } from './errors'
+import { cheminContenu } from './identifiants'
 import { signalerSiNonAuthentifie } from './session-expiree'
 
 // Le guide des programmes vient du serveur, par fenetre de temps :
@@ -301,7 +302,7 @@ export function creerClientEpg(opts: OptionsClientEpg = {}) {
     if (gardee && t < gardee.expire) return gardee.valeur
     let p = courantsEnVol.get(id)
     if (!p) {
-      p = json(`/api/v1/epg/chaines/${encodeURIComponent(id)}/maintenant`, signal)
+      p = json(`/api/v1/epg/chaines/${cheminContenu(id)}/maintenant`, signal)
         .then((corps) => {
           const c = corps as { courant?: ProgrammeBrut | null; suivant?: ProgrammeBrut | null }
           const valeur: EnCours = {
