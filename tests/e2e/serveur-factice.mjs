@@ -68,6 +68,9 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     sessionNom: false, // true : GET /compte rend `session.nom` (US-16b)
     admin: false, // true : la session est celle d'un administrateur (US-25)
     fournisseurs: [], // reponse de GET /admin/fournisseurs (US-25)
+    // US-28 : reponses de GET /films/{id} et /series/{id}. Cle = identifiant ; valeur =
+    // { statut (HTTP), latence (ms), statutDetails, details } ; absent = fiche complete par defaut.
+    details: new Map(),
   }
   let nProfil = 0
   const reg = (p) => {
@@ -161,6 +164,8 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
       if (op === 'admin') { etat.admin = !!c.actif; return json(res, 200, {}) }
       if (op === 'fournisseurs') { etat.fournisseurs = c.lignes; return json(res, 200, {}) }
       if (op === 'session-nom') { etat.sessionNom = c.actif; return json(res, 200, {}) }
+      if (op === 'details') { etat.details.set(c.id, c.reglage); return json(res, 200, {}) }
+      if (op === 'details-effacer') { etat.details.clear(); return json(res, 200, {}) }
       if (op === 'latence') { etat.latenceChunk = c.ms; return json(res, 200, {}) }
       return erreur(res, 404, 'inconnu')
     }
@@ -173,9 +178,10 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
 
     // --- Interface statique ----------------------------------------------------
     if (!chemin.startsWith('/api/')) {
-      if (chemin === '/') { res.writeHead(302, { Location: '/app/' }); return res.end() }
-      if (!dist || !chemin.startsWith('/app/')) { res.writeHead(404); return res.end() }
-      let fichier = path.join(dist, chemin.slice('/app/'.length))
+      // L'interface est construite avec base « / » (servie a la racine par mytv) ; l'ancien
+      // prefixe /app/ reste accepte pour les parcours qui l'utilisent encore.
+      if (!dist) { res.writeHead(404); return res.end() }
+      let fichier = path.join(dist, chemin.startsWith('/app/') ? chemin.slice('/app/'.length) : chemin.slice(1))
       if (!fichier.startsWith(dist)) { res.writeHead(403); return res.end() }
       if (!fs.existsSync(fichier) || fs.statSync(fichier).isDirectory()) fichier = path.join(dist, 'index.html')
       res.writeHead(200, { 'Content-Type': TYPES_MIME[path.extname(fichier)] ?? 'application/octet-stream' })
@@ -238,6 +244,25 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
       return json(res, 200, { version: etat.version, ...total(), synchronise: new Date().toISOString() }, { ETag: etag() })
     }
     if (p === '/catalogue/export') return exporter(req, res, url.searchParams.get('type'))
+    // --- US-28 : fiche d'un film / d'une serie avec ses details ---------------------------
+    m = /^\/(films|series)\/([^/]+)$/.exec(p)
+    if (m && req.method === 'GET') {
+      const [, genre, id] = m
+      const ligne = (genre === 'films' ? etat.catalogue.vod : etat.catalogue.series).find((x) => x.id === id)
+      if (!ligne) return erreur(res, 404, 'introuvable', 'contenu introuvable')
+      const r = etat.details.get(id) ?? etat.details.get('*') ?? {}
+      if (r.latence) await new Promise((ok) => setTimeout(ok, r.latence))
+      if (r.statut && r.statut >= 400) return erreur(res, r.statut, 'erreur_test')
+      const statutDetails = r.statutDetails ?? 'ok'
+      const complets = {
+        synopsis: `Synopsis de ${ligne.nom}. Une histoire de famille et de secrets.`, genre: 'Drame, Thriller',
+        casting: 'Alice Martin, Bruno Durand', realisateur: 'Denis Lefevre', pays: 'France', sortie: '2019-05-03',
+        bande_annonce: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', image_fond: '/img/fond.png', affiche: '/img/affiche.png',
+        note: 7.8, age: '12', ...(genre === 'films' ? { duree: 6000 } : { duree_episode: 2400 }),
+      }
+      const details = statutDetails === 'ok' || statutDetails === 'perime' ? (r.details ?? complets) : undefined
+      return json(res, 200, { ...ligne, ...(details ? { details } : {}), details_statut: statutDetails }, { ETag: `W/"d-${id}-${statutDetails}"` })
+    }
     m = /^\/series\/([^/]+)\/saisons$/.exec(p)
     if (m) {
       // Les identifiants de series sont `fournisseur:s<numero>` : leur numero recoupe
@@ -249,6 +274,7 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
           episodes: [1, 2, 3].map((en) => ({
             id: `iptva:${num * 100 + sn * 10 + en}.mkv`, numero: en, titre: `Épisode ${en}`, extension: 'mkv',
             duree: 2400, lecture: `/api/v1/vod/iptva:${num * 100 + sn * 10 + en}.mkv`,
+            ...(en < 3 ? { synopsis: `Résumé de l'épisode ${en} de la saison ${sn}.`, image: '/img/ep.png', sortie: `2020-0${sn}-0${en}` } : {}),
           })),
         })),
       })

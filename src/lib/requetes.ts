@@ -198,6 +198,13 @@ export interface OptionsRequete {
   /** Durée pendant laquelle une entrée SANS LECTEUR est conservée. Par défaut
    *  pour toujours ; à borner pour ce qui est clefé à l'unité. */
   peremption?: number
+  /**
+   * Faux : lire la donnée AVANT son arrivée ne suspend aucune frontière `Suspense`
+   * (par défaut TanStack suspend la plus proche tant que la requête est en vol, ce
+   * qui remplace tout l'écran par « Chargement… »). Pour une donnée SECONDAIRE --
+   * le résumé d'une fiche -- qui doit arriver sans masquer le reste.
+   */
+  suspendre?: boolean
 }
 
 /** Chaque appel garde SA clé d'attente : une clé partagée ferait du cache de
@@ -237,7 +244,12 @@ function monter<S, T>(
     () => clientRequetes,
   )
 
-  const acces = (() => observee.data?.contenu) as Donnee<T>
+  const acces = (
+    o.suspendre === false
+      ? // `isSuccess` ne suspend pas ; `data` n'est lu qu'une fois la requête réussie.
+        () => (observee.isSuccess ? observee.data?.contenu : undefined)
+      : () => observee.data?.contenu
+  ) as Donnee<T>
   Object.defineProperties(acces, {
     loading: { get: () => observee.isLoading },
     // `createResource` rend `undefined` sans erreur, TanStack rend `null` :
