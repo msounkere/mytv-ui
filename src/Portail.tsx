@@ -1,6 +1,7 @@
 import { Match, Show, Switch, lazy, onMount, Suspense } from 'solid-js'
-import { etatAuth, verifierSession } from './lib/auth'
+import { etatAuth, profilActifId, verifierSession } from './lib/auth'
 import Connexion from './screens/Connexion'
+import ChoixProfil from './screens/ChoixProfil'
 
 // Porte d'entree de l'application.
 //
@@ -20,6 +21,11 @@ export default function Portail() {
         {/* Bref : une seule requete separe cet ecran de la suite. Y mettre un
             texte evite le clignotement d'une page blanche. */}
         <p class="tertiaire" style={{ padding: '24px' }}>Ouverture de la session…</p>
+      </Match>
+      {/* Session ouverte mais sans profil actif : le service refuserait tout
+          l'etat personnel (409 profil_requis). */}
+      <Match when={etatAuth() === 'connecte' && !profilActifId()}>
+        <ChoixProfil />
       </Match>
       <Match when={etatAuth() === 'connecte'}>
         <Suspense

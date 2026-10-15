@@ -1,16 +1,18 @@
 import { db, type EntreeCatalogue } from './db'
 import { noterChangement } from './synchro'
+import { associerSerie, serieAssociee } from './series-episodes'
 import {
-  invaliderFavoris, invaliderHistorique, invaliderReprisesRegroupees,
+  invaliderFavoris, invaliderHistorique, invaliderReprises, invaliderReprisesRegroupees,
 } from './requetes'
 
 // Favoris, historique et reprise : ce qui ramène 154 000 entrées à la dizaine
 // réellement regardée.
 //
-// Chaque écriture est notée au journal de `synchro.ts` pour pouvoir repartir sur
-// une autre machine. L'ORDRE compte : IndexedDB d'abord, journal ensuite. Le
-// service d'état est un confort, jamais un prérequis — s'il est injoignable,
-// l'écriture locale a déjà eu lieu et les lectures ci-dessous n'en savent rien.
+// Chaque écriture est notée au journal de `synchro.ts` pour pouvoir repartir
+// vers `/profil/*` et sur une autre machine. L'ORDRE compte : IndexedDB d'abord,
+// journal ensuite. Le service est un confort, jamais un prérequis — s'il est
+// injoignable, l'écriture locale a déjà eu lieu et les lectures ci-dessous n'en
+// savent rien.
 //
 // Chaque écriture périme aussi le cache de lecture (`lib/requetes.ts`), et c'est
 // POSÉ ICI plutôt que dans les écrans : une étoile cochée dans le lecteur doit
@@ -43,8 +45,13 @@ export async function historiqueRecent(limite = 20): Promise<EntreeCatalogue[]> 
   return entrees.filter((e): e is EntreeCatalogue => e !== undefined)
 }
 
+export { associerSerie }
+
 export async function noterOuverture(cle: string): Promise<unknown> {
-  const r = await db.historique.put({ cle, ouvertLe: Date.now() })
+  // Pour un episode, la serie voyage avec la trace : sans elle le service refuse
+  // l'ecriture, et l'envoi (differe, parfois apres un rechargement) ne saurait
+  // plus la retrouver.
+  const r = await db.historique.put({ cle, ouvertLe: Date.now(), serie: serieAssociee(cle) })
   // L'instant d'ouverture EST la valeur de l'historique : la fusion « dernier
   // changement gagne » revient donc exactement à « la dernière machine qui a
   // regardé fait foi », sans règle particulière à écrire côté serveur.
@@ -69,11 +76,28 @@ export async function reprisePour(cle: string): Promise<number | undefined> {
 
 export async function noterPosition(cle: string, position: number, duree: number): Promise<unknown> {
   if (!Number.isFinite(duree) || duree <= 0) return Promise.resolve()
-  const r = await db.reprises.put({ cle, position, duree, vuLe: Date.now() })
+  const serie = serieAssociee(cle) ?? (await db.reprises.get(cle))?.serie
+  const r = await db.reprises.put({ cle, position, duree, vuLe: Date.now(), serie })
   noterChangement({ genre: 'reprise', cle, valeur: { position, duree } })
   // Regroupée : cet appel revient toutes les cinq secondes pendant la lecture.
   invaliderReprisesRegroupees()
   return r
+}
+
+/** « Retirer de la reprise » : la position s'efface, la trace d'ouverture reste. */
+export async function oublierReprise(cle: string): Promise<void> {
+  await db.reprises.delete(cle)
+  noterChangement({ genre: 'reprise', cle, supprime: true })
+  await invaliderReprises()
+}
+
+/** « Marquer comme vu » : la position saute a la fin, et le geste voyage. */
+export async function marquerVu(cle: string): Promise<void> {
+  const r = await db.reprises.get(cle)
+  if (!r) return
+  await db.reprises.put({ ...r, position: r.duree, vuLe: Date.now() })
+  noterChangement({ genre: 'reprise', cle, valeur: { position: r.duree, duree: r.duree } })
+  await invaliderReprises()
 }
 
 /**

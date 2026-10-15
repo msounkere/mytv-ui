@@ -87,6 +87,18 @@ export function demarrerIndex(): Promise<number> {
   return demarrage
 }
 
+/**
+ * Le catalogue vient d'etre remplace : l'index du worker decrit l'ancien. On
+ * oublie la promesse de demarrage ; le prochain `demarrerIndex` reindexe, et le
+ * worker reconstruit depuis IndexedDB. Si personne n'a encore cherche, il n'y a
+ * rien a invalider.
+ */
+export function reindexer(): void {
+  if (!demarrage) return
+  demarrage = null
+  poserEtatIndex('repos')
+}
+
 function envoyer<T extends MessageDepuisWorker>(
   faire: (j: number) => MessageVersWorker,
 ): Promise<T> {

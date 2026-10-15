@@ -58,11 +58,6 @@ export const FRAICHEUR = {
    * bande à la lecture en cours.
    */
   relais: 30 * 60_000,
-  /**
-   * Compteur de connexions du compte : il décrit l'instant présent, et c'est
-   * précisément pendant qu'on regarde qu'il doit dire autre chose que « 0/1 ».
-   */
-  connexions: 0,
 } as const
 
 // --- Clés ------------------------------------------------------------------
@@ -115,9 +110,8 @@ export const cles = {
   epingles: ['epingles', 'live'] as const,
 
   /** Fiche détaillée d'une série, telle que le relais la rend. */
-  serie: (id: number) => ['serie', id] as const,
-  ficheRelais: (type: TypeContenu, id: number) => ['relais', 'fiche', type, id] as const,
-  connexions: (encours: string) => ['relais', 'connexions', encours] as const,
+  /** Saisons d'une serie, telles que l'API les rend (`/series/{id}/saisons`). */
+  serie: (id: string) => ['serie', id] as const,
 } as const
 
 // --- Client ----------------------------------------------------------------
@@ -316,6 +310,20 @@ export function invaliderCatalogue(): Promise<void> {
 
 /** Masquage d'une catégorie : seul le type concerné bouge, et son index de
  *  facettes avec lui — les catégories masquées en sont la matière première. */
+/** Changement de compte ou de profil : tout ce qui est personnel est a relire. */
+export function invaliderTout(): Promise<void> {
+  return Promise.all([
+    invaliderFavoris(),
+    invaliderHistorique(),
+    invaliderReprises(),
+    invaliderEpingles(),
+    invaliderCategories('live'),
+    invaliderCategories('vod'),
+    invaliderCategories('series'),
+    clientRequetes.invalidateQueries({ queryKey: cles.recommandation }),
+  ]).then(() => undefined)
+}
+
 export function invaliderCategories(type: TypeContenu): Promise<void> {
   return Promise.all([
     clientRequetes.invalidateQueries({ queryKey: cles.categories(type) }),

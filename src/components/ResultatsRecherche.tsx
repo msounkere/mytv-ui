@@ -272,7 +272,7 @@ export default function ResultatsRecherche(props: ResultatsRechercheProps) {
 /** CarteAffiche attend une entrée de catalogue ; le worker n'en renvoie que la
  *  part utile à l'affichage, le reste étant relu à l'ouverture. */
 function versEntree(r: ResultatRecherche): EntreeCatalogue {
-  return { cle: r.cle, type: r.type, id: r.id, nom: r.nom, recherche: '', pays: r.pays, icone: r.icone, note: r.note, ajouteLe: r.ajouteLe }
+  return { cle: r.cle, type: r.type, idServeur: r.idServeur, lecture: '', id: 0, nom: r.nom, recherche: '', pays: r.pays, icone: r.icone, note: r.note, ajouteLe: r.ajouteLe }
 }
 
 function meta(r: ResultatRecherche): string {

@@ -1,6 +1,5 @@
 import { createSignal } from 'solid-js'
 import { config } from './config'
-import { urlApi } from './lib/xtream'
 
 // Le débit affiché par l'en-tête était une constante (« 24 Mbit/s ») reprise de
 // la maquette. Sur cette installation la valeur est doublement fausse : le
@@ -83,7 +82,10 @@ export async function mesurerDebit(): Promise<void> {
   // depuis le cache elle mesurerait la vitesse du disque, pas celle du lien.
   // `_sonde` suffit à la casser : le service ignore ce qu'il ne connaît pas,
   // mais le navigateur, lui, voit bien une URL différente.
-  const url = urlApi({ action: 'get_live_streams', _sonde: Date.now() })
+  // Un export du catalogue (plusieurs Mo de NDJSON) : un corps assez gros pour
+  // mesurer un debit, sur une route authentifiee par le cookie. On lit puis on
+  // annule bien avant la fin.
+  const url = `/api/v1/catalogue/export?type=live&_sonde=${Date.now()}`
 
   const depart = performance.now()
   try {

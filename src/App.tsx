@@ -1,8 +1,7 @@
 import { Show, Suspense, createEffect, createSignal, lazy, on, onCleanup } from 'solid-js'
 import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } from '@solidjs/router'
 import type { RouteSectionProps } from '@solidjs/router'
-import { configComplete } from './config'
-import { session } from './lib/auth'
+import { profilActif, session } from './lib/auth'
 import {
   LIBELLE_ONGLET, arreterLecture, barreDeployee, brancherRouteur, changerDeChaine, cleFiche,
   cleLecture, ecran, episodeSuivant, lireEpisode, oublierContenuOuvert, onglet, ouvrir,
@@ -12,6 +11,7 @@ import {
 import { db } from './lib/db'
 import { gabarit } from './lib/gabarit'
 import BarreLaterale, { type ClefNav } from './components/BarreLaterale'
+import BandeauImport from './components/BandeauImport'
 import Couche from './components/Couche'
 import EnTete from './components/EnTete'
 import PanneauSuggestions from './components/PanneauSuggestions'
@@ -122,11 +122,10 @@ function Coque(props: RouteSectionProps) {
   // attendre la session suivante pour se rouvrir de lui-même.
   onCleanup(oublierContenuOuvert)
 
-  // Les profils de famille sont une évolution à venir ; l'identité montrée est
-  // celle du compte connecté — plus celle déclarée au relais, qui n'appartenait
-  // pas à l'utilisateur.
+  // L'identité montrée est celle du PROFIL actif (c'est lui qui porte les
+  // favoris et l'historique), à défaut le nom du compte saisi à la connexion.
   const profil = () => {
-    const nom = session()?.identifiant.trim() || 'Invité'
+    const nom = profilActif()?.nom.trim() || session()?.identifiant.trim() || 'Invité'
     return { nom, initiale: nom.slice(0, 1).toUpperCase(), teinte: teinteDe(nom) }
   }
 
@@ -147,10 +146,10 @@ function Coque(props: RouteSectionProps) {
     void db.catalogue.get(cle).then((e) => {
       if (cleLecture() !== cle) return
       if (e) poserSelection(e)
-      // Un épisode de série (`series:<série>:<épisode>`) n'est pas au
-      // catalogue : seule sa fiche sait reconstruire l'URL de lecture, on y
-      // renvoie plutôt que d'afficher un lecteur sans source.
-      else naviguer(repliDe(cle), { replace: true })
+      // Un épisode (`iptva:77123.mkv`) n'est pas au catalogue : seule sa fiche
+      // sait donner son adresse de lecture, on y renvoie plutôt que d'afficher
+      // un lecteur sans source.
+      else void repliDe(cle).then((chemin) => cleLecture() === cle && naviguer(chemin, { replace: true }))
     })
   })
 
@@ -163,10 +162,6 @@ function Coque(props: RouteSectionProps) {
       else naviguer('/', { replace: true })
     })
   })
-
-  // Le relais vient du serveur avec la session : s'il manque malgré tout, les
-  // Réglages sont le seul écran qui puisse le dire.
-  if (!configComplete()) naviguer('/reglages', { replace: true })
 
   // Direct, Films et Séries ne sont pas des écrans distincts : ce sont les trois
   // onglets de Parcours. Le rail les présente séparément parce que c'est ainsi
@@ -226,7 +221,7 @@ function Coque(props: RouteSectionProps) {
 
       <div
         class="coque-contenu"
-        style={{ display: 'grid', 'grid-template-rows': '52px minmax(0, 1fr)', 'min-width': 0, 'min-height': 0 }}
+        style={{ display: 'grid', 'grid-template-rows': '52px auto minmax(0, 1fr)', 'min-width': 0, 'min-height': 0 }}
       >
         <EnTete
           titre={titre()}
@@ -244,6 +239,10 @@ function Coque(props: RouteSectionProps) {
             dans l'arbre. Il s'accroche au champ de l'en-tête par le DOM — et il
             ne compte donc pas comme une piste de la grille ci-dessus. */}
         <PanneauSuggestions surOuvrir={ouvrir} surVoirTout={ouvrirRecherche} />
+
+        {/* Toujours present (piste `auto` : 0 px quand il est vide), pour que la
+            grille garde ses trois pistes que le bandeau soit affiche ou non. */}
+        <div><BandeauImport /></div>
 
         <main style={{ position: 'relative', 'min-height': 0, 'min-width': 0, overflow: 'hidden' }}>
           {/* Les trois écrans coûteux. Chacun a sa propre frontière de
@@ -316,8 +315,9 @@ function Coque(props: RouteSectionProps) {
   )
 }
 
-/** Où renvoyer une clé de lecture que le catalogue ne connaît pas. */
-function repliDe(cle: string): string {
-  const parts = cle.split(':')
-  return parts.length === 3 ? `/serie/${parts[0]}:${parts[1]}` : '/'
+/** Où renvoyer une clé de lecture que le catalogue ne connaît pas : la fiche de
+ *  la série de l'épisode si la reprise l'a retenue, sinon l'accueil. */
+async function repliDe(cle: string): Promise<string> {
+  const serie = (await db.reprises.get(cle))?.serie
+  return serie ? `/serie/${serie}` : '/'
 }

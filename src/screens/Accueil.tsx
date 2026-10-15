@@ -10,11 +10,12 @@ import type { ProgrammeCourant } from '../components/PlaqueChaine'
 import { anneeDuTitre, titreCourt } from '../components/titres'
 import { ecran, poserOnglet } from '../etat'
 import { db, type EntreeCatalogue, type TypeContenu } from '../lib/db'
+import { numeroDeCle } from '../lib/identifiants'
 import { chainesGuidePartagees, grillesFenetre, programmeEnCours } from '../lib/epg'
-import { basculerFavori } from '../lib/preferences'
+import { basculerFavori, marquerVu, oublierReprise } from '../lib/preferences'
 import { gabarit as gabaritCoque } from '../lib/gabarit'
 import {
-  FRAICHEUR, cles, donneePartagee, invaliderReprises, requete,
+  FRAICHEUR, cles, donneePartagee, requete,
 } from '../lib/requetes'
 
 // Accueil V2. La règle structurante du dossier : « une rangée vide n'est jamais
@@ -152,7 +153,7 @@ async function recemmentAjoutes(type: TypeContenu, limite: number): Promise<Entr
     .anyOf(cats.map((c) => [type, c]))
     .primaryKeys()) as string[]
   const triees = cles
-    .map((cle) => ({ cle, id: Number(cle.slice(cle.indexOf(':') + 1)) }))
+    .map((cle) => ({ cle, id: numeroDeCle(cle) }))
     .sort((a, b) => b.id - a.id)
     .slice(0, limite)
   const entrees = await db.catalogue.bulkGet(triees.map((t) => t.cle))
@@ -323,7 +324,7 @@ async function parceQue(): Promise<Similaires | undefined> {
     .primaryKeys()) as string[]
   const voisines = cles
     .filter((c) => c !== reference.cle)
-    .map((cle) => ({ cle, id: Number(cle.slice(cle.indexOf(':') + 1)) }))
+    .map((cle) => ({ cle, id: numeroDeCle(cle) }))
     .sort((a, b) => b.id - a.id)
     .slice(0, LIMITE_SIMILAIRES)
   if (voisines.length === 0) return undefined
@@ -427,17 +428,14 @@ export default function Accueil(props: {
         icone: 'check_circle',
         libelle: 'Marquer comme vu',
         action: async () => {
-          const r = await db.reprises.get(entree.cle)
-          if (r) await db.reprises.put({ ...r, position: r.duree, vuLe: Date.now() })
-          await invaliderReprises()
+          await marquerVu(entree.cle)
         },
       },
       {
         icone: 'delete',
         libelle: 'Retirer de la liste',
         action: async () => {
-          await db.reprises.delete(entree.cle)
-          await invaliderReprises()
+          await oublierReprise(entree.cle)
         },
       },
     ]
