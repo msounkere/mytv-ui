@@ -8,7 +8,7 @@ import solid from 'vite-plugin-solid'
 const API = process.env.MYTV_API ?? 'http://127.0.0.1:8080'
 
 export default defineConfig({
-  base: '/app/',
+  base: '/',
   plugins: [solid()],
   // Vite peut pre-bundler une seconde copie de solid-js via ses dependances :
   // deux instances cassent silencieusement la reactivite entre modules.
