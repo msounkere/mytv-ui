@@ -43,3 +43,29 @@ test('chaque statut a une couche nommee, jamais un message vide', () => {
     assert.match(e.detail ?? '', new RegExp(`HTTP ${s}`))
   }
 })
+
+// US-25 CA5 : un 502 « compte » ou « adresse » n'est pas une panne du relais.
+test('502 fournisseur_compte_invalide : abonnement expire, avec la date si connue', () => {
+  const t0 = Date.parse('2026-10-15T10:00:00Z')
+  const passe = erreurDeStatut(502, { code: 'fournisseur_compte_invalide', expiration: '2026-10-01T00:00:00Z', maintenantMs: t0 })
+  assert.equal(passe.couche, 'fournisseur')
+  assert.match(passe.message, /^Abonnement expiré ou refusé par le fournisseur \(expiré le 1 octobre 2026\)\.$/)
+  const futur = erreurDeStatut(502, { code: 'fournisseur_compte_invalide', expiration: '2026-10-20T00:00:00Z', maintenantMs: t0 })
+  assert.match(futur.message, /échéance le 20 octobre 2026/)
+  const sansDate = erreurDeStatut(502, { code: 'fournisseur_compte_invalide' })
+  assert.equal(sansDate.message, 'Abonnement expiré ou refusé par le fournisseur.')
+  assert.match(sansDate.detail ?? '', /HTTP 502 fournisseur_compte_invalide/)
+  // Une date illisible n'est jamais affichee.
+  assert.doesNotMatch(erreurDeStatut(502, { code: 'fournisseur_compte_invalide', expiration: 'pas une date' }).message, /Invalid|NaN|\(/)
+})
+
+test('502 fournisseur_adresse_refusee et 502 ordinaire restent distincts', () => {
+  const adresse = erreurDeStatut(502, { code: 'fournisseur_adresse_refusee' })
+  assert.equal(adresse.couche, 'fournisseur')
+  assert.match(adresse.message, /Adresse du serveur refusée par le fournisseur/)
+  const panne = erreurDeStatut(502, { code: 'fournisseur_indisponible' })
+  assert.equal(panne.couche, 'relais')
+  assert.equal(erreurDeStatut(502).couche, 'relais')
+  // Le code n'a de sens que sur un 502 : un autre statut garde sa traduction.
+  assert.equal(erreurDeStatut(401, { code: 'fournisseur_compte_invalide' }).couche, 'auth')
+})

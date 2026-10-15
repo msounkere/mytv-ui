@@ -11,6 +11,7 @@ import {
 import { db } from './lib/db'
 import { gabarit } from './lib/gabarit'
 import BarreLaterale, { type ClefNav } from './components/BarreLaterale'
+import BandeauAbonnement from './components/BandeauAbonnement'
 import BandeauImport from './components/BandeauImport'
 import Couche from './components/Couche'
 import EnTete from './components/EnTete'
@@ -242,7 +243,7 @@ function Coque(props: RouteSectionProps) {
 
         {/* Toujours present (piste `auto` : 0 px quand il est vide), pour que la
             grille garde ses trois pistes que le bandeau soit affiche ou non. */}
-        <div><BandeauImport /></div>
+        <div><BandeauAbonnement /><BandeauImport /></div>
 
         <main style={{ position: 'relative', 'min-height': 0, 'min-width': 0, overflow: 'hidden' }}>
           {/* Les trois écrans coûteux. Chacun a sa propre frontière de

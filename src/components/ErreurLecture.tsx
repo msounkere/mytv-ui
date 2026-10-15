@@ -15,6 +15,7 @@ const ICONE: Record<Couche, string> = {
   codec: 'volume_up',
   relais: 'signal_cellular_alt',
   donnees: 'list',
+  fournisseur: 'vpn_lock',
 }
 
 /** Teinte de la couche : la limite de connexions n'est pas une panne. */
@@ -23,6 +24,7 @@ const TEINTE: Record<Couche, { fg: string; bg: string }> = {
   auth: { fg: 'var(--err)', bg: 'var(--err-bg)' },
   relais: { fg: 'var(--err)', bg: 'var(--err-bg)' },
   donnees: { fg: 'var(--err)', bg: 'var(--err-bg)' },
+  fournisseur: { fg: 'var(--err)', bg: 'var(--err-bg)' },
   limite: { fg: 'var(--lim)', bg: 'var(--lim-bg)' },
   codec: { fg: 'var(--cod)', bg: 'var(--cod-bg)' },
 }

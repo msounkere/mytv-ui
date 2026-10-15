@@ -196,7 +196,9 @@ export function creerClientEpg(opts: OptionsClientEpg = {}) {
       } catch {
         // Corps absent ou illisible : le statut suffit.
       }
-      throw erreurDeStatut(r.status, { retryAfter: r.headers.get('Retry-After'), code, contexte: 'guide des programmes' })
+      throw erreurDeStatut(r.status, {
+        retryAfter: r.headers.get('Retry-After'), code, expiration: r.headers.get('X-Mytv-Expiration'), contexte: 'guide des programmes',
+      })
     }
     return r.json()
   }

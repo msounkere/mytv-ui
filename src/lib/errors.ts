@@ -2,7 +2,7 @@
 // identify a specific codec, container, or network cause ». Toute erreur de cette
 // interface nomme donc sa couche et porte une action proposee.
 
-export type Couche = 'reseau' | 'auth' | 'limite' | 'codec' | 'relais' | 'donnees'
+export type Couche = 'reseau' | 'auth' | 'limite' | 'codec' | 'relais' | 'donnees' | 'fournisseur'
 
 export class ErreurLecteur extends Error {
   readonly couche: Couche
@@ -32,6 +32,7 @@ export const LIBELLE_COUCHE: Record<Couche, string> = {
   codec: 'Format non lisible',
   relais: 'Relais',
   donnees: 'Donnees',
+  fournisseur: 'Fournisseur',
 }
 
 /**
@@ -51,11 +52,55 @@ export function lireRetryAfter(valeur: string | null | undefined, maintenantMs =
   return s > 0 ? s : undefined
 }
 
+/** Codes d'un fournisseur qui REFUSE (et non en panne) : ils ne se soignent pas en reessayant. */
+export const CODE_COMPTE_INVALIDE = 'fournisseur_compte_invalide'
+export const CODE_ADRESSE_REFUSEE = 'fournisseur_adresse_refusee'
+
+/** « 18 octobre 2026 » : la date d'expiration, dans la langue et le fuseau du navigateur. */
+export function dateLongue(iso: string): string | undefined {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return undefined
+  return new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+}
+
+/**
+ * Le fournisseur a refuse le COMPTE (abonnement expire, identifiants refuses) ou
+ * l'ADRESSE du serveur. `undefined` pour tout autre code : l'appelant traduit alors
+ * le statut comme avant. La date n'est ajoutee que si le serveur l'a donnee.
+ */
+export function erreurFournisseur(
+  code: string | null | undefined,
+  expiration?: string | null,
+  detail?: string,
+  maintenantMs = Date.now(),
+): ErreurLecteur | undefined {
+  if (code === CODE_COMPTE_INVALIDE) {
+    const jour = expiration ? dateLongue(expiration) : undefined
+    const precision = jour ? (Date.parse(expiration!) > maintenantMs ? ` (échéance le ${jour})` : ` (expiré le ${jour})`) : ''
+    return new ErreurLecteur(
+      'fournisseur',
+      `Abonnement expiré ou refusé par le fournisseur${precision}.`,
+      'Renouveler l’abonnement auprès du fournisseur, ou prévenir l’administrateur du serveur.',
+      detail,
+    )
+  }
+  if (code === CODE_ADRESSE_REFUSEE)
+    return new ErreurLecteur(
+      'fournisseur',
+      'Adresse du serveur refusée par le fournisseur.',
+      'Le fournisseur n’accepte pas l’adresse de ce serveur : prévenir l’administrateur.',
+      detail,
+    )
+  return undefined
+}
+
 export interface InfosStatut {
   /** Valeur brute de `Retry-After`. */
   retryAfter?: string | null
-  /** `code` du corps d'erreur du serveur (`format_non_lisible`...). */
+  /** `code` du corps d'erreur du serveur (`format_non_lisible`...) ou de l'en-tete `X-Mytv-Erreur`. */
   code?: string
+  /** Date d'expiration de l'abonnement (corps ou en-tete `X-Mytv-Expiration`), si connue. */
+  expiration?: string | null
   /** Ce qu'on tentait, pour le diagnostic. */
   contexte?: string
   /** `maintenant` injectable pour les tests. */
@@ -70,6 +115,11 @@ export interface InfosStatut {
  */
 export function erreurDeStatut(statut: number, infos: InfosStatut = {}): ErreurLecteur {
   const detail = `HTTP ${statut}${infos.code ? ` ${infos.code}` : ''}${infos.contexte ? ` — ${infos.contexte}` : ''}`
+  // Un 502 dont le code dit « compte » ou « adresse » n'est pas une panne du serveur.
+  if (statut === 502) {
+    const f = erreurFournisseur(infos.code, infos.expiration, detail, infos.maintenantMs)
+    if (f) return f
+  }
   switch (true) {
     case statut === 401:
       return new ErreurLecteur('auth', 'La session a expiré.', 'Se reconnecter, puis relancer la lecture.', detail)
