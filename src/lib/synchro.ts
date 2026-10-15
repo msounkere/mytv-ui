@@ -231,6 +231,9 @@ async function tirerFavoris(limite: number | undefined): Promise<boolean> {
 }
 
 async function tirerHistorique(): Promise<{ historique: boolean; reprises: boolean }> {
+  // Instant de l'instantane : tout ce qui a ete ouvert APRES lui est plus recent
+  // que ce que le serveur sait, et ne doit pas etre pris pour « retire ailleurs ».
+  const instantane = Date.now()
   const r = await json<{ elements: LectureApi[] }>('/profil/historique')
   const resolus = await resoudreCles(r.elements.map((l) => l.contenu))
   const { lectures: gardees } = await enAttente()
@@ -266,9 +269,15 @@ async function tirerHistorique(): Promise<{ historique: boolean; reprises: boole
   // Retire ailleurs : la liste du serveur est tronquee aux plus RECENTS, donc une
   // ligne locale n'est a supprimer que si elle est plus recente que le plus
   // ancien element recu et pourtant absente.
+  // `gardees` date du debut de la fusion : une ouverture notee depuis (le lecteur
+  // s'ouvre en meme temps que la page) n'y figure pas. On relit le journal, et on
+  // protege aussi tout ce qui est posterieur a l'instantane du serveur.
+  const { lectures: recentes } = await enAttente()
+  const protegee = (h: { cle: string; ouvertLe: number }) =>
+    gardees.has(h.cle) || recentes.has(h.cle) || h.ouvertLe >= instantane
   if (Number.isFinite(plusAncien)) {
     for (const h of await db.historique.where('ouvertLe').aboveOrEqual(plusAncien).toArray()) {
-      if (vues.has(h.cle) || gardees.has(h.cle)) continue
+      if (vues.has(h.cle) || protegee(h)) continue
       await db.historique.delete(h.cle)
       await db.reprises.delete(h.cle)
       historique = reprises = true
@@ -276,7 +285,7 @@ async function tirerHistorique(): Promise<{ historique: boolean; reprises: boole
   } else if (r.elements.length === 0) {
     // Serveur vide : tout ce qui n'attend pas d'envoi a ete retire ailleurs.
     for (const h of await db.historique.toArray())
-      if (!gardees.has(h.cle)) {
+      if (!protegee(h)) {
         await db.historique.delete(h.cle)
         await db.reprises.delete(h.cle)
         historique = reprises = true
