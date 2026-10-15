@@ -22,7 +22,7 @@ const RELIQUATS = [
   ['player_api.php', /player_api\.php/],
   ['xmltv.php', /xmltv\.php/],
   ['/flux/', /['"`]\/flux\//],
-  ['chemin /live|movie|series/<user>/<pass>', /\/(?:live|movie|series)\/\$\{[^}]*(?:username|enc)/],
+  ['chemin /live|movie|series/<user>/<pass>', /\/(?:live|movie|series)\/\$\{[^}]*(?:username|password)/],
 ]
 
 function* fichiers(dir) {
