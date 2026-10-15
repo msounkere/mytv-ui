@@ -3,8 +3,14 @@
 // erreur alors que l'utilisateur voit « Connexion interrompue » : la cause est
 // dans le navigateur, que seul un enregistreur cote client peut observer.
 //
-// Les evenements sont regroupes et envoyes toutes les 5 s au service
-// (/flux/diag/evenements), qui masque les identifiants avant d'ecrire.
+// Les evenements sont regroupes et envoyes toutes les 5 s au serveur
+// (POST /api/v1/diagnostic/evenements), qui masque identifiants et jetons avant
+// d'ecrire. On masque aussi de notre cote (`masquerUrl`) : un jeton de segment
+// n'a aucune raison de quitter la page, meme vers notre propre serveur.
+
+import { signalerSiNonAuthentifie } from './session-expiree'
+
+const URL_EVENEMENTS = '/api/v1/diagnostic/evenements'
 
 type Evenement = Record<string, string | number | boolean | null | undefined>
 
@@ -30,28 +36,61 @@ let minuteur: ReturnType<typeof setInterval> | undefined
 const appareil = identifiantAppareil()
 const debut = performance.now()
 
+/**
+ * Retire d'une URL ce qui ne doit pas etre journalise : la requete, le fragment
+ * et le jeton signe d'un segment (`/live/<chaine>/seg/<jeton>`). Indefini reste
+ * indefini : l'appelant passe souvent un champ optionnel.
+ */
+export function masquerUrl(url: string | undefined): string | undefined {
+  if (!url) return url
+  const sans = url.split(/[?#]/, 1)[0] ?? ''
+  return sans.replace(/(\/seg\/)[^/]+/, '$1…')
+}
+
 export function noter(type: string, details: Evenement = {}): void {
   if (tampon.length >= TAILLE_MAX_TAMPON) tampon.shift()
   tampon.push({ type, t: Math.round(performance.now() - debut) / 1000, ...details })
   armer()
 }
 
+/**
+ * Un lot en forme de contrat (`EnvoiEvenements`) : `type` obligatoire et borne
+ * a 40 caracteres, le reste libre. Pure, pour etre testee sans reseau.
+ */
+export function construireEnvoi(
+  lot: Evenement[],
+  appareil: string,
+  agent: string,
+): { appareil: string; agent: string; evenements: Array<Evenement & { type: string }> } {
+  return {
+    appareil: appareil.slice(0, 80),
+    agent: agent.slice(0, 300),
+    evenements: lot.map((e) => ({ ...e, type: String(e['type'] ?? 'inconnu').slice(0, 40) })),
+  }
+}
+
+/**
+ * Le serveur limite le debit par session (429) : au-dela, on jette le lot au
+ * lieu de le remettre en file — une collecte qui insiste aggraverait ce qu'elle
+ * mesure.
+ */
 async function envoyer(fermeture = false): Promise<void> {
   if (tampon.length === 0) return
   const lot = tampon.splice(0, 80)
-  const corps = JSON.stringify({ appareil, agent: navigator.userAgent.slice(0, 120), evenements: lot })
+  const corps = JSON.stringify(construireEnvoi(lot, appareil, navigator.userAgent))
   try {
     if (fermeture && navigator.sendBeacon) {
-      navigator.sendBeacon('/flux/diag/evenements', new Blob([corps], { type: 'application/json' }))
+      navigator.sendBeacon(URL_EVENEMENTS, new Blob([corps], { type: 'application/json' }))
       return
     }
-    await fetch('/flux/diag/evenements', {
+    const r = await fetch(URL_EVENEMENTS, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: corps,
       keepalive: true,
       credentials: 'same-origin',
     })
+    signalerSiNonAuthentifie(r.status)
   } catch {
     // La collecte ne doit jamais gener la lecture : on abandonne ce lot.
   }
@@ -60,7 +99,8 @@ async function envoyer(fermeture = false): Promise<void> {
 function armer(): void {
   if (minuteur) return
   minuteur = setInterval(() => void envoyer(), INTERVALLE_ENVOI_MS)
-  addEventListener('pagehide', () => void envoyer(true), { once: true })
+  if (typeof addEventListener === 'function')
+    addEventListener('pagehide', () => void envoyer(true), { once: true })
 }
 
 /**

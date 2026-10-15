@@ -60,6 +60,11 @@ export function brancherClavier(a: ActionsClavier): (e: KeyboardEvent) => void {
   onMount(() => {
     const ecouter = (e: KeyboardEvent) => {
       if (!a.surSonEcran()) return
+      // Si le focus est DANS le lecteur, la racine a deja traite la touche (et
+      // appele preventDefault) avant qu'elle n'atteigne la fenetre : sans cette
+      // garde, une touche agissait deux fois — le mini-guide s'ouvrait puis se
+      // refermait, « → » avancait de 20 s au lieu de 10.
+      if (e.defaultPrevented) return
       auClavier(e)
     }
     window.addEventListener('keydown', ecouter)

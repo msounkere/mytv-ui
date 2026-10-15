@@ -2,11 +2,14 @@
 // et supportee par Chrome (Cast) comme par Safari (AirPlay) : aucun SDK tiers
 // n est charge, et les identifiants ne transitent par aucun service externe.
 //
-// POINT DE VIGILANCE RESEAU : l appareil de diffusion va chercher le flux
-// LUI-MEME. Les Chromecast interrogent des resolveurs publics cables en dur,
-// donc ils resolvent mytv.msocasa.com vers Cloudflare et passent par le tunnel
-// (10-40 Mbit/s) au lieu du reseau local. `urlPourDiffusion` permet de forcer
-// l adresse locale du relais pour rester en plein debit.
+// CONTRAT (docs/openapi.yaml, « Cast ») : il n'y a PAS d'URL signee. L'appareil
+// de diffusion va chercher `lecture`, en absolu, SANS cookie : le serveur le
+// reconnait a son adresse reseau (compte technique local, GET/HEAD, plages
+// `comptes.plages_locales`). Cela ne marche donc que depuis le reseau local : si
+// la page est ouverte par un nom public (tunnel), l'appareil resoudrait ce nom
+// vers le tunnel, y serait refuse faute de cookie, et le debit y est de toute
+// facon trop faible. `diffusionPossible` desactive alors la fonction au lieu de
+// laisser l'utilisateur essayer pour rien.
 
 export type EtatDiffusion = 'indisponible' | 'prete' | 'connexion' | 'diffusion'
 
@@ -77,16 +80,32 @@ export function diffusionResoutLeCodec(codecAudio: string | undefined): boolean 
 }
 
 /**
- * Remplace l hote public par l adresse locale du relais quand elle est connue,
- * pour que l appareil de diffusion reste sur le reseau local.
+ * Le nom d'hote designe-t-il le reseau local ? Adresses privees (RFC 1918),
+ * boucle locale, lien local, noms en `.local`/`.lan` et noms sans point.
  */
-export function urlPourDiffusion(url: string, hoteLocal: string | undefined): string {
-  if (!hoteLocal) return url
-  const u = new URL(url, location.origin)
-  const local = new URL(hoteLocal)
-  u.protocol = local.protocol
-  u.host = local.host
-  return u.toString()
+export function origineLocale(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (h === 'localhost' || h === '::1') return true
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h)
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])]
+    return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)
+  }
+  if (/^f[cd][0-9a-f]{2}:/.test(h) || h.startsWith('fe80:')) return true
+  return !h.includes('.') || h.endsWith('.local') || h.endsWith('.lan')
+}
+
+/** La diffusion n'est offerte que si la page est servie depuis le reseau local. */
+export function diffusionPossible(hostname = typeof location === 'undefined' ? '' : location.hostname): boolean {
+  return origineLocale(hostname)
+}
+
+/**
+ * Adresse a donner a l'appareil : l'adresse `lecture` du serveur, rendue absolue
+ * sur l'origine de la page. Aucun hote a configurer, aucun secret dans l'URL.
+ */
+export function urlPourDiffusion(lecture: string, origine = location.origin): string {
+  return new URL(lecture, origine).toString()
 }
 
 /**

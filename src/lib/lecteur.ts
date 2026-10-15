@@ -1,12 +1,17 @@
 import type Hls from 'hls.js'
-import { ErreurLecteur } from './errors'
-import { noter, observerVideo } from './diagnostic'
+import { ErreurLecteur, erreurDeStatut } from './errors'
+import { noter, observerVideo, masquerUrl } from './diagnostic'
+import { lectureArretee, lectureOuverte } from './bail'
+import { signalerSiNonAuthentifie } from './session-expiree'
 
 // Direct en HLS, VOD en MP4 natif. Chaque echec nomme sa couche : le lecteur
 // precedent a ete abandonne pour avoir affiche « the error did not identify a
 // specific codec, container, or network cause ».
 
-export type Source = { kind: 'hls'; url: string } | { kind: 'fichier'; url: string }
+export type Source =
+  /** `chaine` : numero de la chaine, pour rendre la place a la fermeture. */
+  | { kind: 'hls'; url: string; chaine?: string }
+  | { kind: 'fichier'; url: string }
 
 export interface Attache {
   detacher: () => void
@@ -42,6 +47,14 @@ export async function attacher(
       'Utiliser Chrome, Edge, Firefox ou Safari a jour.',
     )
 
+  // Un direct ouvert reprend la place du fournisseur ; le film aussi. Dans les
+  // deux cas, une fin differee en attente (zapping) n'a plus lieu d'etre.
+  const chaine = source.kind === 'hls' ? source.chaine : undefined
+  lectureOuverte(chaine)
+  const rendrePlace = () => {
+    if (chaine) lectureArretee(chaine)
+  }
+
   if (viaNatif) {
     video.src = source.url
     const auMedia = () => surErreur(erreurMedia(video))
@@ -49,8 +62,11 @@ export async function attacher(
     return {
       detacher: () => {
         video.removeEventListener('error', auMedia)
+        // Vider `src` ferme la requete en vol : pour un film, c'est ce qui
+        // rend la place au fournisseur.
         video.removeAttribute('src')
         video.load()
+        rendrePlace()
       },
     }
   }
@@ -58,9 +74,9 @@ export async function attacher(
   // hls.js est charge a la demande : il ne doit pas peser sur le premier rendu.
   const { default: HlsCtor } = await import('hls.js')
 
-  // Le relais ne tient le creneau du fournisseur que pendant les requetes
-  // actives : entre deux segments, il garde une reservation de 15 s seulement
-  // (`hls_session_ttl_secs`). Un tampon large fait avaler au lecteur une rafale
+  // Le serveur ne tient le creneau du fournisseur que pendant les requetes
+  // actives : entre deux segments, il garde une reservation de duree limitee
+  // (TTL du bail, 90 s). Un tampon large fait avaler au lecteur une rafale
   // de segments puis l'endort une minute — la reservation expire, et la reprise
   // se heurte a la limite d'une seule connexion simultanee. D'ou des coupures
   // en pleine lecture, alors meme que le debit est dix fois suffisant.
@@ -79,8 +95,11 @@ export async function attacher(
     // Memoire bornee sur un direct laisse ouvert des heures.
     backBufferLength: 30,
     // Reessais patients : une reprise ratee coute une reconnexion complete.
-    manifestLoadingMaxRetry: 4,
-    levelLoadingMaxRetry: 4,
+    // Peu de reessais internes sur la playlist : un 503 « place occupee » doit
+    // remonter vite a la politique de reprise, qui annonce l'attente et la
+    // borne. Quatre reessais muets de hls.js la cachaient puis la doublaient.
+    manifestLoadingMaxRetry: 1,
+    levelLoadingMaxRetry: 1,
     fragLoadingMaxRetry: 6,
     fragLoadingRetryDelay: 500,
     fragLoadingMaxRetryTimeout: 8000,
@@ -96,9 +115,10 @@ export async function attacher(
       detail: data.details,
       fatale: data.fatal,
       http: data.response?.code,
-      url: data.frag?.url ?? data.url,
+      url: masquerUrl(data.frag?.url ?? data.url),
     })
     if (!data.fatal) return
+    signalerSiNonAuthentifie(data.response?.code ?? 0)
     surErreur(traduireHls(HlsCtor, data))
   })
   hls.on(HlsCtor.Events.FRAG_LOADED, (_e, d) => {
@@ -123,33 +143,33 @@ export async function attacher(
     detacher: () => {
       arretVideo()
       hls.destroy()
+      rendrePlace()
     },
   }
 }
 
-function traduireHls(Ctor: typeof Hls, data: { type: string; details: string; response?: { code?: number } }): ErreurLecteur {
+/** `Retry-After` de la reponse en cause : hls.js la rend en XHR ou en Response. */
+function retryAfterDe(details: unknown): string | null {
+  const d = details as
+    | { getResponseHeader?: (n: string) => string | null; headers?: { get?: (n: string) => string | null } }
+    | undefined
+  return d?.getResponseHeader?.('Retry-After') ?? d?.headers?.get?.('Retry-After') ?? null
+}
+
+export function traduireHls(
+  Ctor: Pick<typeof Hls, 'ErrorTypes'>,
+  data: { type: string; details: string; response?: { code?: number }; networkDetails?: unknown },
+): ErreurLecteur {
   const code = data.response?.code
-  if (code === 401 || code === 403)
-    return new ErreurLecteur(
-      'auth',
-      'Le relais a refuse l acces a ce flux.',
-      'Verifier le compte dans les Reglages.',
-      `${data.details} (HTTP ${code})`,
-    )
-  // Le fournisseur n autorise qu une connexion simultanee : c est la cause la
-  // plus frequente d un refus soudain alors que tout fonctionnait.
-  if (code === 429 || code === 509)
-    return new ErreurLecteur(
-      'limite',
-      'La limite d une connexion simultanee est atteinte.',
-      'Fermer l autre lecture en cours, puis reessayer.',
-      `${data.details} (HTTP ${code})`,
-    )
+  // Tout statut HTTP connu (401, 403, 404, 503...) a sa traduction : le 503
+  // devient « place occupee » avec son delai, le 401 un retour a la connexion.
+  if (code !== undefined && code >= 400)
+    return erreurDeStatut(code, { retryAfter: retryAfterDe(data.networkDetails), contexte: data.details })
   if (data.type === Ctor.ErrorTypes.NETWORK_ERROR)
     return new ErreurLecteur(
       'reseau',
       'Le flux s est interrompu.',
-      'Reessayer ; si cela persiste, verifier la liaison avec le relais.',
+      'Reessayer ; si cela persiste, verifier la liaison avec le serveur.',
       data.details,
     )
   if (data.type === Ctor.ErrorTypes.MEDIA_ERROR)

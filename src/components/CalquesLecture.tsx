@@ -71,7 +71,13 @@ export function DialogueReprise(props: {
  * reste, on dit lequel et quand — l'erreur nommée n'arrive qu'après le
  * troisième échec.
  */
-export function BandeauReconnexion(props: { essai: number; total: number; dans: number }) {
+export function BandeauReconnexion(props: {
+  essai: number
+  total: number
+  dans: number
+  /** `occupe` : la place du fournisseur est prise, ce n'est pas une panne. */
+  motif?: 'occupe' | 'panne'
+}) {
   return (
     <div
       role="status"
@@ -99,7 +105,11 @@ export function BandeauReconnexion(props: { essai: number; total: number; dans: 
         }}
       />
       <div style={{ display: 'flex', 'flex-direction': 'column', 'min-width': 0 }}>
-        <span style={{ 'font-weight': 'var(--w-strong)' }}>Connexion interrompue — reconnexion automatique</span>
+        <span style={{ 'font-weight': 'var(--w-strong)' }}>
+          {props.motif === 'occupe'
+            ? 'Place occupée — nouvelle tentative automatique'
+            : 'Connexion interrompue — reconnexion automatique'}
+        </span>
         <span class="num" style={{ 'font-size': '12px', color: 'var(--lim)' }}>
           Tentative {props.essai} sur {props.total} · nouvel essai dans {props.dans} s
         </span>
@@ -140,62 +150,6 @@ export function ProchainEpisode(props: {
       <div style={{ display: 'flex', gap: '8px' }}>
         <BoutonCalque principal icone="play_arrow" surAction={props.surLire}>Lire maintenant</BoutonCalque>
         <BoutonCalque surAction={props.surAnnuler}>Annuler</BoutonCalque>
-      </div>
-    </div>
-  )
-}
-
-/**
- * Réencodage vidéo : 78 à 106 % d'un cœur mesurés sur cette machine, sans GPU.
- * C'est la seule stratégie du service qui se paie, donc la seule qu'on n'engage
- * pas sans le dire — et le téléviseur, lui, décode le format d'origine.
- */
-export function AvertissementCout(props: {
-  pourquoi: string
-  coutCpu: string
-  diffusionPossible: boolean
-  surLancer: () => void
-  surDiffuser: () => void
-  surRetour: () => void
-}) {
-  return (
-    <div
-      role="dialog"
-      aria-label="Réencodage nécessaire"
-      data-role="cout-flux"
-      style={{
-        ...calque,
-        ...borne(),
-        left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
-        display: 'flex', 'flex-direction': 'column', gap: '12px',
-        padding: '20px', width: 'min(420px, calc(100% - 32px))',
-        background: VERRE,
-      }}
-    >
-      <div style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-        <span aria-hidden="true" style={{ display: 'grid', color: 'var(--cod)' }}>
-          <Icone nom="signal_cellular_alt" taille={20} plein />
-        </span>
-        <span style={{ 'font-size': '17px', 'font-weight': 'var(--w-strong)' }}>
-          Ce format demande un réencodage
-        </span>
-      </div>
-      <span style={{ 'font-size': '13px', 'line-height': '19px', color: ENCRE2 }}>
-        {props.pourquoi}
-      </span>
-      <span class="num" style={{ 'font-size': '12px', color: 'var(--cod)' }}>
-        Coût mesuré : {props.coutCpu}
-      </span>
-      <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap' }}>
-        <Show when={props.diffusionPossible}>
-          <BoutonCalque principal icone="cast" surAction={props.surDiffuser}>
-            Diffuser vers le téléviseur
-          </BoutonCalque>
-        </Show>
-        <BoutonCalque principal={!props.diffusionPossible} surAction={props.surLancer}>
-          Réencoder quand même
-        </BoutonCalque>
-        <BoutonCalque surAction={props.surRetour}>Retour</BoutonCalque>
       </div>
     </div>
   )
