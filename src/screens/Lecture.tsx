@@ -23,7 +23,7 @@ import { annulerFinDifferee } from '../lib/bail'
 import { ErreurLecteur } from '../lib/errors'
 import { noter } from '../lib/diagnostic'
 import {
-  AUCUNE_TENTATIVE, BADGE_DIRECT, LIBELLE_CONVERSION, MESSAGE_4K, enConversion, erreurApresConversions, est4K,
+  AUCUNE_TENTATIVE, BADGE_DIRECT, DELAI_ATTENTE_LONGUE_MS, LIBELLE_CONVERSION, MESSAGE_4K, enConversion, erreurApresConversions, est4K,
   suiteApresErreur, urlForcee, type EtatTentatives, type ModeDirect, type ModeForce,
 } from '../lib/modes-direct'
 import { noterOuverture, noterPosition, reprisePour, estFavori, basculerFavori } from '../lib/preferences'
@@ -125,6 +125,8 @@ export default function Lecture(props: {
   // Hors réactivité : ce sont des compteurs de garde-fou, lus à l'ouverture du flux.
   let etatTentatives: EtatTentatives = AUCUNE_TENTATIVE
   let forcage: ModeForce | null = null
+  /** Playlist d'un direct pas encore arrivée après ~3 s : ffmpeg démarre peut-être. */
+  const [attenteLongue, poserAttenteLongue] = createSignal(false)
   const conversion = () => {
     const m = forcageAffiche() ?? modeServeur()
     return direct() && enConversion(m) ? (m as ModeForce) : null
@@ -268,6 +270,8 @@ export default function Lecture(props: {
     poserErreur(null)
     poserModeServeur(null)
     poserForcageAffiche(forcage)
+    poserAttenteLongue(false)
+    const minuteurAttente = entree.type === 'live' ? setTimeout(() => poserAttenteLongue(true), DELAI_ATTENTE_LONGUE_MS) : undefined
     poserChargement(true)
     poserImageDisponible(false)
     poserPositionBrute(0)
@@ -333,6 +337,7 @@ export default function Lecture(props: {
     })()
 
     onCleanup(() => {
+      clearTimeout(minuteurAttente)
       annule = true
       // Zapper pendant la vérification d'un film l'annule : le serveur rend la
       // place dès que le client s'en va.
@@ -801,9 +806,11 @@ export default function Lecture(props: {
                   animation: 'spin .8s linear infinite',
                 }}
               />
-              <span data-role={conversion() ? 'conversion' : undefined} style={{ 'font-size': '12px', color: ENCRE2 }}>
+              <span data-role={conversion() || (direct() && attenteLongue()) ? 'conversion' : undefined} style={{ 'font-size': '12px', color: ENCRE2 }}>
                 {conversion()
                   ? LIBELLE_CONVERSION[conversion()!]
+                  : direct() && attenteLongue()
+                  ? 'Démarrage de la chaîne (conversion possible)…'
                   : verification()
                   ? 'Vérification du film…'
                   : direct()

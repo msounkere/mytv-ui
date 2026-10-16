@@ -14,7 +14,7 @@
 //   chaine 1008  502 fournisseur_compte_invalide sans date          film iptva:105  idem (HEAD sans corps)
 //   chaine 1009  les deux premiers segments passent, puis le compte « expire » : 502 fournisseur_compte_invalide
 //   (US-32) chaine 1101  415 format_hevc_non_lisible (X-Mytv-Mode: refus)
-//           chaine 1102  X-Mytv-Mode: audio, playlist lente (2,5 s : demarrage d'ffmpeg)
+//           chaine 1102  X-Mytv-Mode: audio, playlist lente (5 s : demarrage d'ffmpeg)
 //           chaine 1103  segments illisibles (fragParsingError) sauf avec ?forcer=audio
 //           chaine 1104  segments illisibles sauf avec ?forcer=video
 //           chaine 1105  segments illisibles quoi qu'on force (abandon apres audio puis video)
@@ -157,7 +157,7 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
           res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store', 'X-Mytv-Mode': mode })
           res.end(playlist(chaine))
         }
-        return chaine === '1102' ? void setTimeout(servir, 2500) : servir()
+        return chaine === '1102' ? void setTimeout(servir, 5000) : servir()
       }
       if ((m = /^\/live\/([A-Za-z0-9_-]+)\/seg\/jeton(\d+)$/.exec(r))) {
         if (m[1] === '1009' && Number(m[2]) >= 2) return refus(res, 'fournisseur_compte_invalide')

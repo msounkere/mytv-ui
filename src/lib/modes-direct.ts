@@ -21,7 +21,9 @@ export const DETAIL_PARSING = 'fragParsingError'
 
 /** Delai tolere pour qu'ffmpeg demarre (playlist, niveau) : bien au-dela des 10 s par defaut. */
 export const DELAI_CONVERSION_MS = 45_000
-export const DELAI_PLAYLIST_DIRECT_MS = 20_000
+export const DELAI_PLAYLIST_DIRECT_MS = DELAI_CONVERSION_MS
+/** Attente de playlist au-dela de laquelle on annonce un demarrage possiblement converti. */
+export const DELAI_ATTENTE_LONGUE_MS = 3_000
 
 export function lireModeDirect(valeur: string | null | undefined): ModeDirect | undefined {
   const v = valeur?.trim().toLowerCase()

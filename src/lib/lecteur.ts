@@ -114,8 +114,11 @@ export async function attacher(
     // Un direct converti attend qu'ffmpeg ait produit son premier segment
     // avant de repondre : le delai par defaut (10 s) le prendrait pour une
     // panne et declencherait un reessai agressif pendant le demarrage.
-    manifestLoadingTimeOut: options.forcer ? DELAI_CONVERSION_MS : DELAI_PLAYLIST_DIRECT_MS,
-    levelLoadingTimeOut: options.forcer ? DELAI_CONVERSION_MS : DELAI_PLAYLIST_DIRECT_MS,
+    // Le mode (audio/video) n'est connu qu'avec la playlist, que le serveur
+    // retient justement pendant ce demarrage : 45 s dans tous les cas (le serveur
+    // borne deja le demarrage de son cote).
+    manifestLoadingTimeOut: DELAI_PLAYLIST_DIRECT_MS,
+    levelLoadingTimeOut: DELAI_PLAYLIST_DIRECT_MS,
     fragLoadingTimeOut: options.forcer ? DELAI_CONVERSION_MS : 20_000,
     fragLoadingMaxRetry: 6,
     fragLoadingRetryDelay: 500,
