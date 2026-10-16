@@ -3,6 +3,9 @@ import { ErreurLecteur, erreurDeStatut } from './errors'
 import { noter, observerVideo, masquerUrl } from './diagnostic'
 import { lectureArretee, lectureOuverte } from './bail'
 import { signalerSiNonAuthentifie } from './session-expiree'
+import {
+  DELAI_CONVERSION_MS, DELAI_PLAYLIST_DIRECT_MS, lireModeDirect, type ModeDirect, type ModeForce,
+} from './modes-direct'
 
 // Direct en HLS, VOD en MP4 natif. Chaque echec nomme sa couche : le lecteur
 // precedent a ete abandonne pour avoir affiche « the error did not identify a
@@ -27,10 +30,18 @@ function hlsNatif(video: HTMLVideoElement): boolean {
   return video.canPlayType('application/vnd.apple.mpegurl') === 'probably'
 }
 
+export interface OptionsAttache {
+  /** Mode annonce par le serveur (`X-Mytv-Mode`) sur la playlist d'un direct. */
+  surMode?: (mode: ModeDirect) => void
+  /** Mode impose par l'interface (`?forcer=`) : le demarrage sera plus long. */
+  forcer?: ModeForce | null
+}
+
 export async function attacher(
   video: HTMLVideoElement,
   source: Source,
   surErreur: (e: ErreurLecteur) => void,
+  options: OptionsAttache = {},
 ): Promise<Attache> {
   // Un fichier va droit au lecteur natif. Pour le HLS on interroge d'abord
   // hls.js : lui seul demultiplexe le direct dans Chrome, Firefox et Edge. Le
@@ -100,6 +111,12 @@ export async function attacher(
     // borne. Quatre reessais muets de hls.js la cachaient puis la doublaient.
     manifestLoadingMaxRetry: 1,
     levelLoadingMaxRetry: 1,
+    // Un direct converti attend qu'ffmpeg ait produit son premier segment
+    // avant de repondre : le delai par defaut (10 s) le prendrait pour une
+    // panne et declencherait un reessai agressif pendant le demarrage.
+    manifestLoadingTimeOut: options.forcer ? DELAI_CONVERSION_MS : DELAI_PLAYLIST_DIRECT_MS,
+    levelLoadingTimeOut: options.forcer ? DELAI_CONVERSION_MS : DELAI_PLAYLIST_DIRECT_MS,
+    fragLoadingTimeOut: options.forcer ? DELAI_CONVERSION_MS : 20_000,
     fragLoadingMaxRetry: 6,
     fragLoadingRetryDelay: 500,
     fragLoadingMaxRetryTimeout: 8000,
@@ -131,6 +148,18 @@ export async function attacher(
       debitKbps: Math.round(hls.bandwidthEstimate / 1000),
     })
   })
+  // Le mode decide par le serveur est dans l'en-tete de la playlist.
+  let modeVu = false
+  const lireMode = (d: { networkDetails?: unknown }) => {
+    if (modeVu) return
+    const mode = lireModeDirect(enteteDe(d.networkDetails, 'X-Mytv-Mode'))
+    if (!mode) return
+    modeVu = true
+    noter('live:mode', { mode, force: options.forcer ?? undefined, chaine: source.kind === 'hls' ? source.chaine : undefined })
+    options.surMode?.(mode)
+  }
+  hls.on(HlsCtor.Events.MANIFEST_LOADED, (_e, d) => lireMode(d))
+  hls.on(HlsCtor.Events.LEVEL_LOADED, (_e, d) => lireMode(d))
   hls.on(HlsCtor.Events.LEVEL_LOADED, (_e, d) => {
     const st = d.stats
     noter('hls:playlist', { duree: Math.round(((st.loading.end - st.loading.start) / 1000) * 100) / 100, segments: d.details.fragments.length })

@@ -18,9 +18,14 @@ import { estBureau, estMobile } from '../lib/gabarit'
 import { ecran, poserEcran, revenirAuLecteur } from '../etat'
 import { attacher, type Attache } from '../lib/lecteur'
 import { planDirect, planVod, urlVod, deplacementParService, BADGE_MODE, type Plan } from '../lib/flux'
-import { lectureDe } from '../lib/source-lecture'
+import { lectureDe, chaineDeLecture } from '../lib/source-lecture'
 import { annulerFinDifferee } from '../lib/bail'
 import { ErreurLecteur } from '../lib/errors'
+import { noter } from '../lib/diagnostic'
+import {
+  AUCUNE_TENTATIVE, BADGE_DIRECT, LIBELLE_CONVERSION, MESSAGE_4K, enConversion, erreurApresConversions, est4K,
+  suiteApresErreur, urlForcee, type EtatTentatives, type ModeDirect, type ModeForce,
+} from '../lib/modes-direct'
 import { noterOuverture, noterPosition, reprisePour, estFavori, basculerFavori } from '../lib/preferences'
 import {
   creerDiffusion, preparerDiffusion, urlPourDiffusion, diffusionResoutLeCodec, diffusionPossible,
@@ -112,6 +117,19 @@ export default function Lecture(props: {
 
   const direct = () => props.entree.type === 'live'
 
+  // --- Modes du direct (US-32) ---------------------------------------------
+  /** Mode annoncé par le serveur (`X-Mytv-Mode`) pour la chaîne ouverte. */
+  const [modeServeur, poserModeServeur] = createSignal<ModeDirect | null>(null)
+  /** Mode imposé par nous (`?forcer=`), après un fragParsingError fatal. */
+  const [forcageAffiche, poserForcageAffiche] = createSignal<ModeForce | null>(null)
+  // Hors réactivité : ce sont des compteurs de garde-fou, lus à l'ouverture du flux.
+  let etatTentatives: EtatTentatives = AUCUNE_TENTATIVE
+  let forcage: ModeForce | null = null
+  const conversion = () => {
+    const m = forcageAffiche() ?? modeServeur()
+    return direct() && enConversion(m) ? (m as ModeForce) : null
+  }
+
   // Le serveur fabrique le MP4 à la volée quand il remuxe : sa durée propre n'a
   // aucun sens, et après un `?t=` ses horodatages repartent de zéro. La durée
   // vient donc de ce que le serveur annonce, et la position affichée est celle
@@ -144,6 +162,36 @@ export default function Lecture(props: {
   function notifier(message: string, ton: NotificationLecteur['ton'] = 'ok') {
     numeroNotification += 1
     poserNotification({ id: numeroNotification, message, ton })
+  }
+
+  /**
+   * Toute erreur fatale passe ici. Un `fragParsingError` en direct déclenche UNE
+   * conversion audio puis UNE conversion vidéo (jamais plus : `suiteApresErreur`
+   * est bornée) ; le reste suit la politique de reprise habituelle.
+   */
+  function traiterErreur(e: ErreurLecteur) {
+    const chaine = direct() ? chaineDeLecture(lectureDe(props.entree)) : undefined
+    if (direct()) {
+      const s = suiteApresErreur(etatTentatives, e)
+      if (s.action === 'forcer') {
+        etatTentatives = s.etat
+        forcage = s.mode
+        noter('live:forcage', { mode: s.mode, tentative: s.tentative, total: s.total, chaine, detail: e.detail })
+        notifier(`Lecture impossible en l’état — essai avec conversion ${s.mode === 'audio' ? 'audio' : 'vidéo'}`, 'limite')
+        panne.relancer()
+        return
+      }
+      if (s.action === 'abandonner') {
+        noter('live:conversion-echec', { mode: forcage ?? undefined, chaine, detail: e.detail, fin: true })
+        panne.signalerErreur(erreurApresConversions(e.detail))
+        return
+      }
+      if (forcage || modeServeur() === 'audio' || modeServeur() === 'video')
+        noter('live:conversion-echec', { mode: forcage ?? modeServeur() ?? undefined, chaine, detail: e.detail })
+      else if (e.detail?.includes('format_hevc_non_lisible'))
+        noter('live:refus-hevc', { chaine, detail: e.detail })
+    }
+    panne.signalerErreur(e)
   }
 
   const pistes = creerPistes(() => video)
@@ -206,6 +254,9 @@ export default function Lecture(props: {
       panne.remettreAZero()
       panne.arreter()
       calques.nouveauContenu(entree.type === 'live')
+      etatTentatives = AUCUNE_TENTATIVE
+      forcage = null
+      if (entree.type === 'live' && est4K(entree.nom)) notifier(MESSAGE_4K, 'limite')
       // Un autre contenu : le point atteint dans le précédent ne vaut plus rien.
       pointAtteint = 0
     }
@@ -215,6 +266,8 @@ export default function Lecture(props: {
     annulerFinDifferee()
 
     poserErreur(null)
+    poserModeServeur(null)
+    poserForcageAffiche(forcage)
     poserChargement(true)
     poserImageDisponible(false)
     poserPositionBrute(0)
@@ -232,7 +285,10 @@ export default function Lecture(props: {
         // vérification en tête (statut, mode) car <video> ne rend ni l'un ni l'autre.
         const lecture = lectureEntree(entree)
         let p: Plan
-        if (entree.type === 'live') p = planDirect(lecture)
+        if (entree.type === 'live') {
+          p = planDirect(lecture)
+          p = { ...p, url: urlForcee(p.url, forcage) }
+        }
         else {
           poserVerification(true)
           try {
@@ -251,7 +307,10 @@ export default function Lecture(props: {
           p.genre === 'live'
             ? ({ kind: 'hls', url: p.url, chaine: p.chaine } as const)
             : ({ kind: 'fichier', url: p.url } as const)
-        attache = await attacher(video, source, panne.signalerErreur)
+        attache = await attacher(video, source, traiterErreur, {
+          forcer: forcage,
+          surMode: (m) => poserModeServeur(m),
+        })
         if (annule) return attache.detacher()
         if (p.genre === 'vod' && !p.viaService && pointAtteint > 0) {
           const reprise = pointAtteint
@@ -269,7 +328,7 @@ export default function Lecture(props: {
         })
       } catch (e) {
         poserVerification(false)
-        if (!annule) panne.signalerErreur(e instanceof ErreurLecteur ? e : new ErreurLecteur('relais', String(e), 'Réessayer.'))
+        if (!annule) traiterErreur(e instanceof ErreurLecteur ? e : new ErreurLecteur('relais', String(e), 'Réessayer.'))
       }
     })()
 
@@ -565,6 +624,8 @@ export default function Lecture(props: {
       conteneur.toUpperCase(),
       hauteurImage() ? `${hauteurImage()}p` : null,
       mode ? BADGE_MODE[mode] : null,
+      direct() && modeServeur() && modeServeur() !== 'direct' ? BADGE_DIRECT[modeServeur()!] : null,
+      direct() && forcageAffiche() ? `forcé ${forcageAffiche()}` : null,
     ]
       .filter(Boolean)
       .join(' · ')
@@ -580,6 +641,9 @@ export default function Lecture(props: {
       libelle: 'Réessayer',
       principale: actions.length === 0,
       surAction: () => {
+        // Geste de l'utilisateur : le compte des conversions repart de zéro.
+        etatTentatives = AUCUNE_TENTATIVE
+        forcage = null
         panne.remettreAZero()
         poserErreur(null)
         panne.relancer()
@@ -737,8 +801,10 @@ export default function Lecture(props: {
                   animation: 'spin .8s linear infinite',
                 }}
               />
-              <span style={{ 'font-size': '12px', color: ENCRE2 }}>
-                {verification()
+              <span data-role={conversion() ? 'conversion' : undefined} style={{ 'font-size': '12px', color: ENCRE2 }}>
+                {conversion()
+                  ? LIBELLE_CONVERSION[conversion()!]
+                  : verification()
                   ? 'Vérification du film…'
                   : direct()
                     ? 'Ouverture du flux HLS…'
