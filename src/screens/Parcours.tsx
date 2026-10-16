@@ -35,13 +35,22 @@ import { VideChaines } from './parcours/Vide'
 // mobile, la colonne devient un PANNEAU COULISSANT ouvert par le bouton de la
 // barre d'outils, et la liste n'a plus qu'une colonne.
 
+const CLE_MASQUER_4K = 'mytv.direct.masquer4k'
+function lireMasquer4K(): boolean {
+  try { return localStorage.getItem(CLE_MASQUER_4K) === '1' } catch { return false }
+}
+function ecrireMasquer4K(v: boolean): void {
+  try { localStorage.setItem(CLE_MASQUER_4K, v ? '1' : '0') } catch { /* confort seulement */ }
+}
+
 export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => void }) {
   const [filtre, poserFiltre] = createSignal('')
   const [mode, poserMode] = createSignal<ModeDirect>('liste')
+  const [masquer4K, poserMasquer4K] = createSignal(lireMasquer4K())
   const [maintenant, poserMaintenant] = createSignal(Date.now())
 
   const colonne = creerColonneCategories()
-  const chaines = creerListeChaines({ categorieActive: colonne.categorieActive, filtre })
+  const chaines = creerListeChaines({ categorieActive: colonne.categorieActive, filtre, masquer4K })
 
   // L'horloge ne bat que sur Direct : le surlignage « en cours » et les jauges
   // n'existent nulle part ailleurs, et un minuteur qui tourne sous Films ne
@@ -194,6 +203,12 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
               surMasquer={() => {
                 const f = colonne.ficheActive()
                 if (f) void colonne.basculerMasquage(f)
+              }}
+              masquer4K={masquer4K()}
+              surMasquer4K={() => {
+                const v = !masquer4K()
+                poserMasquer4K(v)
+                ecrireMasquer4K(v)
               }}
               mode={mode()}
               surMode={choisirMode}

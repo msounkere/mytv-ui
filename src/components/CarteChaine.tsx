@@ -1,4 +1,5 @@
 import { Show, createSignal } from 'solid-js'
+import Badge4K from './Badge4K'
 import { encreLogo, monogramme, tailleMonogramme } from './couleurs'
 import type { EntreeCatalogue } from '../lib/db'
 
@@ -48,6 +49,7 @@ export default function CarteChaine(props: {
       <div style={{ 'min-width': 0, flex: 1, display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
         <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'min-width': 0 }}>
           <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.entree.nom}</span>
+          <Badge4K nom={props.entree.nom} />
           <Show when={props.entree.pays}>
             <span
               style={{

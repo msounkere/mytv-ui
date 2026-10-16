@@ -26,6 +26,9 @@ export default function BarreOutilsDirect(props: {
   surMasquer: () => void
   mode: string
   surMode: (cle: string) => void
+  /** Option « masquer les chaînes 4K » (absente : pas de bouton). */
+  masquer4K?: boolean
+  surMasquer4K?: () => void
   /** Mobile : ouvre le panneau des catégories. */
   surCategories?: () => void
 }): JSX.Element {
@@ -117,6 +120,24 @@ export default function BarreOutilsDirect(props: {
           }}
         >
           <Icone nom={props.masquee ? 'star' : 'filter_alt_off'} taille={18} />
+        </button>
+      </Show>
+
+      <Show when={props.surMasquer4K}>
+        <button
+          data-role="filtre-4k"
+          aria-pressed={!!props.masquer4K}
+          aria-label={props.masquer4K ? 'Réafficher les chaînes 4K' : 'Masquer les chaînes 4K'}
+          title={props.masquer4K ? 'Réafficher les chaînes 4K' : 'Masquer les chaînes 4K (souvent illisibles en navigateur)'}
+          onClick={() => props.surMasquer4K?.()}
+          style={{
+            width: estMobile() ? '44px' : 'auto', height: estMobile() ? '44px' : '32px', 'flex': 'none',
+            padding: '0 8px', 'border-radius': 'var(--r-btn-sm)', 'font-size': '12px',
+            border: '1px solid var(--line2)', color: props.masquer4K ? 'var(--lim)' : 'var(--fg2)',
+            background: props.masquer4K ? 'var(--lim-bg)' : 'transparent',
+          }}
+        >
+          {props.masquer4K ? '4K masquée' : '4K'}
         </button>
       </Show>
 
