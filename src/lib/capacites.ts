@@ -130,12 +130,27 @@ export function initialiserCapacites(env?: EnvCapacites): Promise<Capacites> {
 
 export const capacitesPretes = (): Promise<Capacites> => initialiserCapacites()
 
-/** L'HEVC annonce a echoue dans hls.js : on ne l'annonce plus (memorise). */
-export function hevcDefaillant(): boolean {
-  return lire(CLE_HEVC_DEFAILLANT) === '1'
+/** Duree pendant laquelle un echec HEVC retire la capacite (une panne passagere ne l'enleve pas a vie). */
+export const DUREE_HEVC_DEFAILLANT_MS = 24 * 3_600_000
+
+/** Pur : le marquage (horodatage en ms) est-il encore valable ? */
+export function marquageValide(brut: string | null, maintenantMs: number): boolean {
+  if (!brut) return false
+  const t = Number(brut)
+  return Number.isFinite(t) && t > 0 && maintenantMs - t >= 0 && maintenantMs - t < DUREE_HEVC_DEFAILLANT_MS
 }
-export function marquerHevcDefaillant(): void {
-  ecrire(CLE_HEVC_DEFAILLANT, '1')
+
+/** Le serveur dit-il que la source est HEVC ? (`X-Mytv-Codec` de la playlist) */
+export function codecEstHevc(codec: string | null | undefined): boolean {
+  return /hevc|h\.?265/i.test(codec ?? '')
+}
+
+export function hevcDefaillant(maintenantMs = Date.now()): boolean {
+  return marquageValide(lire(CLE_HEVC_DEFAILLANT), maintenantMs)
+}
+/** A n'appeler que si la source est HEVC : memorise 24 h avec horodatage. */
+export function marquerHevcDefaillant(maintenantMs = Date.now()): void {
+  ecrire(CLE_HEVC_DEFAILLANT, String(maintenantMs))
 }
 
 /** Capacites a annoncer : detectees, moins l'HEVC si on sait qu'il ne passe pas ici. */

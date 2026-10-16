@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { detecter, urlAvecCapacites, nomNavigateur, analyserMemorisation, formaterCapacites } from '../../src/lib/capacites'
+import { marquageValide, codecEstHevc, DUREE_HEVC_DEFAILLANT_MS, detecter, urlAvecCapacites, nomNavigateur, analyserMemorisation, formaterCapacites } from '../../src/lib/capacites'
 import { AUCUNE_TENTATIVE, suiteApresErreur, type EtatTentatives } from '../../src/lib/modes-direct'
 
 const ms = (types: string[]) => ({ isTypeSupported: (t: string) => types.some((x) => t.includes(x)) })
@@ -78,4 +78,24 @@ test('repli : bufferAppendError declenche aussi le repli, une fois', () => {
 test('sans hevc annonce : pas de repli sans-hevc (comportement US-32 CA2 inchange)', () => {
   assert.equal(suiteApresErreur(AUCUNE_TENTATIVE, parsing, { hevcAnnonce: false }).action, 'forcer')
   assert.equal(suiteApresErreur(AUCUNE_TENTATIVE, { couche: 'reseau', detail: 'fragParsingError' }, { hevcAnnonce: true }).action, 'ignorer')
+})
+
+test('marquage hevc defaillant : expire apres 24 h, ignore le bruit', () => {
+  const t0 = 1_000_000_000_000
+  assert.ok(marquageValide(String(t0), t0 + 1000))
+  assert.ok(marquageValide(String(t0), t0 + DUREE_HEVC_DEFAILLANT_MS - 1))
+  assert.ok(!marquageValide(String(t0), t0 + DUREE_HEVC_DEFAILLANT_MS))
+  assert.ok(!marquageValide('1', t0))
+  assert.ok(!marquageValide(null, t0))
+  assert.ok(!marquageValide('abc', t0))
+  assert.ok(!marquageValide(String(t0 + 5000), t0), 'horodatage futur refuse')
+})
+
+test('on ne memorise que pour une source HEVC (X-Mytv-Codec)', () => {
+  assert.ok(codecEstHevc('hevc'))
+  assert.ok(codecEstHevc('HEVC'))
+  assert.ok(codecEstHevc('h265'))
+  assert.ok(!codecEstHevc('h264'))
+  assert.ok(!codecEstHevc(undefined))
+  assert.ok(!codecEstHevc(''))
 })

@@ -33,7 +33,7 @@ function hlsNatif(video: HTMLVideoElement): boolean {
 
 export interface OptionsAttache {
   /** Mode annonce par le serveur (`X-Mytv-Mode`) sur la playlist d'un direct. */
-  surMode?: (mode: ModeDirect) => void
+  surMode?: (mode: ModeDirect, codec?: string) => void
   /** Mode impose par l'interface (`?forcer=`) : le demarrage sera plus long. */
   forcer?: ModeForce | null
   /** Capacites annoncees sur CHAQUE requete (en-tete ; la playlist les porte aussi en `?cap=`). */
@@ -166,8 +166,8 @@ export async function attacher(
     const mode = lireModeDirect(enteteDe(d.networkDetails, 'X-Mytv-Mode'))
     if (!mode) return
     modeVu = true
-    noter('live:mode', { mode, force: options.forcer ?? undefined, chaine: source.kind === 'hls' ? source.chaine : undefined })
-    options.surMode?.(mode)
+    noter('live:mode', { mode, codec: enteteDe(d.networkDetails, 'X-Mytv-Codec') ?? undefined, force: options.forcer ?? undefined, chaine: source.kind === 'hls' ? source.chaine : undefined })
+    options.surMode?.(mode, enteteDe(d.networkDetails, 'X-Mytv-Codec') ?? undefined)
   }
   hls.on(HlsCtor.Events.MANIFEST_LOADED, (_e, d) => lireMode(d))
   hls.on(HlsCtor.Events.LEVEL_LOADED, (_e, d) => lireMode(d))

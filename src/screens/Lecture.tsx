@@ -22,7 +22,7 @@ import { lectureDe, chaineDeLecture } from '../lib/source-lecture'
 import { annulerFinDifferee } from '../lib/bail'
 import { ErreurLecteur } from '../lib/errors'
 import { noter } from '../lib/diagnostic'
-import { capacitesAnnoncees, capacitesPretes, marquerHevcDefaillant, urlAvecCapacites } from '../lib/capacites'
+import { codecEstHevc, capacitesAnnoncees, capacitesPretes, marquerHevcDefaillant, urlAvecCapacites } from '../lib/capacites'
 import {
   AUCUNE_TENTATIVE, BADGE_DIRECT, DELAI_ATTENTE_LONGUE_MS, LIBELLE_CONVERSION, MESSAGE_4K, enConversion, erreurApresConversions, est4K,
   suiteApresErreur, urlForcee, type EtatTentatives, type ModeDirect, type ModeForce,
@@ -126,6 +126,8 @@ export default function Lecture(props: {
   // Hors réactivité : ce sont des compteurs de garde-fou, lus à l'ouverture du flux.
   let etatTentatives: EtatTentatives = AUCUNE_TENTATIVE
   let forcage: ModeForce | null = null
+  /** `X-Mytv-Codec` de la playlist ouverte : seul un flux HEVC justifie de mémoriser l'échec. */
+  let codecServeur: string | undefined
   /** Playlist d'un direct pas encore arrivée après ~3 s : ffmpeg démarre peut-être. */
   const [attenteLongue, poserAttenteLongue] = createSignal(false)
   const conversion = () => {
@@ -178,7 +180,8 @@ export default function Lecture(props: {
       const s = suiteApresErreur(etatTentatives, e, { hevcAnnonce: capacitesAnnoncees(etatTentatives.sansHevc).includes('hevc') })
       if (s.action === 'sans-hevc') {
         etatTentatives = s.etat
-        marquerHevcDefaillant()
+        // Repli pour CETTE lecture dans tous les cas ; mémorisé (24 h) seulement si la source est HEVC.
+        if (codecEstHevc(codecServeur)) marquerHevcDefaillant()
         noter('live:sans-hevc', { chaine, detail: e.detail })
         notifier('Lecture impossible en HEVC — nouvel essai sans cette capacité', 'limite')
         panne.relancer()
@@ -277,6 +280,7 @@ export default function Lecture(props: {
     annulerFinDifferee()
 
     poserErreur(null)
+    codecServeur = undefined
     poserModeServeur(null)
     poserForcageAffiche(forcage)
     poserAttenteLongue(false)
@@ -326,7 +330,7 @@ export default function Lecture(props: {
         attache = await attacher(video, source, traiterErreur, {
           forcer: forcage,
           capacites: cap,
-          surMode: (m) => poserModeServeur(m),
+          surMode: (m, codec) => { poserModeServeur(m); codecServeur = codec },
         })
         if (annule) return attache.detacher()
         if (p.genre === 'vod' && !p.viaService && pointAtteint > 0) {
