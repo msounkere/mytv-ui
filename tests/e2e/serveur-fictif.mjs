@@ -126,7 +126,7 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
   const serveur = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const chemin = decodeURIComponent(url.pathname)
-    journal.push({ methode: req.method, chemin, requete: url.search, t: Date.now() })
+    journal.push({ methode: req.method, chemin, requete: url.search, t: Date.now(), cap: req.headers['x-mytv-capacites'] })
 
     if (chemin === '/__journal') return json(res, 200, journal)
     if (chemin === '/__evenements') return json(res, 200, evenements)

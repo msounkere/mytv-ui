@@ -65,6 +65,11 @@ export function erreurApresConversions(detail?: string): ErreurLecteur {
   )
 }
 
+/** Echec de demultiplexage / d'ajout au tampon : l'HEVC annonce ne passe pas dans hls.js. */
+export function estErreurDemux(e: { couche: string; detail?: string }): boolean {
+  return e.couche === 'codec' && !!e.detail && (e.detail.includes(DETAIL_PARSING) || e.detail.includes('bufferAppendError') || e.detail.includes('bufferAddCodecError'))
+}
+
 export function estErreurParsing(e: { couche: string; detail?: string }): boolean {
   return e.couche === 'codec' && !!e.detail && e.detail.includes(DETAIL_PARSING)
 }
@@ -74,12 +79,15 @@ export function estErreurParsing(e: { couche: string; detail?: string }): boolea
 export interface EtatTentatives {
   /** Modes deja imposes pour ce contenu. */
   readonly faits: readonly ModeForce[]
+  /** La tentative « sans la capacite hevc » a-t-elle eu lieu ? */
+  readonly sansHevc?: boolean
 }
 
 export const AUCUNE_TENTATIVE: EtatTentatives = { faits: [] }
 
 export type Suite =
   | { action: 'forcer'; mode: ModeForce; etat: EtatTentatives; tentative: number; total: number }
+  | { action: 'sans-hevc'; etat: EtatTentatives }
   | { action: 'abandonner'; etat: EtatTentatives }
   | { action: 'ignorer'; etat: EtatTentatives }
 
@@ -88,12 +96,20 @@ export type Suite =
  * toute autre erreur est `ignorer` (la politique de reprise habituelle decide).
  * Le prochain mode est le premier de FORCAGES pas encore fait ; plus aucun, abandon.
  */
-export function suiteApresErreur(etat: EtatTentatives, e: { couche: string; detail?: string }): Suite {
+export function suiteApresErreur(
+  etat: EtatTentatives,
+  e: { couche: string; detail?: string },
+  opts: { hevcAnnonce?: boolean } = {},
+): Suite {
+  // Capacite hevc annoncee mais hls.js n'arrive pas a lire : UNE tentative sans
+  // elle (le serveur convertit ou refuse proprement), avant les forcages.
+  if (opts.hevcAnnonce && !etat.sansHevc && estErreurDemux(e))
+    return { action: 'sans-hevc', etat: { ...etat, sansHevc: true } }
   if (!estErreurParsing(e)) return { action: 'ignorer', etat }
   const prochain = FORCAGES.find((m) => !etat.faits.includes(m))
   if (!prochain) return { action: 'abandonner', etat }
   const faits = [...etat.faits, prochain]
-  return { action: 'forcer', mode: prochain, etat: { faits }, tentative: faits.length, total: FORCAGES.length }
+  return { action: 'forcer', mode: prochain, etat: { ...etat, faits }, tentative: faits.length, total: FORCAGES.length }
 }
 
 /** Adresse de la playlist avec le mode impose ; l'adresse d'origine reste intacte sans mode. */

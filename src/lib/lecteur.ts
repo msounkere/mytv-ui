@@ -3,6 +3,7 @@ import { ErreurLecteur, erreurDeStatut } from './errors'
 import { noter, observerVideo, masquerUrl } from './diagnostic'
 import { lectureArretee, lectureOuverte } from './bail'
 import { signalerSiNonAuthentifie } from './session-expiree'
+import { ENTETE_CAPACITES, formaterCapacites, type Capacites } from './capacites'
 import {
   DELAI_CONVERSION_MS, DELAI_PLAYLIST_DIRECT_MS, lireModeDirect, type ModeDirect, type ModeForce,
 } from './modes-direct'
@@ -35,6 +36,8 @@ export interface OptionsAttache {
   surMode?: (mode: ModeDirect) => void
   /** Mode impose par l'interface (`?forcer=`) : le demarrage sera plus long. */
   forcer?: ModeForce | null
+  /** Capacites annoncees sur CHAQUE requete (en-tete ; la playlist les porte aussi en `?cap=`). */
+  capacites?: Capacites
 }
 
 export async function attacher(
@@ -103,6 +106,11 @@ export async function attacher(
     // coupure ; elle n'a aucun interet sur un relais qui va rechercher chaque
     // segment chez le fournisseur.
     lowLatencyMode: false,
+    // Les segments gardent des adresses stables (pas de requete ajoutee) : les
+    // capacites voyagent donc par en-tete, meme origine.
+    xhrSetup: (xhr: XMLHttpRequest) => {
+      if (options.capacites) xhr.setRequestHeader(ENTETE_CAPACITES, formaterCapacites(options.capacites))
+    },
     // Memoire bornee sur un direct laisse ouvert des heures.
     backBufferLength: 30,
     // Reessais patients : une reprise ratee coute une reconnexion complete.

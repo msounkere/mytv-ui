@@ -11,6 +11,8 @@ import Portail from './Portail'
 // Importe pour son effet : la reprise de l'etat personnel d'une machine a
 // l'autre doit demarrer meme si l'ecran ouvert ne lit ni favori ni historique.
 import './lib/synchro'
+import { initialiserCapacites } from './lib/capacites'
+void initialiserCapacites()
 
 // Le client vit dans `lib/requetes.ts` avec les clefs, les durees de
 // fraicheur et les invalidations : l invalidation part de modules sans

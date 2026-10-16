@@ -22,6 +22,7 @@ import { lectureDe, chaineDeLecture } from '../lib/source-lecture'
 import { annulerFinDifferee } from '../lib/bail'
 import { ErreurLecteur } from '../lib/errors'
 import { noter } from '../lib/diagnostic'
+import { capacitesAnnoncees, capacitesPretes, marquerHevcDefaillant, urlAvecCapacites } from '../lib/capacites'
 import {
   AUCUNE_TENTATIVE, BADGE_DIRECT, DELAI_ATTENTE_LONGUE_MS, LIBELLE_CONVERSION, MESSAGE_4K, enConversion, erreurApresConversions, est4K,
   suiteApresErreur, urlForcee, type EtatTentatives, type ModeDirect, type ModeForce,
@@ -174,7 +175,15 @@ export default function Lecture(props: {
   function traiterErreur(e: ErreurLecteur) {
     const chaine = direct() ? chaineDeLecture(lectureDe(props.entree)) : undefined
     if (direct()) {
-      const s = suiteApresErreur(etatTentatives, e)
+      const s = suiteApresErreur(etatTentatives, e, { hevcAnnonce: capacitesAnnoncees(etatTentatives.sansHevc).includes('hevc') })
+      if (s.action === 'sans-hevc') {
+        etatTentatives = s.etat
+        marquerHevcDefaillant()
+        noter('live:sans-hevc', { chaine, detail: e.detail })
+        notifier('Lecture impossible en HEVC — nouvel essai sans cette capacité', 'limite')
+        panne.relancer()
+        return
+      }
       if (s.action === 'forcer') {
         etatTentatives = s.etat
         forcage = s.mode
@@ -287,16 +296,19 @@ export default function Lecture(props: {
       try {
         // Direct : aucune requête préalable, hls.js ouvre la playlist. Film : une
         // vérification en tête (statut, mode) car <video> ne rend ni l'un ni l'autre.
+        await capacitesPretes()
+        if (annule) return
+        const cap = capacitesAnnoncees(etatTentatives.sansHevc)
         const lecture = lectureEntree(entree)
         let p: Plan
         if (entree.type === 'live') {
           p = planDirect(lecture)
-          p = { ...p, url: urlForcee(p.url, forcage) }
+          p = { ...p, url: urlAvecCapacites(urlForcee(p.url, forcage), cap) }
         }
         else {
           poserVerification(true)
           try {
-            p = await planVod({ lecture, decalage: pointAtteint, signal: abandon.signal })
+            p = await planVod({ lecture, capacites: cap, decalage: pointAtteint, signal: abandon.signal })
           } finally {
             poserVerification(false)
           }
@@ -313,6 +325,7 @@ export default function Lecture(props: {
             : ({ kind: 'fichier', url: p.url } as const)
         attache = await attacher(video, source, traiterErreur, {
           forcer: forcage,
+          capacites: cap,
           surMode: (m) => poserModeServeur(m),
         })
         if (annule) return attache.detacher()

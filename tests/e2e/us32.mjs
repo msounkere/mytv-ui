@@ -35,6 +35,8 @@ try {
   v.ok(forcees(1101, 'audio').length === 0, 'aucun forcage sur un refus')
   v.ok(await attendreEvt('live:refus-hevc'), 'telemetrie : live:refus-hevc')
 
+  v.ok(await attendreEvt('navigateur:capacites', (e) => typeof e.navigateur === 'string' && typeof e.hevc === 'boolean'), 'telemetrie : navigateur + capacites')
+
   // --- 2. Mode audio : indicateur et delai tolere --------------------------------------
   console.log('2. mode audio (playlist lente)')
   await reinit()
@@ -78,6 +80,18 @@ try {
   v.ok(playlists(1105).length === n, `plus aucune requete apres abandon (${n} playlists)`)
   v.ok(await attendreEvt('live:conversion-echec', (e) => e.fin === true), 'telemetrie : live:conversion-echec')
   v.ok(evenements().every((e) => typeof e.type === 'string' && e.type.length <= 40), 'evenements conformes (type <= 40)')
+
+  // --- 6. Capacites annoncees -------------------------------------------------------------------
+  console.log('6. capacites du navigateur annoncees')
+  await reinit()
+  await ouvrir(chaine(1001))
+  v.ok(await jusqua(() => banc.api((r) => r.chemin.includes('/live/1001/seg/')).length >= 1, 15_000), 'direct ouvert')
+  v.ok(playlists(1001).every((r) => /[?&]cap=[a-z0-9,]*(&|$)/.test(r.requete)), `la playlist porte ?cap= (${playlists(1001)[0]?.requete})`)
+  const segs = banc.api((r) => r.chemin.includes('/live/1001/seg/'))
+  v.ok(segs.every((r) => r.requete === '' && r.cap !== undefined), 'segments : adresse intacte, capacites en en-tete X-Mytv-Capacites')
+  await reinit()
+  await ouvrir({ cle: 'vod:100', type: 'vod', id: 100, nom: 'Film 100', recherche: 'film 100', categorie: 'v1', extension: 'mkv', idServeur: 'iptva:100', lecture: '/api/v1/vod/iptva:100' })
+  v.ok(await jusqua(() => banc.api((r) => r.chemin === '/api/v1/vod/iptva:100' && /cap=/.test(r.requete)).length >= 2, 10_000), 'film : HEAD et GET portent ?cap=')
 
   // --- Hygiene ------------------------------------------------------------------------------------
   v.ok(banc.externes.length === 0, `aucune requete hors 127.0.0.1 (${banc.externes.length})`)
