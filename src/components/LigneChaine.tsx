@@ -2,6 +2,7 @@ import { estMobile, estTablette, gabarit } from '../lib/gabarit'
 import { Show } from 'solid-js'
 import PlaqueChaine, { avancement, plageHoraire, type ProgrammeCourant } from './PlaqueChaine'
 import EtiquettePays from './EtiquettePays'
+import Badge4K from './Badge4K'
 import type { EntreeCatalogue } from '../lib/db'
 
 // Ligne de chaîne du mode Liste de Direct. Le dossier de conception la veut
@@ -69,7 +70,10 @@ export default function LigneChaine(props: LigneChaineProps) {
           // Mobile : nom au-dessus, programme dessous, dans la seule colonne
           // restante — c'est le programme qui décide de zapper.
           <span style={{ display: 'flex', 'flex-direction': 'column', gap: '3px', 'min-width': '0' }}>
-            <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.entree.nom}</span>
+            <span style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'min-width': '0' }}>
+              <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.entree.nom}</span>
+              <Badge4K nom={props.entree.nom} />
+            </span>
             <span class="tronque" style={{ 'font-size': '12px', 'line-height': '16px', color: 'var(--fg3)' }}>
               {props.programme?.titre ?? 'Aucun programme disponible'}
             </span>
@@ -78,6 +82,7 @@ export default function LigneChaine(props: LigneChaineProps) {
       >
       <span style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'min-width': '0' }}>
         <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.entree.nom}</span>
+        <Badge4K nom={props.entree.nom} />
         <EtiquettePays pays={props.entree.pays} />
       </span>
 

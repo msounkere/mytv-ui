@@ -110,7 +110,7 @@ try {
   const avant = banc.api((r) => r.chemin === '/api/v1/vod/iptva:101').length
   await page.locator('[tabindex="-1"]').first().focus()
   await page.keyboard.press('ArrowRight')
-  const demande = () => banc.api((r) => r.chemin === '/api/v1/vod/iptva:101' && r.methode === 'GET' && /^\?t=/.test(r.requete))
+  const demande = () => banc.api((r) => r.chemin === '/api/v1/vod/iptva:101' && r.methode === 'GET' && /[?&]t=/.test(r.requete))
   v.ok(await jusqua(() => demande().length >= 1, 8000), 'avancer de 10 s : GET /api/v1/vod/iptva:101?t=<secondes> (deplacement exact par le service)')
   const t = Number(new URLSearchParams(demande()[0]?.requete ?? '').get('t'))
   v.ok(t >= 10 && t < 10.6, `une seule touche = un seul pas de 10 s (?t=${t})`)

@@ -3,6 +3,7 @@ import type { ProgrammeCourant } from '../../components/PlaqueChaine'
 import { entreesDeCategorie } from '../../lib/catalogue'
 import { programmesEnCours } from '../../lib/chaines-guide'
 import { FRAICHEUR, cles, requeteClefee } from '../../lib/requetes'
+import { est4K } from '../../lib/modes-direct'
 import { normaliser, type EntreeCatalogue } from '../../lib/db'
 
 // Les chaînes d'une catégorie et ce qui y passe en ce moment : deux lectures
@@ -21,6 +22,8 @@ const PLAFOND_EPG = 400
 export function creerListeChaines(opts: {
   categorieActive: () => string | null
   filtre: () => string
+  /** Option du Direct : cacher les chaines dont le nom porte « 4K ». */
+  masquer4K?: () => boolean
 }) {
   const [chaines] = requeteClefee(
     (id: string) => cles.categorie('live', id),
@@ -53,7 +56,8 @@ export function creerListeChaines(opts: {
 
   const filtrees = createMemo(() => {
     const f = normaliser(opts.filtre().trim())
-    const liste = chaines() ?? []
+    let liste = chaines() ?? []
+    if (opts.masquer4K?.()) liste = liste.filter((e) => !est4K(e.nom))
     return f ? liste.filter((e) => e.recherche.includes(f)) : liste
   })
 

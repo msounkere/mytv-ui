@@ -1,5 +1,6 @@
 import { ErreurLecteur, erreurDeStatut } from './errors'
 import { signalerSiNonAuthentifie } from './session-expiree'
+import { urlAvecCapacites, type Capacites } from './capacites'
 import { chaineDeLecture } from './source-lecture'
 
 // Ce module repond a une seule question : « quelle URL donner au lecteur, et
@@ -104,6 +105,8 @@ export interface OptionsPlan {
   lecture: string
   /** Point de reprise en secondes, pour un film remuxe. */
   decalage?: number
+  /** Capacites du navigateur, annoncees par `?cap=`. */
+  capacites?: Capacites
   signal?: AbortSignal
   /** Injectable pour les tests. */
   fetchImpl?: typeof fetch
@@ -130,7 +133,9 @@ export function planDirect(lecture: string): Plan {
  * un : la strategie de deplacement en depend.
  */
 export async function planVod(opts: OptionsPlan): Promise<Plan> {
-  const { lecture, decalage = 0, signal, fetchImpl = fetch } = opts
+  const { lecture: lectureBrute, capacites, decalage = 0, signal, fetchImpl = fetch } = opts
+  // Le serveur ne convertit que ce que le navigateur ne lit pas : on lui dit ce qu'il lit.
+  const lecture = capacites ? urlAvecCapacites(lectureBrute, capacites) : lectureBrute
   let r: Response
   try {
     r = await fetchImpl(lecture, { method: 'HEAD', credentials: 'same-origin', signal })
