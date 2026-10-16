@@ -13,6 +13,11 @@
 //   chaine 1007  502 fournisseur_adresse_refusee
 //   chaine 1008  502 fournisseur_compte_invalide sans date          film iptva:105  idem (HEAD sans corps)
 //   chaine 1009  les deux premiers segments passent, puis le compte « expire » : 502 fournisseur_compte_invalide
+//   (US-32) chaine 1101  415 format_hevc_non_lisible (X-Mytv-Mode: refus)
+//           chaine 1102  X-Mytv-Mode: audio, playlist lente (2,5 s : demarrage d'ffmpeg)
+//           chaine 1103  segments illisibles (fragParsingError) sauf avec ?forcer=audio
+//           chaine 1104  segments illisibles sauf avec ?forcer=video
+//           chaine 1105  segments illisibles quoi qu'on force (abandon apres audio puis video)
 //   (US-25 : comme le vrai serveur, le code est aussi dans l'en-tete X-Mytv-Erreur)
 import { createServer } from 'node:http'
 import { readFileSync, existsSync, statSync } from 'node:fs'
@@ -51,6 +56,15 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
     const message = code === 'fournisseur_compte_invalide' ? 'abonnement expire ou refuse par le fournisseur' : 'adresse refusee'
     const date = code === 'fournisseur_compte_invalide' && avecDate ? EXPIRATION : undefined
     json(res, 502, { code, message, ...(date ? { expiration: date } : {}) }, { 'X-Mytv-Erreur': code, ...(date ? { 'X-Mytv-Expiration': date } : {}) })
+  }
+
+  /** Mode qu'on sert a un segment : celui de la derniere playlist demandee pour la chaine. */
+  const modeChaine = new Map()
+  const lisible = (chaine) => {
+    const m = modeChaine.get(chaine)
+    if (chaine === '1103') return m === 'audio'
+    if (chaine === '1104') return m === 'video'
+    return chaine !== '1105'
   }
 
   function playlist(chaine) {
@@ -131,15 +145,24 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
         if (chaine === '1006') return refus(res, 'fournisseur_compte_invalide')
         if (chaine === '1007') return refus(res, 'fournisseur_adresse_refusee')
         if (chaine === '1008') return refus(res, 'fournisseur_compte_invalide', false)
+        const forcer = url.searchParams.get('forcer') ?? undefined
+        if (chaine === '1101')
+          return erreur(res, 415, 'format_hevc_non_lisible', 'HEVC 3840x2160', { 'X-Mytv-Erreur': 'format_hevc_non_lisible', 'X-Mytv-Mode': 'refus' })
+        if (/^110[345]$/.test(chaine)) modeChaine.set(chaine, forcer)
         if (chaine === '1003') return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
         if (chaine === '1002' && fois('live1002') <= 2) return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
         if (chaine === '1005' && fois('live1005') === 1) return erreur(res, 502, 'amont', 'amont indisponible')
-        res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' })
-        return res.end(playlist(chaine))
+        const mode = forcer ?? (chaine === '1102' ? 'audio' : 'direct')
+        const servir = () => {
+          res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store', 'X-Mytv-Mode': mode })
+          res.end(playlist(chaine))
+        }
+        return chaine === '1102' ? void setTimeout(servir, 2500) : servir()
       }
       if ((m = /^\/live\/([A-Za-z0-9_-]+)\/seg\/jeton(\d+)$/.exec(r))) {
         if (m[1] === '1009' && Number(m[2]) >= 2) return refus(res, 'fournisseur_compte_invalide')
         res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' })
+        if (!lisible(m[1])) return res.end(Buffer.alloc(5000, 0x41))
         return res.end(segmentTs(Number(m[2]), DUREE_SEGMENT))
       }
       if ((m = /^\/live\/([A-Za-z0-9_-]+)\/fin$/.exec(r)) && req.method === 'POST') {
