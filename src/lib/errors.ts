@@ -129,6 +129,14 @@ export function erreurDeStatut(statut: number, infos: InfosStatut = {}): ErreurL
       return new ErreurLecteur(
         'donnees', 'Ce contenu n’existe plus au catalogue.', 'Actualiser le catalogue, ou choisir un autre contenu.', detail,
       )
+    case statut === 415 && infos.code === 'format_hevc_non_lisible':
+      // Une chaine (ou un film) en HEVC que le serveur refuse de convertir (4K).
+      return new ErreurLecteur(
+        'codec',
+        'Chaîne en 4K/HEVC : non lisible, essayez une autre chaîne.',
+        'Choisir une autre chaîne (ou la diffuser vers un téléviseur).',
+        detail,
+      )
     case statut === 415:
       // Seule la VOD peut repondre 415 : un film dont la video (HEVC en pratique)
       // n'est lisible dans aucun navigateur, et que le serveur ne reencode pas.
