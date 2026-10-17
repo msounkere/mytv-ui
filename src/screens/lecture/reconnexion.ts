@@ -1,5 +1,6 @@
 import { createSignal, onCleanup } from 'solid-js'
-import { ErreurLecteur } from '../../lib/errors'
+import { ErreurLecteur, estOccupation } from '../../lib/errors'
+import { REPOS, surErreur, tic, PLAFOND_ATTENTE_OCCUPATION, type EtatOccupation } from '../../lib/machine-occupation'
 import { noter } from '../../lib/diagnostic'
 import { decider, ESSAIS_MAX, type MotifReprise } from '../../lib/politique-reprise'
 
@@ -18,7 +19,11 @@ export function creerReprisePanne(opts: {
   poserErreur: (e: ErreurLecteur | null) => void
 }) {
   const [reconnexion, poserReconnexion] = createSignal<
-    { essai: number; total: number; dans: number; motif: MotifReprise } | null
+    {
+      essai: number; total: number; dans: number; motif: MotifReprise
+      /** Attente « compte occupe » : message propre, decompte, pas de « n sur N ». */
+      occupation?: { message: string; coupure: boolean; attendu: number; plafond: number }
+    } | null
   >(null)
   const [relance, poserRelance] = createSignal(0)
 
@@ -27,11 +32,56 @@ export function creerReprisePanne(opts: {
   // le message a chaque tentative.
   let essais = 0
   let minuteur: ReturnType<typeof setInterval> | undefined
+  // Attente « compte occupe » : machine d'etats pure (lib/machine-occupation).
+  let occ: EtatOccupation = REPOS
+  let messageOcc = ''
+  let coupureOcc = false
 
   function arreter() {
     clearInterval(minuteur)
     minuteur = undefined
+    // Un decompte arrete ne bloque plus rien : l'utilisateur ou un autre
+    // contenu reprend la main (le cumul, lui, survit jusqu'a `remettreAZero`).
+    occ = { ...occ, actif: false, dans: 0 }
     poserReconnexion(null)
+  }
+
+  function afficherOccupation() {
+    poserReconnexion({
+      essai: occ.essai, total: 0, dans: occ.dans, motif: 'occupe',
+      occupation: { message: messageOcc, coupure: coupureOcc, attendu: occ.cumul + (occ.delai - occ.dans), plafond: PLAFOND_ATTENTE_OCCUPATION },
+    })
+  }
+
+  function signalerOccupation(e: ErreurLecteur) {
+    const ev = surErreur(occ, e.attenteSecondes)
+    noter('occupation:code', { code: e.code, retryAfter: e.attenteSecondes, coupure: !!e.coupure, ignore: ev.action === 'ignorer' })
+    if (ev.action === 'ignorer') return
+    if (ev.action === 'plafond') {
+      noter('occupation:abandon', { code: e.code, attendu: occ.cumul, essais: occ.essai })
+      arreter()
+      opts.poserErreur(new ErreurLecteur(
+        e.couche, e.message,
+        'Toujours pas de place après 10 minutes : fermer l’autre lecture, puis réessayer.',
+        e.detail, e.attenteSecondes, { code: e.code, coupure: e.coupure },
+      ))
+      return
+    }
+    occ = ev.etat
+    messageOcc = e.message
+    coupureOcc = !!e.coupure
+    noter('occupation:attente', { code: e.code, delai: occ.delai, cumul: occ.cumul, essai: occ.essai })
+    afficherOccupation()
+    clearInterval(minuteur)
+    minuteur = setInterval(() => {
+      const t = tic(occ)
+      occ = t.etat
+      if (!t.relancer) return afficherOccupation()
+      clearInterval(minuteur)
+      minuteur = undefined
+      poserReconnexion(null)
+      relancer()
+    }, 1000)
   }
 
   function relancer() {
@@ -39,6 +89,7 @@ export function creerReprisePanne(opts: {
   }
 
   function signalerErreur(e: ErreurLecteur) {
+    if (estOccupation(e)) return signalerOccupation(e)
     const decision = decider(e, essais)
     if (decision.action === 'abandonner') {
       noter('lecture:abandon', { couche: e.couche, essais, detail: e.detail })
@@ -67,9 +118,14 @@ export function creerReprisePanne(opts: {
     relancer,
     signalerErreur,
     arreter,
-    essais: () => essais,
+    essais: () => essais + occ.essai,
+    /** Des images arrivent : si une attente « compte occupe » vient de finir, c'est une reprise reussie. */
+    reussir: () => {
+      if (occ.essai > 0) noter('occupation:reprise', { essais: occ.essai, attendu: occ.cumul })
+    },
     remettreAZero: () => {
       essais = 0
+      occ = REPOS
     },
   }
 }

@@ -133,6 +133,15 @@ export async function attacher(
     fragLoadingMaxRetryTimeout: 8000,
   })
 
+  // Un refus « place occupee » (503, ou 403/407 de segment) ne se soigne pas par
+  // un reessai muet de hls.js : six reessais rapproches sur un segment martelaient
+  // le serveur, donc le fournisseur. On remonte l'erreur tout de suite a la
+  // politique de reprise, qui respecte `Retry-After` et affiche le decompte.
+  for (const politique of [hls.config.fragLoadPolicy, hls.config.playlistLoadPolicy, hls.config.manifestLoadPolicy]) {
+    const reessai = politique?.default?.errorRetry
+    if (reessai) reessai.shouldRetry = (_c, _n, _t, reponse, parDefaut) => parDefaut && !statutPlacePrise(reponse?.code)
+  }
+
   // Mesure : on enregistre TOUT ce que hls.js signale, y compris les erreurs non
   // fatales qu'il rattrape seul. Le serveur ne voit ni les unes ni les autres :
   // il a servi chaque segment en ~1 s et ne comprend pas les coupures.
@@ -186,6 +195,11 @@ export async function attacher(
       rendrePlace()
     },
   }
+}
+
+/** Statuts qui disent « la place est prise » : jamais reessayes en silence. */
+export function statutPlacePrise(code: number | undefined): boolean {
+  return code === 503 || code === 429 || code === 403 || code === 407
 }
 
 /** En-tete de la reponse en cause : hls.js la rend en XHR ou en Response. */
