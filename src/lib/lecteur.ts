@@ -145,6 +145,7 @@ export async function attacher(
   // Mesure : on enregistre TOUT ce que hls.js signale, y compris les erreurs non
   // fatales qu'il rattrape seul. Le serveur ne voit ni les unes ni les autres :
   // il a servi chaque segment en ~1 s et ne comprend pas les coupures.
+  let placeSignalee = false
   const arretVideo = observerVideo(video, { mode: 'hls' })
   hls.on(HlsCtor.Events.ERROR, (_e, data) => {
     noter('hls:erreur', {
@@ -154,7 +155,20 @@ export async function attacher(
       http: data.response?.code,
       url: masquerUrl(data.frag?.url ?? data.url),
     })
+    // Une place prise sur un segment ou une playlist est traitee comme FATALE
+    // tout de suite : hls.js, sinon, la reessaierait six fois en quelques
+    // secondes (mesure : 403 sur le meme segment a 0,5 / 1 / 2 / 4 / 8 / 8 s),
+    // soit autant de refus de plus chez un fournisseur a connexion unique.
+    const placePrise = !data.fatal && statutPlacePrise(data.response?.code) && data.type === HlsCtor.ErrorTypes.NETWORK_ERROR
+    if (placePrise) {
+      if (placeSignalee) return
+      placeSignalee = true
+      hls.stopLoad()
+      surErreur(traduireHls(HlsCtor, data))
+      return
+    }
     if (!data.fatal) return
+    if (placeSignalee) return
     signalerSiNonAuthentifie(data.response?.code ?? 0)
     surErreur(traduireHls(HlsCtor, data))
   })
