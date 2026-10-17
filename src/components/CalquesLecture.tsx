@@ -71,12 +71,20 @@ export function DialogueReprise(props: {
  * reste, on dit lequel et quand — l'erreur nommée n'arrive qu'après le
  * troisième échec.
  */
+/** « 45 s », « 2 min 05 » : l'attente d'une place peut durer des minutes. */
+function duree(s: number): string {
+  const n = Math.max(0, Math.round(s))
+  return n < 60 ? `${n} s` : `${Math.floor(n / 60)} min${n % 60 ? ` ${String(n % 60).padStart(2, '0')}` : ''}`
+}
+
 export function BandeauReconnexion(props: {
   essai: number
   total: number
   dans: number
   /** `occupe` : la place du fournisseur est prise, ce n'est pas une panne. */
   motif?: 'occupe' | 'panne'
+  /** Attente « compte occupe » : message du serveur, coupure ou non, secondes deja attendues. */
+  occupation?: { message: string; coupure: boolean; attendu: number; plafond: number }
 }) {
   return (
     <div
@@ -106,12 +114,16 @@ export function BandeauReconnexion(props: {
       />
       <div style={{ display: 'flex', 'flex-direction': 'column', 'min-width': 0 }}>
         <span style={{ 'font-weight': 'var(--w-strong)' }}>
-          {props.motif === 'occupe'
+          {props.occupation
+            ? props.occupation.message
+            : props.motif === 'occupe'
             ? 'Place occupée — nouvelle tentative automatique'
             : 'Connexion interrompue — reconnexion automatique'}
         </span>
         <span class="num" style={{ 'font-size': '12px', color: 'var(--lim)' }}>
-          Tentative {props.essai} sur {props.total} · nouvel essai dans {props.dans} s
+          {props.occupation
+            ? `Reprise automatique · nouvel essai dans ${props.dans} s · attente ${duree(props.occupation.attendu)} sur ${duree(props.occupation.plafond)} au plus`
+            : `Tentative ${props.essai} sur ${props.total} · nouvel essai dans ${props.dans} s`}
         </span>
       </div>
     </div>

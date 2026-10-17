@@ -20,7 +20,7 @@ import { attacher, type Attache } from '../lib/lecteur'
 import { planDirect, planVod, urlVod, deplacementParService, BADGE_MODE, type Plan } from '../lib/flux'
 import { lectureDe, chaineDeLecture } from '../lib/source-lecture'
 import { annulerFinDifferee } from '../lib/bail'
-import { ErreurLecteur } from '../lib/errors'
+import { ErreurLecteur, enCoupure } from '../lib/errors'
 import { noter } from '../lib/diagnostic'
 import { codecEstHevc, capacitesAnnoncees, capacitesPretes, marquerHevcDefaillant, urlAvecCapacites } from '../lib/capacites'
 import {
@@ -174,7 +174,9 @@ export default function Lecture(props: {
    * conversion audio puis UNE conversion vidéo (jamais plus : `suiteApresErreur`
    * est bornée) ; le reste suit la politique de reprise habituelle.
    */
-  function traiterErreur(e: ErreurLecteur) {
+  function traiterErreur(brute: ErreurLecteur) {
+    // Apres des images, une place prise est une COUPURE (message dedie, meme reprise).
+    const e = imagesVues ? enCoupure(brute) : brute
     const chaine = direct() ? chaineDeLecture(lectureDe(props.entree)) : undefined
     if (direct()) {
       const s = suiteApresErreur(etatTentatives, e, { hevcAnnonce: capacitesAnnoncees(etatTentatives.sansHevc).includes('hevc') })
@@ -207,6 +209,9 @@ export default function Lecture(props: {
     }
     panne.signalerErreur(e)
   }
+
+  // Le contenu a deja donne des images : une place prise est alors une coupure.
+  let imagesVues = false
 
   const pistes = creerPistes(() => video)
 
@@ -267,6 +272,7 @@ export default function Lecture(props: {
     if (!precedente || precedente.cle !== entree.cle) {
       panne.remettreAZero()
       panne.arreter()
+      imagesVues = false
       calques.nouveauContenu(entree.type === 'live')
       etatTentatives = AUCUNE_TENTATIVE
       forcage = null
@@ -378,12 +384,17 @@ export default function Lecture(props: {
     }
     const auTemps = () => poserPositionBrute(video.currentTime)
     const auxImages = () => {
+      // Le tampon restant d'une lecture coupee peut encore afficher des images
+      // pendant le decompte : ce n'est pas une reprise, la relance part a l'heure.
+      if (panne.reconnexion()?.occupation) { imagesVues = true; return }
       poserImageDisponible(true)
       poserChargement(false)
       poserHauteurImage(video.videoHeight)
       // Des images arrivent : il n'y a plus de panne à afficher. Le dire est
       // la contrepartie de la reconnexion silencieuse qui vient de réussir.
+      imagesVues = true
       if (panne.essais() > 0) {
+        panne.reussir()
         panne.remettreAZero()
         notifier('Connexion au relais rétablie — lecture reprise')
       }
@@ -838,7 +849,7 @@ export default function Lecture(props: {
           </Show>
 
           <Show when={panne.reconnexion()}>
-            {(r) => <BandeauReconnexion essai={r().essai} total={r().total} dans={r().dans} motif={r().motif} />}
+            {(r) => <BandeauReconnexion essai={r().essai} total={r().total} dans={r().dans} motif={r().motif} occupation={r().occupation} />}
           </Show>
 
           <Show when={calques.bandeau() > 0 && direct() && !erreur()}>

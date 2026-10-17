@@ -18,6 +18,12 @@
 //           chaine 1103  segments illisibles (fragParsingError) sauf avec ?forcer=audio
 //           chaine 1104  segments illisibles sauf avec ?forcer=video
 //           chaine 1105  segments illisibles quoi qu'on force (abandon apres audio puis video)
+//   (US-35) film iptva:106  503 compte_utilise_ailleurs (Retry-After 2) deux fois, puis normal
+//           chaine 1201  503 compte_utilise_ailleurs (Retry-After 2) trois fois, puis normale
+//           chaine 1202  503 compte_occupe (Retry-After 2) deux fois, puis normale
+//           chaine 1203  503 compte_utilise_par_mytv avec Retry-After 700 (> plafond : abandon d'emblee)
+//           chaine 1204  coupure : les segments 0-1 passent, puis 403 ; ensuite la playlist repond
+//                        503 compte_utilise_ailleurs (Retry-After 2) deux fois, puis la place est libre
 //   (US-25 : comme le vrai serveur, le code est aussi dans l'en-tete X-Mytv-Erreur)
 import { createServer } from 'node:http'
 import { readFileSync, existsSync, statSync } from 'node:fs'
@@ -104,6 +110,8 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
       if (tete) return res.writeHead(502, { 'X-Mytv-Erreur': 'fournisseur_compte_invalide', 'X-Mytv-Expiration': EXPIRATION }), res.end()
       return refus(res, 'fournisseur_compte_invalide')
     }
+    if (numero === '106' && fois('vod106') <= 2)
+      return erreur(res, 503, 'compte_utilise_ailleurs', 'occupe', { 'Retry-After': '2', 'X-Mytv-Erreur': 'compte_utilise_ailleurs' })
     if (numero === '103' && fois('vod103') === 1) return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
     const remux = numero === '101'
     const entetes = { 'Content-Type': remux ? 'video/mp4' : 'audio/mpeg', 'Cache-Control': 'private, no-store' }
@@ -149,6 +157,14 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
         if (chaine === '1101')
           return erreur(res, 415, 'format_hevc_non_lisible', 'HEVC 3840x2160', { 'X-Mytv-Erreur': 'format_hevc_non_lisible', 'X-Mytv-Mode': 'refus' })
         if (/^110[345]$/.test(chaine)) modeChaine.set(chaine, forcer)
+        const occupe = (code, ra) => erreur(res, 503, code, 'occupe', { 'Retry-After': String(ra), 'X-Mytv-Erreur': code })
+        if (chaine === '1201' && fois('live1201') <= 3) return occupe('compte_utilise_ailleurs', 2)
+        if (chaine === '1202' && fois('live1202') <= 2) return occupe('compte_occupe', 2)
+        if (chaine === '1203') return occupe('compte_utilise_par_mytv', 700)
+        if (chaine === '1204' && etat.get('coupe1204')) {
+          if (fois('live1204b') <= 2) return occupe('compte_utilise_ailleurs', 2)
+          etat.set('coupe1204', false)
+        }
         if (chaine === '1003') return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
         if (chaine === '1002' && fois('live1002') <= 2) return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
         if (chaine === '1005' && fois('live1005') === 1) return erreur(res, 502, 'amont', 'amont indisponible')
@@ -160,6 +176,13 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
         return chaine === '1102' ? void setTimeout(servir, 5000) : servir()
       }
       if ((m = /^\/live\/([A-Za-z0-9_-]+)\/seg\/jeton(\d+)$/.exec(r))) {
+        if (m[1] === '1204' && etat.get('coupe1204') !== false && Number(m[2]) >= 2) {
+          // Le « nouvel occupant » arrive 3 s apres le debut : la lecture a deja donne des images.
+          if (!etat.has('debut1204')) etat.set('debut1204', Date.now())
+          const reste = etat.get('debut1204') + 3000 - Date.now()
+          const refuser = () => { etat.set('coupe1204', true); res.writeHead(403); res.end() }
+          return reste > 0 ? void setTimeout(refuser, reste) : refuser()
+        }
         if (m[1] === '1009' && Number(m[2]) >= 2) return refus(res, 'fournisseur_compte_invalide')
         res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' })
         if (!lisible(m[1])) return res.end(Buffer.alloc(5000, 0x41))

@@ -13,15 +13,91 @@ export class ErreurLecteur extends Error {
    * (`Retry-After` d'un 503). Absente : la politique de reprise choisit.
    */
   readonly attenteSecondes?: number
+  /** Code stable du serveur (`X-Mytv-Erreur`), quand il y en a un. */
+  readonly code?: string
+  /** Coupure EN COURS de lecture (apres des images) : message et reprise dedies. */
+  readonly coupure?: boolean
 
-  constructor(couche: Couche, message: string, action: string, detail?: string, attenteSecondes?: number) {
+  constructor(
+    couche: Couche, message: string, action: string, detail?: string, attenteSecondes?: number,
+    extra: { code?: string; coupure?: boolean } = {},
+  ) {
     super(message)
     this.name = 'ErreurLecteur'
     this.couche = couche
     this.action = action
     this.detail = detail
     this.attenteSecondes = attenteSecondes
+    this.code = extra.code
+    this.coupure = extra.coupure
   }
+}
+
+// --- Occupation du compte du fournisseur (une seule connexion autorisee) ---
+
+export const CODE_AILLEURS = 'compte_utilise_ailleurs'
+export const CODE_PAR_MYTV = 'compte_utilise_par_mytv'
+export const CODE_OCCUPE = 'compte_occupe'
+export const CODES_OCCUPATION: readonly string[] = [CODE_AILLEURS, CODE_PAR_MYTV, CODE_OCCUPE]
+
+/** Le fournisseur n'a pas de place pour nous : une ATTENTE, avec reprise automatique. */
+export function estOccupation(e: { code?: string } | null | undefined): boolean {
+  return !!e?.code && CODES_OCCUPATION.includes(e.code)
+}
+
+const MESSAGES_OCCUPATION: Record<string, { message: string; coupure: string }> = {
+  [CODE_AILLEURS]: {
+    message: 'Le compte IPTV est utilisé sur un autre appareil. Fermez-le pour regarder ici.',
+    coupure: 'Lecture interrompue : le compte est utilisé ailleurs.',
+  },
+  [CODE_PAR_MYTV]: {
+    message: 'Une autre fenêtre de MyTV utilise la connexion.',
+    coupure: 'Lecture interrompue : une autre fenêtre de MyTV utilise la connexion.',
+  },
+  [CODE_OCCUPE]: {
+    message: 'Connexion du fournisseur occupée, nouvelle tentative automatique…',
+    coupure: 'Lecture interrompue : la connexion du fournisseur est occupée.',
+  },
+}
+
+/** Statuts qu'un fournisseur a connexion unique renvoie quand la place est prise (407 relaye en 503). */
+const STATUTS_PLACE_PRISE = [403, 407, 429, 503]
+
+/**
+ * Une erreur de place occupee. `coupure` : la lecture avait DEJA donne des
+ * images ; sans code du serveur (un 403/407 de segment que hls.js ne decrit
+ * pas), la cause la plus probable est le compte repris ailleurs.
+ */
+export function erreurOccupation(
+  code: string, detail?: string, attenteSecondes?: number, coupure = false,
+): ErreurLecteur {
+  const m = MESSAGES_OCCUPATION[code] ?? MESSAGES_OCCUPATION[CODE_OCCUPE]!
+  return new ErreurLecteur(
+    'limite',
+    coupure ? m.coupure : m.message,
+    code === CODE_AILLEURS
+      ? 'Reprise automatique dès que la place se libère.'
+      : 'Nouvelle tentative automatique ; la lecture reprend seule.',
+    detail,
+    attenteSecondes,
+    { code, coupure },
+  )
+}
+
+/**
+ * Apres des images, une erreur de place prise devient une COUPURE : message
+ * dedie (« Lecture interrompue... ») et meme reprise automatique. Les autres
+ * erreurs (codec, session expiree...) restent telles quelles.
+ */
+export function enCoupure(e: ErreurLecteur, statut?: number): ErreurLecteur {
+  if (estOccupation(e)) return e.coupure ? e : erreurOccupation(e.code!, e.detail, e.attenteSecondes, true)
+  // Le detail porte « HTTP 403 [code] — contexte » : un code connu qui n'est pas
+  // une occupation (`segment_expire`...) n'est pas une prise de place.
+  const m = /^HTTP (\d{3})(?: ([a-z_]+))?(?: —|$)/.exec(e.detail ?? '')
+  const st = statut ?? Number(m?.[1])
+  if (!m?.[2] && st !== 429 && STATUTS_PLACE_PRISE.includes(st) && e.couche !== 'codec' && e.couche !== 'fournisseur')
+    return erreurOccupation(CODE_AILLEURS, e.detail, e.attenteSecondes, true)
+  return e
 }
 
 /** Libelle court affiche en tete d'un panneau d'erreur. */
@@ -120,6 +196,9 @@ export function erreurDeStatut(statut: number, infos: InfosStatut = {}): ErreurL
     const f = erreurFournisseur(infos.code, infos.expiration, detail, infos.maintenantMs)
     if (f) return f
   }
+  // Place du fournisseur prise : message propre a chaque cause (le code prime sur le statut).
+  if (infos.code && CODES_OCCUPATION.includes(infos.code) && STATUTS_PLACE_PRISE.includes(statut))
+    return erreurOccupation(infos.code, detail, lireRetryAfter(infos.retryAfter, infos.maintenantMs))
   switch (true) {
     case statut === 401:
       return new ErreurLecteur('auth', 'La session a expiré.', 'Se reconnecter, puis relancer la lecture.', detail)
