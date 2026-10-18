@@ -85,3 +85,37 @@ test('fermeture de la page : le direct ouvert est rendu tout de suite', () => {
   bail.fermeturePage()
   assert.equal(envois.length, 1, 'idempotent : rien a rendre la seconde fois')
 })
+
+test('fermer puis quitter la page avant le delai : UNE fin, tout de suite, jamais deux', () => {
+  const { bail, envois, avancer } = banc()
+  bail.lectureOuverte('845410')
+  bail.lectureArretee('845410')
+  bail.fermeturePage()
+  assert.equal(envois.length, 1, 'pagehide envoie la fin en attente sans attendre')
+  assert.equal(envois[0]!.url, '/api/v1/live/845410/fin')
+  avancer(DELAI_FIN_MS * 2)
+  assert.equal(envois.length, 1, 'la fin differee a ete annulee : pas de doublon')
+})
+
+test('changement d episode (film -> film) : rien a rendre ; un direct ouvert ensuite est bien rendu a sa fermeture', () => {
+  const { bail, envois, avancer } = banc()
+  bail.lectureOuverte() // episode 1
+  bail.lectureOuverte() // episode 2 : aucune chaine, aucune fin
+  avancer(DELAI_FIN_MS * 2)
+  assert.equal(envois.length, 0)
+  bail.lectureOuverte('12')
+  bail.lectureArretee('12')
+  avancer(DELAI_FIN_MS)
+  assert.deepEqual(envois.map((e) => e.url), ['/api/v1/live/12/fin'])
+})
+
+test('« Retour » (mini-lecteur) : la lecture continue, aucune fin ; la fermeture de page rend alors le direct courant', () => {
+  const { bail, envois, avancer } = banc()
+  bail.lectureOuverte('7')
+  // Retour vers la fiche : rien n'est appele sur le bail, le flux tourne.
+  avancer(DELAI_FIN_MS * 10)
+  assert.equal(envois.length, 0)
+  assert.equal(bail.courante(), '7')
+  bail.fermeturePage()
+  assert.deepEqual(envois.map((e) => e.url), ['/api/v1/live/7/fin'])
+})

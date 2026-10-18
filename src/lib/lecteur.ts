@@ -7,6 +7,7 @@ import { ENTETE_CAPACITES, formaterCapacites, type Capacites } from './capacites
 import {
   DELAI_CONVERSION_MS, DELAI_PLAYLIST_DIRECT_MS, lireModeDirect, type ModeDirect, type ModeForce,
 } from './modes-direct'
+import { DETAIL_SANS_PROGRES, ETAT_HLS_INITIAL, reagir, type EtatHls } from './erreurs-hls'
 
 // Direct en HLS, VOD en MP4 natif. Chaque echec nomme sa couche : le lecteur
 // precedent a ete abandonne pour avoir affiche « the error did not identify a
@@ -113,24 +114,7 @@ export async function attacher(
     },
     // Memoire bornee sur un direct laisse ouvert des heures.
     backBufferLength: 30,
-    // Reessais patients : une reprise ratee coute une reconnexion complete.
-    // Peu de reessais internes sur la playlist : un 503 « place occupee » doit
-    // remonter vite a la politique de reprise, qui annonce l'attente et la
-    // borne. Quatre reessais muets de hls.js la cachaient puis la doublaient.
-    manifestLoadingMaxRetry: 1,
-    levelLoadingMaxRetry: 1,
-    // Un direct converti attend qu'ffmpeg ait produit son premier segment
-    // avant de repondre : le delai par defaut (10 s) le prendrait pour une
-    // panne et declencherait un reessai agressif pendant le demarrage.
-    // Le mode (audio/video) n'est connu qu'avec la playlist, que le serveur
-    // retient justement pendant ce demarrage : 45 s dans tous les cas (le serveur
-    // borne deja le demarrage de son cote).
-    manifestLoadingTimeOut: DELAI_PLAYLIST_DIRECT_MS,
-    levelLoadingTimeOut: DELAI_PLAYLIST_DIRECT_MS,
-    fragLoadingTimeOut: options.forcer ? DELAI_CONVERSION_MS : 20_000,
-    fragLoadingMaxRetry: 6,
-    fragLoadingRetryDelay: 500,
-    fragLoadingMaxRetryTimeout: 8000,
+    ...politiquesChargement(options.forcer),
   })
 
   // Un refus « place occupee » (503, ou 403/407 de segment) ne se soigne pas par
@@ -146,6 +130,7 @@ export async function attacher(
   // fatales qu'il rattrape seul. Le serveur ne voit ni les unes ni les autres :
   // il a servi chaque segment en ~1 s et ne comprend pas les coupures.
   let placeSignalee = false
+  let etatHls: EtatHls = ETAT_HLS_INITIAL
   const arretVideo = observerVideo(video, { mode: 'hls' })
   hls.on(HlsCtor.Events.ERROR, (_e, data) => {
     noter('hls:erreur', {
@@ -159,16 +144,42 @@ export async function attacher(
     // tout de suite : hls.js, sinon, la reessaierait six fois en quelques
     // secondes (mesure : 403 sur le meme segment a 0,5 / 1 / 2 / 4 / 8 / 8 s),
     // soit autant de refus de plus chez un fournisseur a connexion unique.
-    const placePrise = !data.fatal && statutPlacePrise(data.response?.code) && data.type === HlsCtor.ErrorTypes.NETWORK_ERROR
-    if (placePrise) {
+    const placePrise = statutPlacePrise(data.response?.code) && data.type === HlsCtor.ErrorTypes.NETWORK_ERROR
+    if (placePrise && !data.fatal) {
       if (placeSignalee) return
       placeSignalee = true
       hls.stopLoad()
       surErreur(traduireHls(HlsCtor, data))
       return
     }
-    if (!data.fatal) return
     if (placeSignalee) return
+    // Avant de tout rouvrir (playlist, segments, place du fournisseur), les gestes
+    // moins couteux que prevoit hls.js — bornes par `erreurs-hls`, testes seuls.
+    const decision = reagir(etatHls, {
+      type: data.type, details: data.details, fatal: data.fatal, statut: data.response?.code, placePrise,
+      maintenant: Date.now(), position: video.currentTime,
+    })
+    etatHls = decision.etat
+    if (decision.action === 'ignorer') return
+    if (decision.action !== 'remonter') noter('hls:recuperation', { action: decision.action, detail: data.details, http: data.response?.code })
+    switch (decision.action) {
+      case 'recuperer':
+        hls.recoverMediaError()
+        return
+      case 'permuter-audio':
+        hls.swapAudioCodec()
+        hls.recoverMediaError()
+        return
+      case 'recharger':
+        hls.startLoad()
+        return
+    }
+    if (!data.fatal) {
+      // Boucle `bufferAppendNoProgress` deja recuperee une fois : la lecture est
+      // figee sans erreur fatale, c'est une coupure, la reprise habituelle decide.
+      surErreur(new ErreurLecteur('reseau', 'Le flux s est interrompu.', 'Reessayer ; si cela persiste, verifier la liaison avec le serveur.', DETAIL_SANS_PROGRES))
+      return
+    }
     signalerSiNonAuthentifie(data.response?.code ?? 0)
     surErreur(traduireHls(HlsCtor, data))
   })
@@ -214,6 +225,51 @@ export async function attacher(
 /** Statuts qui disent « la place est prise » : jamais reessayes en silence. */
 export function statutPlacePrise(code: number | undefined): boolean {
   return code === 503 || code === 429 || code === 403 || code === 407
+}
+
+/** Premier octet d'un segment : le serveur patiente jusqu'a 8 s sur un 407 avant de repondre 503. */
+export const DELAI_PREMIER_OCTET_MS = 15_000
+/** Chargement complet d'un segment, hors conversion. */
+export const DELAI_SEGMENT_MS = 20_000
+
+type Politiques = Pick<Hls['config'], 'fragLoadPolicy' | 'playlistLoadPolicy' | 'manifestLoadPolicy'>
+
+/**
+ * Politiques de chargement, explicites. hls.js 1.7 mappe encore les cles
+ * heritees (`fragLoadingTimeOut`...) mais en avertissant, et le mappage posait
+ * le MEME delai au premier octet et au chargement complet : 20 s pour tout.
+ *
+ * Playlists : peu de reessais internes — un 503 « place occupee » doit remonter
+ * vite a la politique de reprise, qui annonce l'attente et la borne (quatre
+ * reessais muets la cachaient puis la doublaient). Et un direct converti attend
+ * qu'ffmpeg ait produit son premier segment avant de repondre : 45 s dans tous
+ * les cas, le mode n'etant connu qu'avec la playlist.
+ *
+ * Segments : le serveur patiente desormais jusqu'a 8 s sur un segment refuse 407
+ * avant de repondre 503 avec Retry-After — le premier octet doit donc pouvoir
+ * attendre bien plus (15 s), sans quoi hls.js tranchait avant le serveur. Sous
+ * conversion imposee, le chargement complet tolere le demarrage d'ffmpeg.
+ */
+export function politiquesChargement(forcer?: ModeForce | null): Politiques {
+  const playlist = {
+    maxTimeToFirstByteMs: DELAI_PLAYLIST_DIRECT_MS,
+    maxLoadTimeMs: DELAI_PLAYLIST_DIRECT_MS,
+    timeoutRetry: { maxNumRetry: 1, retryDelayMs: 0, maxRetryDelayMs: 0 },
+    errorRetry: { maxNumRetry: 1, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+  }
+  return {
+    manifestLoadPolicy: { default: { ...playlist, timeoutRetry: { ...playlist.timeoutRetry }, errorRetry: { ...playlist.errorRetry } } },
+    playlistLoadPolicy: { default: { ...playlist, timeoutRetry: { ...playlist.timeoutRetry }, errorRetry: { ...playlist.errorRetry } } },
+    fragLoadPolicy: {
+      default: {
+        maxTimeToFirstByteMs: DELAI_PREMIER_OCTET_MS,
+        maxLoadTimeMs: forcer ? DELAI_CONVERSION_MS : DELAI_SEGMENT_MS,
+        // Reessais patients : une reprise ratee coute une reconnexion complete.
+        timeoutRetry: { maxNumRetry: 4, retryDelayMs: 0, maxRetryDelayMs: 0 },
+        errorRetry: { maxNumRetry: 6, retryDelayMs: 500, maxRetryDelayMs: 8000 },
+      },
+    },
+  }
 }
 
 /** En-tete de la reponse en cause : hls.js la rend en XHR ou en Response. */

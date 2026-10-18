@@ -28,6 +28,8 @@ declare global {
       ouvrir: (e: Record<string, unknown>, urlForcee?: string) => void
       fermer: () => void
       semer: (entrees: Array<Record<string, unknown>>) => Promise<void>
+      /** Position memorisee d'un film, comme si on s'y etait arrete. */
+      semerReprise: (cle: string, position: number, duree: number) => Promise<void>
       ouvertures: string[]
     }
   }
@@ -44,6 +46,9 @@ window.harnais = {
   semer: async (entrees) => {
     await db.catalogue.clear()
     await db.catalogue.bulkPut(entrees as unknown as EntreeCatalogue[])
+  },
+  semerReprise: async (cle, position, duree) => {
+    await db.reprises.put({ cle, position, duree, vuLe: Date.now() })
   },
   ouvertures,
 }

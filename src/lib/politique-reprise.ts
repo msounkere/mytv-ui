@@ -64,3 +64,42 @@ export function pointDeReprise(positionAtteinte: number, dernierPointDemande: nu
   if (!Number.isFinite(positionAtteinte) || positionAtteinte <= 0) return dernierPointDemande
   return Math.max(0, positionAtteinte - MARGE_REPRISE)
 }
+
+/** Marge sous laquelle un `ended` est une vraie fin : les derniers instants d'un film n'ont pas la seconde pres. */
+export const MARGE_FIN = 3
+
+/**
+ * Un `ended` recu AVANT la fin annoncee n'est pas une fin : c'est une coupure.
+ * POURQUOI : le serveur, quand son remux casse, tronque la reponse. Le navigateur
+ * prend alors la fin du corps pour la fin du film et declenche `ended` — a 42 min
+ * d'un film de 1 h 37, l'ecran passait a « termine » sans erreur ni reprise.
+ * Sans duree connue, on ne sait rien dire : ce n'est pas une coupure.
+ */
+export function finPrematuree(position: number, duree: number): boolean {
+  if (!Number.isFinite(duree) || duree <= 0) return false
+  if (!Number.isFinite(position)) return false
+  return position < duree - MARGE_FIN
+}
+
+/**
+ * Ou ouvrir un film, et faut-il proposer « Reprendre / Recommencer » ?
+ *
+ * POURQUOI : la proposition n'a de sens qu'a la PREMIERE ouverture d'un contenu,
+ * quand rien n'a encore ete atteint. Elle etait rejouee a chaque reouverture
+ * automatique (coupure, transcodage impose) — la position memorisee toutes les
+ * 5 s la nourrissait — et « Reprendre » relancait alors un ffmpeg et une
+ * connexion de plus chez un fournisseur qui n'en accorde qu'une. Et plutot que
+ * d'ouvrir a 0 puis rouvrir au point sauvegarde, on ouvre directement la : le
+ * dialogue ne sert plus qu'a revenir au debut.
+ */
+export function departDeLecture(opts: {
+  premierPassage: boolean
+  pointAtteint: number
+  sauvegardee: number | undefined
+  seuil: number
+}): { depart: number; proposer: number | null } {
+  const { premierPassage, pointAtteint, sauvegardee, seuil } = opts
+  if (!premierPassage || pointAtteint > 0) return { depart: pointAtteint, proposer: null }
+  if (sauvegardee === undefined || !Number.isFinite(sauvegardee) || sauvegardee <= seuil) return { depart: 0, proposer: null }
+  return { depart: sauvegardee, proposer: sauvegardee }
+}

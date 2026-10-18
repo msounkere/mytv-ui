@@ -3,10 +3,21 @@ import { signalerSiNonAuthentifie } from './session-expiree'
 // Rendre la place du fournisseur quand on a fini de lire un direct.
 //
 // POURQUOI ce module existe : le fournisseur n'accorde qu'UNE connexion. Le
-// serveur ne rend la place d'un direct qu'a l'expiration de son bail (90 s) ou
-// quand une requete de segment EN VOL est annulee. Entre deux segments, rien
-// n'est en vol : sans cet appel, fermer le lecteur laissait la place prise
-// pendant plus d'une minute, et le contenu suivant se heurtait a un 503.
+// serveur ne rend la place d'un direct que de DEUX facons : l'appel explicite
+// `POST /live/{chaine}/fin` fait ici, ou l'expiration de son bail (90 s). Il ne
+// la rend PLUS quand une requete de segment en vol est annulee : hls.js annule
+// des segments pour ses propres raisons (changement de niveau, saut, purge de
+// tampon, delai) sans que le spectateur ait quitte la chaine, et rendre la place
+// a ce moment laissait une autre session la prendre — la lecture se coupait.
+// Sans cet appel, fermer le lecteur laisserait donc la place prise pendant plus
+// d'une minute, et le contenu suivant se heurterait a un 503.
+//
+// CE QUI DOIT PASSER PAR ICI, et comment : fermer le lecteur (la croix) et
+// changer de contenu detachent le flux (`lecteur.ts`), qui appelle
+// `lectureArretee` ; ouvrir quoi que ce soit (direct ou film) appelle
+// `lectureOuverte`, qui annule une fin en attente ; fermer l'onglet passe par
+// `pagehide` et `fermeturePage`, en `keepalive`. « Retour » n'y passe pas : la
+// lecture continue dans le mini-lecteur, la place reste a nous.
 //
 // POURQUOI l'appel est DIFFERE : zapper ferme une chaine puis en ouvre une
 // autre, et le serveur ne rend la place que si la session lit « encore » la

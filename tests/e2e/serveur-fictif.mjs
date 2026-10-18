@@ -25,6 +25,8 @@
 //           chaine 1204  coupure : les segments 0-1 passent, puis 403 ; ensuite la playlist repond
 //                        503 compte_utilise_ailleurs (Retry-After 2) deux fois, puis la place est libre
 //   (US-25 : comme le vrai serveur, le code est aussi dans l'en-tete X-Mytv-Erreur)
+//   (coupures) film iptva:107  remux annonce 120 s mais corps TRONQUE a 3 s (le serveur coupe quand son remux casse)
+//              film iptva:108  remux SANS X-Mytv-Duree (duree inconnue)
 import { createServer } from 'node:http'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
@@ -38,6 +40,8 @@ const TYPES = {
 const DUREE_SEGMENT = 2
 const NB_SEGMENTS = 6
 const FILM = mp3(20)
+/** Film « tronque » : le serveur annonce 120 s mais ferme apres 3 s de corps. */
+const FILM_TRONQUE = mp3(3)
 
 export async function demarrerServeur({ dossier, limites = { pagination_max: 200, grille_fenetre: 172800 } } = {}) {
   /** Toutes les requetes recues, dans l'ordre. */
@@ -113,11 +117,12 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
     if (numero === '106' && fois('vod106') <= 2)
       return erreur(res, 503, 'compte_utilise_ailleurs', 'occupe', { 'Retry-After': '2', 'X-Mytv-Erreur': 'compte_utilise_ailleurs' })
     if (numero === '103' && fois('vod103') === 1) return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
-    const remux = numero === '101'
+    const remux = numero === '101' || numero === '107' || numero === '108'
     const entetes = { 'Content-Type': remux ? 'video/mp4' : 'audio/mpeg', 'Cache-Control': 'private, no-store' }
     if (remux) {
-      res.writeHead(200, { ...entetes, 'Accept-Ranges': 'none', 'X-Mytv-Duree': '120', 'X-Mytv-Mode': 'remux' })
-      return res.end(tete ? undefined : FILM)
+      const duree = numero === '108' ? {} : { 'X-Mytv-Duree': '120' }
+      res.writeHead(200, { ...entetes, 'Accept-Ranges': 'none', ...duree, 'X-Mytv-Mode': 'remux' })
+      return res.end(tete ? undefined : numero === '107' ? FILM_TRONQUE : FILM)
     }
     const plage = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
     if (plage) {

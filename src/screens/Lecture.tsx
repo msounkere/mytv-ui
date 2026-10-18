@@ -18,7 +18,7 @@ import {
 import { estBureau, estMobile } from '../lib/gabarit'
 import { ecran, poserEcran, revenirAuLecteur } from '../etat'
 import { attacher, type Attache } from '../lib/lecteur'
-import { planDirect, planVod, urlVod, deplacementParService, BADGE_MODE, type Plan } from '../lib/flux'
+import { planDirect, planVod, urlVod, deplacementParService, bornerPosition, BADGE_MODE, type Plan } from '../lib/flux'
 import { lectureDe, chaineDeLecture } from '../lib/source-lecture'
 import { annulerFinDifferee } from '../lib/bail'
 import { ErreurLecteur, enCoupure } from '../lib/errors'
@@ -42,7 +42,7 @@ import { brancherClavier } from './lecture/clavier'
 import { heure } from './lecture/format'
 import { creerPistes } from './lecture/pistes'
 import { creerReprisePanne } from './lecture/reconnexion'
-import { pointDeReprise } from '../lib/politique-reprise'
+import { departDeLecture, finPrematuree, pointDeReprise } from '../lib/politique-reprise'
 import { urlMasquee } from './lecture/sources'
 import { creerZapping } from './lecture/zapping'
 
@@ -150,7 +150,9 @@ export default function Lecture(props: {
     const d = p.dureeSecondes ?? 0
     return d > 0 ? d : undefined
   }
-  const duree = () => dureeAnnoncee() ?? dureeBrute()
+  // Via le service, SEULE la duree annoncee compte : sans `X-Mytv-Duree`, elle
+  // est inconnue (0) — pas de barre, et un deplacement n'est plus plafonne a 0.
+  const duree = () => (!direct() && plan()?.viaService ? (dureeAnnoncee() ?? 0) : dureeBrute())
   const position = () => positionVisee() ?? decalage() + positionBrute()
   /** La coque garde le lecteur monté : il n'est « parti » que visuellement. */
   const horsLecteur = () => ecran() !== 'lecture'
@@ -276,7 +278,8 @@ export default function Lecture(props: {
         notifier(`« ${precedente.nom} » arrêté — l’abonnement n’autorise qu’un flux à la fois`, 'limite')
       if (precedente.type === 'live') zapping.poserDerniereChaine(precedente)
     }
-    if (!precedente || precedente.cle !== entree.cle) {
+    const premierPassage = !precedente || precedente.cle !== entree.cle
+    if (premierPassage) {
       panne.remettreAZero()
       panne.arreter()
       imagesVues = false
@@ -323,6 +326,16 @@ export default function Lecture(props: {
           p = { ...p, url: urlAvecCapacites(urlForcee(p.url, forcage), cap) }
         }
         else {
+          // La reprise est proposee, jamais imposee (sous une minute, rouvrir au
+          // debut ne coute rien) — et seulement a la PREMIERE ouverture : une
+          // reouverture automatique repart du point atteint, sans question. On
+          // ouvre directement au point sauvegarde plutot que d'ouvrir a 0 puis
+          // rouvrir : chaque ouverture est un ffmpeg et une place chez le fournisseur.
+          const sauvegardee = premierPassage ? await reprisePour(entree.cle) : undefined
+          if (annule) return
+          const depart = departDeLecture({ premierPassage, pointAtteint, sauvegardee, seuil: SEUIL_REPRISE })
+          pointAtteint = depart.depart
+          if (depart.proposer !== null) calques.poserReprise(depart.proposer)
           poserVerification(true)
           try {
             p = await planVod({ lecture, capacites: cap, decalage: pointAtteint, signal: abandon.signal })
@@ -349,13 +362,6 @@ export default function Lecture(props: {
         if (p.genre === 'vod' && !p.viaService && pointAtteint > 0) {
           const reprise = pointAtteint
           video.addEventListener('loadedmetadata', () => { video.currentTime = reprise }, { once: true })
-        }
-
-        // La reprise est proposée, jamais imposée : sous une minute, rouvrir
-        // au début ne coûte rien et évite une question de plus.
-        if (entree.type !== 'live') {
-          const position = await reprisePour(entree.cle)
-          if (position && position > SEUIL_REPRISE && !annule) calques.poserReprise(position)
         }
         await video.play().catch(() => {
           /* lecture différée jusqu'au geste de l'utilisateur */
@@ -409,8 +415,20 @@ export default function Lecture(props: {
       poserErreur(null)
       pistes.relirePistes()
     }
+    // Un `ended` avant la fin annoncee n'est pas une fin : le serveur, quand son
+    // remux casse, tronque la reponse, et le navigateur prend la fin du corps pour
+    // la fin du film. C'est une coupure : la reprise rouvre au point atteint (`?t=`).
+    const alaFin = () => {
+      if (direct() || !finPrematuree(position(), duree())) return
+      noter('vod:fin-prematuree', { position: Math.round(position()), duree: Math.round(duree()) })
+      traiterErreur(new ErreurLecteur(
+        'reseau', 'Le flux s’est interrompu avant la fin du film.',
+        'Reprise automatique au point atteint.', 'ended_premature',
+      ))
+    }
     const evenements: Array<[string, () => void]> = [
       ['play', () => { poserEnPause(false); lire() }],
+      ['ended', alaFin],
       ['pause', () => { poserEnPause(true); lire() }],
       ['volumechange', lire], ['durationchange', lire],
       ['timeupdate', auTemps], ['loadeddata', auxImages], ['playing', auxImages],
@@ -509,7 +527,8 @@ export default function Lecture(props: {
    * barre de progression, temps restant, position de reprise.
    */
   function allerA(cible: number) {
-    const borne = Math.max(0, Math.min(duree() || 0, cible))
+    // Sans duree connue (remux sans `X-Mytv-Duree`), on ne plafonne pas : voir bornerPosition.
+    const borne = bornerPosition(cible, duree())
     const p = plan()
     if (!deplacementParService(p)) {
       video.currentTime = borne
@@ -543,7 +562,7 @@ export default function Lecture(props: {
    * n'applique que la dernière intention, une fois la poignée relâchée.
    */
   function demanderPosition(cible: number) {
-    const borne = Math.max(0, Math.min(duree() || 0, cible))
+    const borne = bornerPosition(cible, duree())
     if (!deplacementParService(plan())) {
       video.currentTime = borne
       return

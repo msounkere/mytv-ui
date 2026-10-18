@@ -111,3 +111,19 @@ test('serveur injoignable : erreur reseau, pas une exception brute', async () =>
     (e: { couche: string }) => e.couche === 'reseau',
   )
 })
+
+import { bornerPosition } from '../../src/lib/flux'
+
+test('deplacement sans duree connue (remux sans X-Mytv-Duree) : la cible est gardee, pas ramenee a 0', () => {
+  // Regression : Math.min(duree || 0, cible) renvoyait chaque deplacement au debut du film.
+  assert.equal(bornerPosition(610, 0), 610)
+  assert.equal(bornerPosition(610, NaN), 610)
+  assert.equal(bornerPosition(-5, 0), 0)
+})
+
+test('avec une duree, la cible est bornee au film', () => {
+  assert.equal(bornerPosition(610, 5000), 610)
+  assert.equal(bornerPosition(6000, 5000), 5000)
+  assert.equal(bornerPosition(-1, 5000), 0)
+  assert.equal(bornerPosition(NaN, 5000), 0)
+})
