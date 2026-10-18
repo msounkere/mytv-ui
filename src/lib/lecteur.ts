@@ -1,5 +1,5 @@
 import type Hls from 'hls.js'
-import { ErreurLecteur, erreurDeStatut } from './errors'
+import { erreurDeMedia, ErreurLecteur, erreurDeStatut } from './errors'
 import { noter, observerVideo, masquerUrl } from './diagnostic'
 import { lectureArretee, lectureOuverte } from './bail'
 import { signalerSiNonAuthentifie } from './session-expiree'
@@ -257,29 +257,7 @@ export function traduireHls(
   return new ErreurLecteur('relais', 'Lecture impossible.', 'Reessayer.', data.details)
 }
 
-/** Les codes MediaError sont pauvres : on nomme malgre tout la couche. */
+/** Les codes MediaError sont pauvres : la classification (pure, testee) est dans errors.ts. */
 function erreurMedia(video: HTMLVideoElement): ErreurLecteur {
-  const e = video.error
-  switch (e?.code) {
-    case MediaError.MEDIA_ERR_NETWORK:
-      return new ErreurLecteur('reseau', 'Le telechargement du flux a echoue.', 'Reessayer.', e.message)
-    case MediaError.MEDIA_ERR_DECODE:
-      return new ErreurLecteur(
-        'codec',
-        'Le navigateur ne decode pas ce format — typiquement une piste audio EAC3.',
-        'Diffuser vers un televiseur, qui decodera la piste.',
-        e.message,
-      )
-    case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-      return new ErreurLecteur(
-        'codec',
-        'Conteneur ou codec non pris en charge par ce navigateur.',
-        'Diffuser vers un televiseur, ou choisir une autre version du contenu.',
-        e.message,
-      )
-    case MediaError.MEDIA_ERR_ABORTED:
-      return new ErreurLecteur('reseau', 'Lecture interrompue.', 'Relancer la lecture.', e.message)
-    default:
-      return new ErreurLecteur('relais', 'Lecture impossible.', 'Reessayer.', e?.message)
-  }
+  return erreurDeMedia(video.error?.code, video.error?.message)
 }

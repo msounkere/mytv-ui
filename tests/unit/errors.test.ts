@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { erreurDeStatut, lireRetryAfter } from '../../src/lib/errors'
+import { erreurDeStatut, lireRetryAfter, erreurDeMedia } from '../../src/lib/errors'
 
 test('Retry-After : secondes, date HTTP, ou rien', () => {
   assert.equal(lireRetryAfter('7'), 7)
@@ -68,4 +68,24 @@ test('502 fournisseur_adresse_refusee et 502 ordinaire restent distincts', () =>
   assert.equal(erreurDeStatut(502).couche, 'relais')
   // Le code n'a de sens que sur un 502 : un autre statut garde sa traduction.
   assert.equal(erreurDeStatut(401, { code: 'fournisseur_compte_invalide' }).couche, 'auth')
+})
+
+// Regression (recette reelle) : une requete de film en echec est « source non prise en charge »
+// + « Request failed » chez Firefox ; ce n'est PAS un probleme de format.
+test('Firefox : requete en echec = reseau, pas un format non lisible', () => {
+  const e = erreurDeMedia(4, '2152398949: Request failed')
+  assert.equal(e.couche, 'reseau')
+  assert.match(e.message, /telechargement/)
+})
+
+test('un vrai format refuse reste un probleme de codec', () => {
+  assert.equal(erreurDeMedia(4, 'MEDIA_ELEMENT_ERROR: Format error').couche, 'codec')
+  assert.equal(erreurDeMedia(4, undefined).couche, 'codec')
+  assert.equal(erreurDeMedia(3, 'decode').couche, 'codec')
+})
+
+test('codes reseau et abandon', () => {
+  assert.equal(erreurDeMedia(2, '').couche, 'reseau')
+  assert.equal(erreurDeMedia(1, '').couche, 'reseau')
+  assert.equal(erreurDeMedia(undefined, '').couche, 'relais')
 })
