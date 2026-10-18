@@ -49,3 +49,18 @@ export function decider(erreur: { couche: Couche; attenteSecondes?: number }, es
     motif: occupe ? 'occupe' : 'panne',
   }
 }
+
+/** Marge de securite a la reprise : quelques secondes avant la coupure, jamais un trou. */
+export const MARGE_REPRISE = 2
+
+/**
+ * Ou reprendre un film apres une coupure : a la position ATTEINTE, pas au dernier saut demande.
+ * POURQUOI : le « point atteint » ne changeait qu'au deplacement manuel ; quand le navigateur
+ * fermait la connexion apres 6 minutes de lecture, la reprise automatique repartait du depart
+ * demande (878 s) et rejouait ces 6 minutes (constate en recette reelle : reprise a 878 s alors
+ * que la lecture etait vers 1 242 s).
+ */
+export function pointDeReprise(positionAtteinte: number, dernierPointDemande: number): number {
+  if (!Number.isFinite(positionAtteinte) || positionAtteinte <= 0) return dernierPointDemande
+  return Math.max(0, positionAtteinte - MARGE_REPRISE)
+}

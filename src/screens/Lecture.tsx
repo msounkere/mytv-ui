@@ -41,6 +41,7 @@ import { brancherClavier } from './lecture/clavier'
 import { heure } from './lecture/format'
 import { creerPistes } from './lecture/pistes'
 import { creerReprisePanne } from './lecture/reconnexion'
+import { pointDeReprise } from '../lib/politique-reprise'
 import { urlMasquee } from './lecture/sources'
 import { creerZapping } from './lecture/zapping'
 
@@ -175,6 +176,8 @@ export default function Lecture(props: {
    * est bornée) ; le reste suit la politique de reprise habituelle.
    */
   function traiterErreur(brute: ErreurLecteur) {
+    // Un film repart de la position ATTEINTE, pas du dernier saut demande (voir pointDeReprise).
+    if (!direct()) pointAtteint = pointDeReprise(position(), pointAtteint)
     // Apres des images, une place prise est une COUPURE (message dedie, meme reprise).
     const e = imagesVues ? enCoupure(brute) : brute
     const chaine = direct() ? chaineDeLecture(lectureDe(props.entree)) : undefined
