@@ -159,6 +159,58 @@ try {
   await page.goto('about:blank')
   v.ok(await jusqua(() => banc.api((r) => r.chemin === '/api/v1/live/1001/fin').length >= 1, 4000), 'pagehide : la place est rendue tout de suite (keepalive)')
 
+  // --- 14. Fin prematuree : un `ended` avant la duree annoncee est une coupure -------------------
+  console.log('14. film remuxe tronque (ended a 3 s sur 120 s annoncees)')
+  // Le parcours 13 a quitte la page : on la rouvre.
+  await page.goto(`${banc.serveur.origine}/index.html?ecran=lecture`)
+  await page.waitForFunction(() => !!window.harnais)
+  await reinit()
+  await ouvrir(film(107))
+  const gets107 = () => banc.api((r) => r.chemin === '/api/v1/vod/iptva:107' && r.methode === 'GET')
+  v.ok(await jusqua(() => gets107().length >= 1, 10_000), 'lecture ouverte')
+  v.ok(await jusqua(async () => (await bandeau().count()) > 0, 15_000, 100), "le `ended` premature est traite comme une coupure : bandeau de reconnexion")
+  v.ok(await jusqua(() => gets107().length >= 2, 15_000), 'puis le flux est rouvert automatiquement')
+  const t107 = Number(new URLSearchParams(gets107()[1]?.requete ?? '').get('t'))
+  v.ok(t107 > 0 && t107 <= 3, `rouvert au point atteint, par ?t= (?t=${t107})`)
+  v.ok(await jusqua(async () => (await banc.serveur.evenements()).some((e) => e.type === 'vod:fin-prematuree'), 5000, 250), 'telemetrie : vod:fin-prematuree')
+  v.ok((await page.locator('[data-role="reprise"]').count()) === 0, 'aucun dialogue « Reprendre » rejoue par la reprise automatique')
+
+  // --- 15. Position memorisee : ouverture directe au point sauvegarde, dialogue une fois ----------
+  console.log('15. film remuxe avec une position memorisee (70 s)')
+  await reinit()
+  await page.evaluate(() => window.harnais.semerReprise('vod:101', 70, 120))
+  await ouvrir(film(101))
+  const gets101 = () => banc.api((r) => r.chemin === '/api/v1/vod/iptva:101' && r.methode === 'GET')
+  v.ok(await jusqua(() => gets101().length >= 1, 10_000), 'lecture ouverte')
+  v.ok(/[?&]t=70/.test(gets101()[0]?.requete ?? ''), `ouverte DIRECTEMENT au point sauvegarde (${gets101()[0]?.requete})`)
+  const dialogue = page.locator('[data-role="reprise"]')
+  v.ok(await jusqua(async () => (await dialogue.count()) > 0, 5000, 100), 'le dialogue « Reprendre / Depuis le debut » est propose')
+  await dialogue.getByRole('button', { name: /Reprendre/ }).click()
+  await attendre(1500)
+  v.ok(gets101().length === 1, `« Reprendre » ne rouvre rien : on y est deja (${gets101().length} GET)`)
+  v.ok((await dialogue.count()) === 0, 'dialogue ferme')
+  // Une coupure (le navigateur prend la fin du corps pour la fin du film) : reprise sans dialogue.
+  await page.evaluate(() => document.querySelector('video').dispatchEvent(new Event('ended')))
+  v.ok(await jusqua(() => gets101().length >= 2, 15_000), 'reprise automatique apres la coupure')
+  await attendre(1500)
+  v.ok((await dialogue.count()) === 0, 'le dialogue n est PAS rejoue par la reprise automatique')
+  v.ok(/[?&]t=/.test(gets101()[1]?.requete ?? ''), `reprise au point atteint (${gets101()[1]?.requete})`)
+
+  // --- 16. Deplacement sans duree annoncee --------------------------------------------------------
+  console.log('16. film remuxe sans X-Mytv-Duree : avancer de 10 s')
+  await reinit()
+  await ouvrir(film(108))
+  v.ok(await jusqua(() => banc.api((r) => r.chemin === '/api/v1/vod/iptva:108' && r.methode === 'GET').length >= 1, 10_000), 'lecture ouverte')
+  await page.evaluate(() => { const v = document.querySelector('video'); v.pause(); v.currentTime = 0 })
+  await attendre(400)
+  v.ok((await page.locator('input[aria-label="Position de lecture"]').count()) === 0, 'sans duree, pas de barre de progression (le curseur de volume, lui, reste)')
+  await page.locator('[tabindex="-1"]').first().focus()
+  await page.keyboard.press('ArrowRight')
+  const demande108 = () => banc.api((r) => r.chemin === '/api/v1/vod/iptva:108' && r.methode === 'GET' && /[?&]t=/.test(r.requete))
+  v.ok(await jusqua(() => demande108().length >= 1, 8000), 'avancer de 10 s passe par ?t= meme sans duree connue')
+  const t108 = Number(new URLSearchParams(demande108()[0]?.requete ?? '').get('t'))
+  v.ok(t108 >= 10 && t108 < 10.6, `la cible n est pas ramenee a 0 (?t=${t108})`)
+
   // --- Hygiene ------------------------------------------------------------------------------------
   v.ok(banc.externes.length === 0, `aucune requete hors 127.0.0.1 (${banc.externes.length})`)
   if (banc.externes.length) v.info(banc.externes.slice(0, 3).join(' '))

@@ -166,3 +166,14 @@ export async function planVod(opts: OptionsPlan): Promise<Plan> {
     dureeSecondes,
   }
 }
+
+/**
+ * Borne une position visee. Sans duree connue (film remuxe sans `X-Mytv-Duree`),
+ * on ne plafonne PAS : `Math.min(0, cible)` renvoyait chaque deplacement au
+ * debut du film. Le serveur, lui, sait refuser un `?t=` hors du film.
+ */
+export function bornerPosition(cible: number, duree: number): number {
+  if (!Number.isFinite(cible)) return 0
+  const plafonnee = Number.isFinite(duree) && duree > 0 ? Math.min(duree, cible) : cible
+  return Math.max(0, plafonnee)
+}

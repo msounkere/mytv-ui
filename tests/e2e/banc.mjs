@@ -1,7 +1,7 @@
 // Banc commun des parcours : faux serveur + page d'essai + navigateur verrouille
 // sur 127.0.0.1. Toute requete vers un autre hote est BLOQUEE et comptee ; un
 // parcours qui en provoque une echoue. Les navigateurs sont toujours fermes.
-import { chromium } from 'playwright'
+import { chromium, firefox } from 'playwright'
 import { build } from 'vite'
 import { fileURLToPath } from 'node:url'
 import { demarrerServeur } from './serveur-fictif.mjs'
@@ -53,7 +53,12 @@ export async function jusqua(condition, delaiMs = 10_000, pasMs = 100) {
  */
 export async function ouvrirBanc(opts) {
   const serveur = await demarrerServeur({ dossier: DIST_HARNAIS, limites: opts.limites })
-  const navigateur = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+  // NAVIGATEUR=firefox rejoue le meme parcours sur Firefox : le spectateur s'en
+  // sert, et le decodage (MSE, autoplay) y differe de Chromium.
+  const navigateur =
+    process.env.NAVIGATEUR === 'firefox'
+      ? await firefox.launch({ firefoxUserPrefs: { 'media.autoplay.default': 0, 'media.autoplay.blocking_policy': 0 } })
+      : await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
   const contexte = await navigateur.newContext({
     viewport: { width: 1440, height: 900 },
     timezoneId: opts.timezoneId ?? 'Europe/Paris',
@@ -75,6 +80,15 @@ export async function ouvrirBanc(opts) {
     window.__session = 0
     window.addEventListener('mytv:session-expiree', () => (window.__session += 1))
   })
+  // Firefox sans carte son (headless) leve OnMediaSinkAudioError (MediaError 3)
+  // des que le son demarre, et le lecteur y voit un format illisible. Aucune
+  // preference (cubeb nul, decodeur blank) ne l'evite : on lit muet. Le son
+  // n'est verifie par aucun parcours.
+  if (process.env.NAVIGATEUR === 'firefox')
+    await page.addInitScript(() => {
+      const lire = HTMLMediaElement.prototype.play
+      HTMLMediaElement.prototype.play = function () { this.muted = true; return lire.call(this) }
+    })
   await page.goto(`${serveur.origine}/index.html?ecran=${opts.ecran}`)
   await page.waitForFunction(() => !!window.harnais)
 
