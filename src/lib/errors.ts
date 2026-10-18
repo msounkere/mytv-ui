@@ -258,3 +258,48 @@ export function erreurDeStatut(statut: number, infos: InfosStatut = {}): ErreurL
 export function depuisReponse(r: Response, contexte: string): ErreurLecteur {
   return erreurDeStatut(r.status, { retryAfter: r.headers.get('Retry-After'), contexte })
 }
+
+// Codes de MediaError (recopies : ce module est aussi execute hors navigateur par les tests).
+const MEDIA_ABORTED = 1
+const MEDIA_NETWORK = 2
+const MEDIA_DECODE = 3
+const MEDIA_SRC_NOT_SUPPORTED = 4
+
+/**
+ * Classe l'erreur d'un <video>. POURQUOI le texte compte : quand la REQUETE du film echoue
+ * (502, coupure, annulation), Firefox rend « source non prise en charge » avec le message
+ * « Request failed » — ce n'est pas un probleme de format, et l'accuser envoyait
+ * l'utilisateur vers « diffuser vers un televiseur » alors qu'il suffisait de reessayer
+ * (constate en recette reelle sur une reprise de serie).
+ */
+export function erreurDeMedia(code: number | undefined, message?: string): ErreurLecteur {
+  switch (code) {
+    case MEDIA_NETWORK:
+      return new ErreurLecteur('reseau', 'Le telechargement du flux a echoue.', 'Reessayer.', message)
+    case MEDIA_DECODE:
+      return new ErreurLecteur(
+        'codec',
+        'Le navigateur ne decode pas ce format — typiquement une piste audio EAC3.',
+        'Diffuser vers un televiseur, qui decodera la piste.',
+        message,
+      )
+    case MEDIA_SRC_NOT_SUPPORTED:
+      if (message && /request failed|network|reseau|load failed|http/i.test(message))
+        return new ErreurLecteur(
+          'reseau',
+          'Le telechargement du film a echoue.',
+          'Reessayer ; la lecture reprendra a la meme position.',
+          message,
+        )
+      return new ErreurLecteur(
+        'codec',
+        'Conteneur ou codec non pris en charge par ce navigateur.',
+        'Diffuser vers un televiseur, ou choisir une autre version du contenu.',
+        message,
+      )
+    case MEDIA_ABORTED:
+      return new ErreurLecteur('reseau', 'Lecture interrompue.', 'Relancer la lecture.', message)
+    default:
+      return new ErreurLecteur('relais', 'Lecture impossible.', 'Reessayer.', message)
+  }
+}
