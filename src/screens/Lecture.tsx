@@ -2,6 +2,7 @@ import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from
 import { Portal } from 'solid-js/web'
 import SubstitutLogo from '../components/SubstitutLogo'
 import EtiquettePays from '../components/EtiquettePays'
+import Icone from '../components/Icone'
 import ControlesLecteur, { ENCRE, ENCRE2, type BoutonControle } from '../components/ControlesLecteur'
 import ListeZapping from '../components/ListeZapping'
 import ErreurLecture, { type ActionErreur } from '../components/ErreurLecture'
@@ -83,7 +84,10 @@ export default function Lecture(props: {
       compte à rebours de fin enchaîne. Facultatif — sans lui, aucun décompte. */
   suivant?: { titre: string; lire: () => void }
   surChanger: (e: EntreeCatalogue) => void
+  /** Arrêt du flux (la croix) : libère la connexion. */
   surFermer: () => void
+  /** Retour à la fiche ou à la liste, la lecture continue dans le mini-lecteur. */
+  surRetour: () => void
 }) {
   let video!: HTMLVideoElement
   let cadre!: HTMLDivElement
@@ -579,7 +583,11 @@ export default function Lecture(props: {
     calqueOuvert: () =>
       calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert(),
     reveiller: calques.reveiller,
-    fermerCalque: calques.fermerCalque,
+    // Échap : ferme le calque ouvert ; sinon quitte l'écran (la lecture continue).
+    fermerCalque: () => {
+      if (calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert()) calques.fermerCalque()
+      else props.surRetour()
+    },
     zapper: zapping.zapper,
     deplacer,
     basculerLecture,
@@ -647,7 +655,7 @@ export default function Lecture(props: {
       masquerMobile: true,
       surAction: () => void basculerPip(),
     },
-    { icone: 'close', libelle: 'Arrêter le flux', titre: 'Arrêter le flux et libérer la connexion', surAction: props.surFermer },
+    { icone: 'close', libelle: 'Arrêter le flux', titre: 'Arrêter le flux et libérer la connexion (retour à la fiche ou à la liste)', surAction: props.surFermer },
     { icone: 'fullscreen', libelle: 'Plein écran', titre: 'Plein écran', surAction: pleinEcran },
   ]
 
@@ -786,6 +794,24 @@ export default function Lecture(props: {
                 color: ENCRE, 'z-index': 2,
               }}
             >
+              {/* Retour visible : avant, seule la croix (qui ARRÊTE le flux) permettait de
+                  quitter l'écran, et depuis un épisode elle renvoyait à la liste de toutes
+                  les séries. Ici la lecture continue dans le mini-lecteur. */}
+              <button
+                type="button"
+                class="lecteur-retour"
+                title="Retour (la lecture continue dans le mini-lecteur) — Échap"
+                aria-label="Retour"
+                onClick={() => props.surRetour()}
+                style={{
+                  display: 'inline-flex', 'align-items': 'center', gap: '4px',
+                  padding: '4px 8px', 'margin-right': '4px', border: '0', 'border-radius': '6px',
+                  background: 'transparent', color: ENCRE, cursor: 'pointer', 'font-size': '13px',
+                }}
+              >
+                <Icone nom="arrow_back" taille={18} />
+                <Show when={!estMobile()}>Retour</Show>
+              </button>
               <EtiquettePays pays={props.entree.pays} />
               <h1 class="tronque" style={{ 'font-size': '15px', 'line-height': '18px' }}>{props.entree.nom}</h1>
               <Show when={zapping.nomCategorie()}>
