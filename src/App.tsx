@@ -316,11 +316,22 @@ function Coque(props: RouteSectionProps) {
               // Masqué par `visibility` et non par `display` : le lecteur
               // garde une taille réelle, donc sa liste de zapping virtualisée
               // reste mesurable et se réaffiche peuplée au retour.
+              //
+              // POURQUOI aussi `opacity: 0` et un décalage hors de l'écran :
+              // `visibility` seul ne suffit pas partout. Constaté sur Firefox
+              // (Windows, vidéo décodée en matériel) : après « Retour », le
+              // lecteur entier restait peint par-dessus l'Accueil alors que les
+              // styles calculés le disaient masqué. Une vidéo composée dans une
+              // surface matérielle peut ignorer `visibility` ; rien n'ignore une
+              // position hors de la fenêtre, et l'opacité nulle n'est pas
+              // « ressuscitable » par un enfant, contrairement à `visibility`.
               <div
                 class="couche-lecteur"
                 aria-hidden={!enLecture()}
                 style={{
                   visibility: enLecture() ? undefined : 'hidden',
+                  opacity: enLecture() ? undefined : 0,
+                  transform: enLecture() ? undefined : 'translateX(-200vw)',
                   'pointer-events': enLecture() ? undefined : 'none',
                   'z-index': enLecture() ? undefined : -1,
                 }}
