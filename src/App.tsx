@@ -3,7 +3,7 @@ import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } fr
 import type { RouteSectionProps } from '@solidjs/router'
 import { profilActif, session } from './lib/auth'
 import {
-  LIBELLE_ONGLET, arreterLecture, barreDeployee, brancherRouteur, changerDeChaine, cleFiche,
+  LIBELLE_ONGLET, arreterLecture, quitterLecteur, barreDeployee, brancherRouteur, changerDeChaine, cleFiche,
   cleFicheFilm, cleLecture, ecran, episodeSuivant, filmOuvert, ouvrirDetails, poserFilmOuvert, lireEpisode, oublierContenuOuvert, onglet, ouvrir,
   ouvrirRecherche, poserEcran, poserOnglet, poserSelection, poserSerieOuverte, revenirAuLecteur,
   selection, serieOuverte, urlEpisode,
@@ -336,6 +336,7 @@ function Coque(props: RouteSectionProps) {
                     }
                     surChanger={changerDeChaine}
                     surFermer={arreterLecture}
+                    surRetour={quitterLecteur}
                   />
                 </Suspense>
               </div>

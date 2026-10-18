@@ -160,6 +160,8 @@ const [filmOuvert, poserFilmOuvert] = createSignal<EntreeCatalogue | null>(null)
 
 export { selection, poserSelection, urlEpisode, episodeSuivant, serieOuverte, poserSerieOuverte, filmOuvert, poserFilmOuvert }
 
+import { cheminApresLecture } from './lib/sortie-lecteur'
+
 const cheminLecture = (cle: string) => `/lecture/${cle}`
 
 export function ouvrir(e: EntreeCatalogue): void {
@@ -243,11 +245,21 @@ export function changerDeChaine(e: EntreeCatalogue): void {
   })
 }
 
+/**
+ * Quitter l'écran du lecteur SANS arrêter : la lecture continue dans le
+ * mini-lecteur. Un épisode ramène à la fiche de sa série, un film ou une chaîne
+ * à sa liste (voir lib/sortie-lecteur).
+ */
+export function quitterLecteur(): void {
+  aller(cheminApresLecture(selection()))
+}
+
 /** Arrêt explicite : c'est le seul geste qui libère la connexion du relais. */
 export function arreterLecture(): void {
+  const sortie = cheminApresLecture(selection())
   batch(() => {
     poserSelection(null)
-    poserEcran('parcours')
+    aller(sortie)
   })
 }
 
