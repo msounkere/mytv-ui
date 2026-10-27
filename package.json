@@ -10,7 +10,7 @@
     "preview": "NODE_OPTIONS=--tls-max-v1.2 vite preview",
     "check": "tsc --noEmit",
     "test:unit": "node --test tests/unit/*.test.mjs && node tests/unit/lancer.mjs",
-    "test:e2e": "node tests/e2e/us19.mjs && node tests/e2e/us20-lecture.mjs && node tests/e2e/us21-guide.mjs && node tests/e2e/us28.mjs && node tests/e2e/us32.mjs && node tests/e2e/us35.mjs",
+    "test:e2e": "node tests/e2e/us19.mjs && node tests/e2e/us20-lecture.mjs && node tests/e2e/us21-guide.mjs && node tests/e2e/us28.mjs && node tests/e2e/us32.mjs && node tests/e2e/us35.mjs && node tests/e2e/us39.mjs && node tests/e2e/us39-direct.mjs",
     "test:harnais": "node tests/e2e/us19-harnais.mjs && node tests/e2e/us28-harnais.mjs",
     "test:fournisseur": "node tests/e2e/us25-fournisseur.mjs",
     "test:recette": "node tests/e2e/us22-recette.mjs",

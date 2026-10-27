@@ -19,7 +19,7 @@ const TYPES_MIME = {
 export const MOT_DE_PASSE = 'secret-de-test-ui1'
 export const COMPTE = 'alice'
 
-function genererCatalogue({ chaines, films, series }) {
+function genererCatalogue({ chaines, films, series, variantes = 0 }) {
   const maintenant = Date.now()
   const iso = (ms) => new Date(ms).toISOString()
   const categories = []
@@ -38,6 +38,12 @@ function genererCatalogue({ chaines, films, series }) {
     numero: i + 1, epg_id: `ch${i}.fr`, categorie: parType('live')[i % 3].id,
     lecture: `/api/v1/live/${100000 + i}.m3u8`, ajoute: iso(maintenant - i * 60_000),
   }))
+  // US-39 CA1 : les `variantes` premieres chaines existent aussi en HD (meme categorie)
+  // et en 4K (dans une AUTRE categorie), comme chez le vrai fournisseur.
+  for (let i = 0; i < variantes; i++) {
+    live.push({ ...live[i], id: `iptva:${110000 + i}`, nom: `FR - Chaîne ${i} HD`, lecture: `/api/v1/live/${110000 + i}.m3u8` })
+    live.push({ ...live[i], id: `iptva:${120000 + i}`, nom: `FR - Chaîne ${i} 4K`, categorie: parType('live')[(i + 1) % 3].id, lecture: `/api/v1/live/${120000 + i}.m3u8` })
+  }
   const vod = Array.from({ length: films }, (_, i) => ({
     id: `iptva:${5000 + i}`, nom: `Film Test ${i} (${2000 + (i % 24)})`, image: `/img/film${i}.jpg`,
     categorie: parType('vod')[i % 3].id, extension: i % 5 === 0 ? 'mkv' : 'mp4', note: 3 + (i % 70) / 10,

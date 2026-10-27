@@ -6,6 +6,8 @@ import { brancherRouteur } from '../../../src/etat'
 import { db, type EntreeCatalogue } from '../../../src/lib/db'
 import Lecture from '../../../src/screens/Lecture'
 import Guide from '../../../src/screens/Guide'
+import { noter } from '../../../src/lib/diagnostic'
+import { demarrerCollecte } from '../../../src/lib/fluidite'
 import '../../../src/styles/tokens.css'
 import '../../../src/styles/base.css'
 
@@ -13,6 +15,8 @@ import '../../../src/styles/base.css'
 // page de test pilote le reste par `window.harnais`.
 
 const ecranDemande = new URLSearchParams(location.search).get('ecran') ?? 'lecture'
+// Comme dans l'application (index.tsx) : la collecte des lectures (US-39 CA2).
+demarrerCollecte()
 const [chemin, poserChemin] = createSignal(ecranDemande === 'guide' ? '/guide' : '/lecture/x')
 brancherRouteur(chemin, (h) => poserChemin(h))
 
@@ -30,6 +34,10 @@ declare global {
       semer: (entrees: Array<Record<string, unknown>>) => Promise<void>
       /** Position memorisee d'un film, comme si on s'y etait arrete. */
       semerReprise: (cle: string, position: number, duree: number) => Promise<void>
+      /** Injecte un evenement de telemetrie, comme le lecteur le noterait (US-38 CA4, US-39 CA2). */
+      noter: (type: string, details: Record<string, string | number | boolean>) => void
+      /** Lectures mesurees enregistrees (table `lectures`). */
+      lectures: () => Promise<unknown[]>
       ouvertures: string[]
     }
   }
@@ -50,6 +58,8 @@ window.harnais = {
   semerReprise: async (cle, position, duree) => {
     await db.reprises.put({ cle, position, duree, vuLe: Date.now() })
   },
+  noter,
+  lectures: () => db.lectures.toArray(),
   ouvertures,
 }
 

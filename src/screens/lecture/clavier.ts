@@ -22,6 +22,8 @@ export interface ActionsClavier {
   revenirDerniereChaine: () => void
   basculerMiniGuide: () => void
   basculerInfos: () => void
+  /** Variantes de la chaîne (US-39) : recommandation, choix, test. */
+  basculerVariantes: () => void
 }
 
 /**
@@ -53,6 +55,7 @@ export function brancherClavier(a: ActionsClavier): (e: KeyboardEvent) => void {
     else if ((e.key === 'r' || e.key === 'R') && a.direct()) a.revenirDerniereChaine()
     else if ((e.key === 'g' || e.key === 'G') && a.direct()) a.basculerMiniGuide()
     else if (e.key === 'i' || e.key === 'I') a.basculerInfos()
+    else if ((e.key === 'v' || e.key === 'V') && a.direct()) a.basculerVariantes()
     else return
     e.preventDefault()
   }

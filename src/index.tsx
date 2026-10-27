@@ -12,7 +12,10 @@ import Portail from './Portail'
 // l'autre doit demarrer meme si l'ecran ouvert ne lit ni favori ni historique.
 import './lib/synchro'
 import { initialiserCapacites } from './lib/capacites'
+import { demarrerCollecte } from './lib/fluidite'
 void initialiserCapacites()
+// Score de fluidite (US-39 CA2) : ecoute la telemetrie du lecteur des le depart.
+demarrerCollecte()
 
 // Le client vit dans `lib/requetes.ts` avec les clefs, les durees de
 // fraicheur et les invalidations : l invalidation part de modules sans

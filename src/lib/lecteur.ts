@@ -39,6 +39,8 @@ export interface OptionsAttache {
   forcer?: ModeForce | null
   /** Capacites annoncees sur CHAQUE requete (en-tete ; la playlist les porte aussi en `?cap=`). */
   capacites?: Capacites
+  /** En-tetes de plus sur chaque requete hls.js (`X-Mytv-Qualite: eco`, US-38 CA4). */
+  entetes?: Record<string, string>
 }
 
 export async function attacher(
@@ -111,6 +113,7 @@ export async function attacher(
     // capacites voyagent donc par en-tete, meme origine.
     xhrSetup: (xhr: XMLHttpRequest) => {
       if (options.capacites) xhr.setRequestHeader(ENTETE_CAPACITES, formaterCapacites(options.capacites))
+      for (const [nom, valeur] of Object.entries(options.entetes ?? {})) xhr.setRequestHeader(nom, valeur)
     },
     // Memoire bornee sur un direct laisse ouvert des heures.
     backBufferLength: 30,
@@ -131,7 +134,9 @@ export async function attacher(
   // il a servi chaque segment en ~1 s et ne comprend pas les coupures.
   let placeSignalee = false
   let etatHls: EtatHls = ETAT_HLS_INITIAL
-  const arretVideo = observerVideo(video, { mode: 'hls' })
+  // La chaine voyage avec chaque evenement : le score de fluidite (US-39 CA2)
+  // agrege la telemetrie PAR chaine, sur la page, a partir de ces memes notes.
+  const arretVideo = observerVideo(video, { mode: 'hls', chaine })
   hls.on(HlsCtor.Events.ERROR, (_e, data) => {
     noter('hls:erreur', {
       genre: data.type,
@@ -191,6 +196,8 @@ export async function attacher(
       attente: Math.round(((st.loading.first - st.loading.start) / 1000) * 100) / 100,
       octets: st.total,
       debitKbps: Math.round(hls.bandwidthEstimate / 1000),
+      // Duree de video du segment : avec `octets`, le debit propre du flux (regle Eco, US-38 CA4).
+      dureeMedia: Math.round(d.frag.duration * 100) / 100,
     })
   })
   // Le mode decide par le serveur est dans l'en-tete de la playlist.

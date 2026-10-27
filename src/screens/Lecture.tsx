@@ -45,6 +45,15 @@ import { creerReprisePanne } from './lecture/reconnexion'
 import { departDeLecture, finPrematuree, pointDeReprise } from '../lib/politique-reprise'
 import { urlMasquee } from './lecture/sources'
 import { creerZapping } from './lecture/zapping'
+import { creerVariantesLecteur } from './lecture/variantes'
+import Variantes from '../components/Variantes'
+import { abonnerEvenements } from '../lib/diagnostic'
+import { debitLecteurMbps } from '../lib/fluidite'
+import { sonde } from '../sonde-debit'
+import {
+  ETAT_ECO_INITIAL, LIBELLE_QUALITE_MODE, MESSAGE_ECO, choisirQualite, entetesQualite, evaluerEco, fluxKbpsDe, qualite,
+  urlAvecQualite, type EtatEco,
+} from '../lib/qualite'
 
 // Le lecteur occupe la surface principale ; la colonne de droite permet de
 // zapper sans quitter la lecture (direct) ou de choisir ses pistes (VOD).
@@ -246,6 +255,55 @@ export default function Lecture(props: {
     notifier,
   })
 
+  // --- Variantes de la chaîne (US-39) et qualité Éco (US-38 CA4) --------------
+  /** Débit courant : ce que le lecteur a mesuré sur un segment récent, sinon la sonde. */
+  const debitCourantMbps = () => {
+    const d = debitLecteurMbps()
+    if (d !== undefined) return d
+    const so = sonde()
+    return so.etat === 'ok' ? so.mesure.debit : undefined
+  }
+  /** Adresse de playlist complète : capacités et qualité, comme à l'ouverture. */
+  const urlDirect = (lecture: string, cap = capacitesAnnoncees(etatTentatives.sansHevc)) =>
+    urlAvecQualite(urlAvecCapacites(urlForcee(lecture, forcage), cap), qualite())
+  const variantesLecteur = creerVariantesLecteur({
+    entree: () => props.entree,
+    direct,
+    debitMbps: debitCourantMbps,
+    urlLecture: (lecture) => urlDirect(lecture),
+    entetes: () => ({ 'X-Mytv-Capacites': capacitesAnnoncees(etatTentatives.sansHevc).join(','), ...entetesQualite(qualite()) }),
+    surChanger: props.surChanger,
+  })
+  /** « Passer en Éco ? » : proposé une fois par lecture quand la liaison est trop juste. */
+  const [propositionEco, poserPropositionEco] = createSignal(false)
+  let etatEco: EtatEco = ETAT_ECO_INITIAL
+  // La règle lit les segments que le lecteur note déjà (hls:segment) : débit
+  // mesuré par hls.js contre débit propre du segment (octets / durée de vidéo).
+  onCleanup(abonnerEvenements((type, d) => {
+    if (type !== 'hls:segment' || !direct() || qualite() === 'eco') return
+    const flux = fluxKbpsDe(Number(d['octets']), Number(d['dureeMedia']))
+    const mesure = Number(d['debitKbps'])
+    if (flux === undefined || !(mesure > 0)) return
+    const r = evaluerEco(etatEco, { t: Date.now(), debitKbps: mesure, fluxKbps: flux })
+    etatEco = r.etat
+    if (r.recommander) {
+      poserPropositionEco(true)
+      noter('eco:proposition', { chaine: chaineDeLecture(lectureEntree(props.entree)), mesure, flux })
+    }
+  }))
+  function passerEnEco() {
+    poserPropositionEco(false)
+    choisirQualite('eco')
+    noter('eco:choix', { qualite: 'eco', origine: 'proposition' })
+  }
+  function basculerQualite() {
+    const q = qualite() === 'eco' ? 'auto' : 'eco'
+    poserPropositionEco(false)
+    choisirQualite(q)
+    noter('eco:choix', { qualite: q, origine: 'bouton' })
+    notifier(q === 'eco' ? 'Qualité Éco : flux réencodé à débit réduit par le serveur' : 'Qualité Auto')
+  }
+
   /** Adresse de lecture du serveur : celle de l'entrée, ou celle de l'épisode. */
   function lectureEntree(e: EntreeCatalogue): string {
     return lectureDe(e, props.urlForcee && e.cle === props.entree.cle ? props.urlForcee : undefined)
@@ -267,6 +325,18 @@ export default function Lecture(props: {
     const entree = props.entree
     // Lu pour que la reconnexion rouvre réellement le flux.
     panne.relance()
+    // Changer de qualité (Auto / Éco) rouvre proprement : un seul flux, le
+    // serveur arrête son ffmpeg (US-38 CA3), et l'adresse porte le nouveau mode.
+    const modeQualite = qualite()
+    // Test actif (US-39 CA4) : le flux est FERMÉ (le nettoyage ci-dessous a
+    // déjà détaché le précédent) et rien ne rouvre tant que le test enchaîne les
+    // variantes — jamais deux flux. À la fin, cet effet rouvre.
+    if (variantesLecteur.testEnCours()) {
+      poserChargement(false)
+      poserImageDisponible(false)
+      poserErreur(null)
+      return
+    }
     let attache: Attache | undefined
     let annule = false
     const abandon = new AbortController()
@@ -286,6 +356,8 @@ export default function Lecture(props: {
       calques.nouveauContenu(entree.type === 'live')
       etatTentatives = AUCUNE_TENTATIVE
       forcage = null
+      etatEco = ETAT_ECO_INITIAL
+      poserPropositionEco(false)
       if (entree.type === 'live' && est4K(entree.nom)) notifier(MESSAGE_4K, 'limite')
       // Un autre contenu : le point atteint dans le précédent ne vaut plus rien.
       pointAtteint = 0
@@ -319,11 +391,12 @@ export default function Lecture(props: {
         await capacitesPretes()
         if (annule) return
         const cap = capacitesAnnoncees(etatTentatives.sansHevc)
-        const lecture = lectureEntree(entree)
+        // En Éco, toute ouverture (direct, film, épisode) porte `qualite=eco`.
+        const lecture = urlAvecQualite(lectureEntree(entree), modeQualite)
         let p: Plan
         if (entree.type === 'live') {
           p = planDirect(lecture)
-          p = { ...p, url: urlAvecCapacites(urlForcee(p.url, forcage), cap) }
+          p = { ...p, url: urlDirect(lectureEntree(entree), cap) }
         }
         else {
           // La reprise est proposee, jamais imposee (sous une minute, rouvrir au
@@ -356,6 +429,7 @@ export default function Lecture(props: {
         attache = await attacher(video, source, traiterErreur, {
           forcer: forcage,
           capacites: cap,
+          entetes: entetesQualite(modeQualite),
           surMode: (m, codec) => { poserModeServeur(m); codecServeur = codec },
         })
         if (annule) return attache.detacher()
@@ -616,6 +690,7 @@ export default function Lecture(props: {
     revenirDerniereChaine: zapping.revenirDerniereChaine,
     basculerMiniGuide: ouvrirMiniGuide,
     basculerInfos: ouvrirInfos,
+    basculerVariantes: () => variantesLecteur.poserOuvert((v) => !v),
   })
 
   const boutonsGauche = (): BoutonControle[] =>
@@ -647,8 +722,22 @@ export default function Lecture(props: {
             actif: calques.miniGuideOuvert(),
             surAction: ouvrirMiniGuide,
           },
+          {
+            icone: 'hd',
+            libelle: 'Variantes de la chaîne',
+            titre: 'Variantes de la chaîne : recommandation, choix, test (V)',
+            actif: variantesLecteur.ouvert(),
+            surAction: () => variantesLecteur.poserOuvert((v) => !v),
+          },
         ]
       : []),
+    {
+      icone: 'speed',
+      libelle: `Qualité : ${LIBELLE_QUALITE_MODE[qualite()]}`,
+      titre: qualite() === 'eco' ? 'Qualité Éco (débit réduit) — repasser en Auto' : 'Qualité Auto — passer en Éco (débit réduit, pour une liaison lente)',
+      actif: qualite() === 'eco',
+      surAction: basculerQualite,
+    },
     // Ouvert en VOD aussi : c'est là que se lit la chaîne de traitement, et
     // 54,6 % des films y passent.
     {
@@ -853,7 +942,7 @@ export default function Lecture(props: {
               duree={duree()}
               indiceClavier={
                 direct()
-                  ? '↑ ↓ zapper · R dernière · G guide · I infos'
+                  ? '↑ ↓ zapper · R dernière · G guide · V variantes · I infos'
                   : '← → 10 s · Espace pause · M muet · F favori · I infos'
               }
               gauche={boutonsGauche()}
@@ -937,6 +1026,46 @@ export default function Lecture(props: {
                 surAnnuler={calques.annulerRebours}
               />
             )}
+          </Show>
+
+          <Show when={direct() && variantesLecteur.ouvert() && variantesLecteur.choix()}>
+            {(c) => (
+              <Variantes
+                variantes={variantesLecteur.variantes()}
+                choix={c()}
+                cleLue={props.entree.cle}
+                explication={variantesLecteur.explication()}
+                testEnCours={variantesLecteur.testEnCours()}
+                resultat={variantesLecteur.resultat()}
+                surChoisir={variantesLecteur.choisir}
+                surTester={() => void variantesLecteur.tester()}
+                surAnnulerTest={variantesLecteur.annulerTest}
+                surFermer={() => variantesLecteur.poserOuvert(false)}
+              />
+            )}
+          </Show>
+
+          <Show when={propositionEco() && !erreur()}>
+            <div
+              role="status"
+              data-role="proposition-eco"
+              style={{
+                position: 'absolute', left: '50%', top: '64px', transform: 'translateX(-50%)',
+                display: 'flex', 'align-items': 'center', gap: '10px', padding: '8px 12px',
+                'border-radius': '8px', background: 'rgba(20,20,20,.9)', 'backdrop-filter': 'blur(18px)',
+                border: '1px solid rgba(255,255,255,.14)', color: ENCRE, 'font-size': '13px', 'z-index': 5,
+                animation: 'fadein var(--dur) var(--ease)',
+              }}
+            >
+              <Icone nom="speed" taille={16} />
+              <span>{MESSAGE_ECO}</span>
+              <button type="button" onClick={passerEnEco} style={{ background: 'var(--vacc)', color: '#000', padding: '4px 10px', 'border-radius': '6px', 'font-weight': 'var(--w-strong)' }}>
+                Passer en Éco
+              </button>
+              <button type="button" onClick={() => poserPropositionEco(false)} style={{ color: ENCRE2, padding: '4px 6px' }}>
+                Non
+              </button>
+            </div>
           </Show>
 
           <Show when={calques.miniGuideOuvert()}>

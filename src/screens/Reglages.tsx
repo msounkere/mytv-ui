@@ -9,6 +9,17 @@ import {
 import { db } from '../lib/db'
 import { etatSynchro } from '../lib/synchro'
 import { messageErreur } from './ChoixProfil'
+import { LIBELLE_QUALITE_MODE, choisirQualite, qualite, type ModeQualite } from '../lib/qualite'
+import { noter } from '../lib/diagnostic'
+
+// Qualité du flux (US-38 CA4) : Auto laisse le serveur décider ; Éco demande un
+// réencodage à débit réduit (480p, ~1,2 Mbit/s) à chaque ouverture, pour une
+// liaison lente. Mémorisée par appareil, jamais par profil : c'est la liaison
+// de CET appareil qui est lente.
+const QUALITES: Array<{ cle: ModeQualite; detail: string }> = [
+  { cle: 'auto', detail: 'le serveur choisit (direct, ou conversion seulement si le navigateur ne lit pas le format)' },
+  { cle: 'eco', detail: 'flux réencodé à débit réduit (480p, ~1,2 Mbit/s) — pour une liaison à moins de 5 Mbit/s' },
+]
 
 // Écran minimal : compte et profils, catalogue, état du service.
 //
@@ -157,6 +168,35 @@ export default function Reglages() {
       <Show when={erreurProfil()}>
         <p role="alert" style={{ color: 'var(--err)', 'font-size': '13px' }}>{erreurProfil()}</p>
       </Show>
+
+      <h2 style={{ 'margin-top': '24px' }}>Lecture</h2>
+      <p class="secondaire" style={{ margin: '6px 0 12px', 'font-size': '12px' }}>
+        Qualité du flux sur cet appareil. Le lecteur propose aussi « Éco » de lui-même quand la liaison est trop juste.
+      </p>
+      <div role="radiogroup" aria-label="Qualité" style={{ display: 'grid', gap: '6px', margin: '0 0 16px' }}>
+        <For each={QUALITES}>
+          {(q) => (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={qualite() === q.cle}
+              data-role={`qualite-${q.cle}`}
+              onClick={() => {
+                choisirQualite(q.cle)
+                noter('eco:choix', { qualite: q.cle, origine: 'reglages' })
+              }}
+              style={{
+                display: 'flex', gap: '10px', 'align-items': 'baseline', 'text-align': 'left',
+                padding: '8px 12px', border: `1px solid ${qualite() === q.cle ? 'var(--acc-fg)' : 'var(--line)'}`,
+                'border-radius': 'var(--r-md)', background: qualite() === q.cle ? 'var(--acc-bg)' : 'transparent',
+              }}
+            >
+              <strong style={{ width: '48px', 'flex-shrink': 0 }}>{LIBELLE_QUALITE_MODE[q.cle]}</strong>
+              <span class="secondaire" style={{ 'font-size': '12px' }}>{q.detail}</span>
+            </button>
+          )}
+        </For>
+      </div>
 
       <h2 style={{ 'margin-top': '24px' }}>Catalogue</h2>
       <p class="secondaire" style={{ margin: '6px 0 12px', 'font-size': '12px' }}>

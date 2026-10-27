@@ -14,6 +14,8 @@ import ColonneCategories from './parcours/ColonneCategories'
 import EcranMedia from './parcours/EcranMedia'
 import { NOM_PAYS, creerColonneCategories } from './parcours/categories'
 import { creerListeChaines } from './parcours/chaines'
+import { ouvrirGroupe } from './parcours/ouverture'
+import { qualitesDuGroupe, type Groupe } from '../lib/variantes'
 import { FORMAT } from './parcours/format'
 import { VideChaines } from './parcours/Vide'
 
@@ -101,9 +103,13 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
     return `${NOM_PAYS[f.pays] ?? f.pays} · ${f.libelle}`
   }
 
+  // Une ligne par groupe de variantes (US-39 CA1) : la chaîne ouverte est la
+  // variante recommandée pour cette liaison (CA3), pas la première venue.
+  const ouvrir = (g: Groupe<EntreeCatalogue>) => void ouvrirGroupe(g, props.surOuvrir)
+
   const compteChaines = () => {
     const total = (chaines.chaines() ?? []).length
-    const vus = chaines.filtrees().length
+    const vus = chaines.groupes().length
     const pluriel = vus > 1 ? 's' : ''
     return vus === total
       ? `${FORMAT.format(total)} chaîne${pluriel}`
@@ -120,7 +126,7 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
   memoriserDefilement({
     hote: zoneListe,
     cle: () => (mode() === 'liste' ? cleVue() : null),
-    pret: () => chaines.filtrees().length > 0,
+    pret: () => chaines.groupes().length > 0,
   })
 
   return (
@@ -219,8 +225,12 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
               when={mode() === 'liste'}
               fallback={
                 <GrilleCartes
-                  elements={chaines.filtrees()}
-                  surOuvrir={props.surOuvrir}
+                  elements={chaines.groupes().map((g) => g.representant)}
+                  surOuvrir={(e) => {
+                    const g = chaines.groupes().find((x) => x.representant.cle === e.cle)
+                    if (g) ouvrir(g)
+                    else props.surOuvrir(e)
+                  }}
                   programme={chaines.programmeDe}
                   maintenant={maintenant()}
                   cleVue={cleVue() ?? undefined}
@@ -257,17 +267,18 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
 
               <div ref={poserZoneListe} style={{ flex: '1', 'min-height': '0' }}>
                 <ListeVirtuelle
-                  elements={chaines.filtrees()}
+                  elements={chaines.groupes()}
                   hauteurLigne={HAUTEUR_CHAINE}
                   marge={6}
                   vide={<VideChaines filtre={filtre()} />}
-                  ligne={(e, i) => (
+                  ligne={(g, i) => (
                     <LigneChaine
                       numero={i + 1}
-                      entree={e}
-                      programme={chaines.programmeDe(e)}
+                      entree={g.representant}
+                      programme={chaines.programmeDuGroupe(g)}
                       maintenant={maintenant()}
-                      surOuvrir={() => props.surOuvrir(e)}
+                      qualites={qualitesDuGroupe(g)}
+                      surOuvrir={() => ouvrir(g)}
                     />
                   )}
                 />
