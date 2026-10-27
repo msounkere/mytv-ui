@@ -6,6 +6,8 @@ import { signalerSessionPerdue } from './api'
 import { estConnecte } from './auth'
 import { invaliderCatalogue } from './requetes'
 import { reindexer } from './recherche-client'
+import { noter } from './diagnostic'
+import type { ModeImport } from './plan-import'
 
 // Import du catalogue dans IndexedDB. ~150 000 entrees ne peuvent pas etre
 // retelechargees a chaque navigation ; une fois importees, la recherche et le
@@ -25,8 +27,13 @@ export interface ResultatImport {
   /** Faux : le manifeste a repondu « inchange », aucune donnee n'a ete lue. */
   importe: boolean
   version: string
+  /** Entrees du catalogue en base apres l'import. */
   entrees: number
   categories: number
+  /** `difference` : seules les lignes changees ont ete telechargees (US-36). */
+  mode: ModeImport
+  /** Lignes recues et appliquees par cet import (ajouts, modifications, suppressions). */
+  traitees: number
 }
 
 const CLE_IMPORT = 'dernierImport'
@@ -52,7 +59,10 @@ export function importerCatalogue(
       if (m.type === 'avancement') return surAvancement(m.avancement)
       worker.terminate()
       if (m.type === 'fini')
-        resoudre({ importe: m.importe, version: m.version, entrees: m.entrees, categories: m.categories })
+        resoudre({
+          importe: m.importe, version: m.version, entrees: m.entrees, categories: m.categories,
+          mode: m.mode, traitees: m.traitees,
+        })
       else rejeter(new ErreurLecteur(m.couche as Couche, m.message, m.action, m.detail))
     }
     worker.onerror = (e) => {
@@ -88,10 +98,16 @@ export function mettreAJourCatalogue(force = false): Promise<ResultatImport | un
     enCours = (async () => {
       poserEtatCatalogue('import')
       poserErreurCatalogue(null)
+      const debut = performance.now()
       try {
         const r = await importerCatalogue(poserAvancementCatalogue, { force })
         poserAvancementCatalogue(null)
         if (r.importe) {
+          // Mesure : c'est elle qui dit si l'import par difference tient ses
+          // promesses sur les appareils lents (12 s mesurees pour un complet).
+          noter('catalogue:import', {
+            mode: r.mode, entrees: r.traitees, total: r.entrees, ms: Math.round(performance.now() - debut),
+          })
           // L'import est le SEUL ecrivain du catalogue : c'est le seul moment
           // ou les lectures mises en cache cessent d'etre vraies. Les ecrans
           // restent montes, personne ne relirait de lui-meme. L'index de
