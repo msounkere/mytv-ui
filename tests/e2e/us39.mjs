@@ -75,10 +75,13 @@ try {
   const requetes = banc.api().slice(avantTest).filter((r) => /\/live\/13\d\d/.test(r.chemin) && !r.chemin.endsWith('/fin'))
   const ordre = requetes.map((r) => (r.chemin.includes('/seg/') ? 'seg' : 'pl') + r.chemin.match(/13\d\d/)[0])
   v.info(`requetes du test : ${ordre.join(' ')}`)
-  // Apres le test, le lecteur rouvre la chaine lue : on ne regarde que la sequence du test.
-  const sequence = ordre.slice(0, 6)
+  // Des segments du flux ferme peuvent encore arriver au serveur (Firefox en
+  // envoie trois) : le test commence a sa premiere playlist, et apres lui le
+  // lecteur rouvre la chaine lue. On ne regarde que la sequence du test.
+  const debutTest = ordre.findIndex((x) => x.startsWith('pl'))
+  const sequence = ordre.slice(debutTest, debutTest + 6)
   v.ok(sequence.join(' ') === 'pl1303 seg1303 pl1302 seg1302 pl1301 seg1301', 'une playlist puis un segment par variante, l une apres l autre, de la 4K a la HD')
-  const finTest = requetes.slice(0, 6)
+  const finTest = requetes.slice(debutTest, debutTest + 6)
   v.ok(finTest.every((r, i) => i === 0 || r.t >= finTest[i - 1].t), 'strictement en sequence')
   const mesures = page.locator('[data-role="mesure"]')
   v.ok((await mesures.count()) === 3, `latence et debit affiches pour chaque variante (${await mesures.count()})`)
