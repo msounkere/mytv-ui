@@ -5,9 +5,13 @@ import {
   type CategorieApi, type ChaineApi, type FilmApi, type ManifesteCatalogue, type SerieApi,
 } from './api'
 import { ErreurLecteur } from './errors'
+import { cleDe } from './identifiants'
 import { separerPrefixe } from './libelles'
 import { lireNdjson } from './ndjson'
-import { decider, delaiRetry, partAvancement, type EtatImport, type TypeExport } from './plan-import'
+import {
+  decider, delaiRetry, partAvancement, partDifference,
+  type Decision, type EtatImport, type ModeImport, type TypeExport,
+} from './plan-import'
 
 // L'import complet pese des dizaines de Mo et ~150 000 entrees : fetch, decodage,
 // parsing et ecriture IndexedDB se font entierement hors du fil principal.
@@ -16,9 +20,13 @@ import { decider, delaiRetry, partAvancement, type EtatImport, type TypeExport }
 //   - `GET /catalogue/version` est le manifeste (tres leger). Sa `version` est
 //     l'ETag commun a TOUS les exports : inchangee, il n'y a AUCUNE donnee a
 //     telecharger -- c'est la reponse « import incremental » du contrat ;
-//   - sinon un export NDJSON par type, lu en flux et ecrit par lots. Chaque type
-//     termine est consigne (`catalogue.enCours`) avec la version visee : une
-//     coupure reprend au type interrompu, pas au debut ;
+//   - sinon, si la base est complete a une version connue, un export PAR
+//     DIFFERENCE par type (`depuis=<version>`, US-36) : le serveur n'envoie que
+//     les lignes ajoutees ou modifiees et la liste des identifiants supprimes.
+//     S'il ne connait plus cette version (`409 version_inconnue`), on repart en
+//     complet : un export NDJSON par type, lu en flux et ecrit par lots ;
+//   - chaque type termine est consigne (`catalogue.enCours`) avec la version
+//     visee : une coupure reprend au type interrompu, pas au debut ;
 //   - si la version change PENDANT l'import (resynchronisation du serveur),
 //     deux versions se melangeraient : on repart du manifeste.
 // Aucun identifiant ne passe ici : le cookie de session est joint par le
@@ -38,8 +46,12 @@ export type DepuisWorker =
       /** Faux : le catalogue etait deja a jour, rien n'a ete telecharge. */
       importe: boolean
       version: string
+      /** Entrees du catalogue en base apres l'import. */
       entrees: number
       categories: number
+      mode: ModeImport
+      /** Lignes recues et appliquees par CET import (ajouts, modifications, suppressions). */
+      traitees: number
     }
   | { type: 'erreur'; couche: string; message: string; action: string; detail?: string }
 
@@ -59,6 +71,21 @@ const LIBELLE: Record<TypeExport, string> = {
 
 /** La version a change entre le manifeste et un export : on reprend du manifeste. */
 class VersionChangee extends Error {}
+/** Le serveur ne sait plus calculer la difference depuis notre version : import complet. */
+class VersionInconnue extends Error {}
+
+/** Premiere ligne d'un export par difference (schema `Suppressions` du contrat). */
+interface Suppressions {
+  type: 'suppressions'
+  ids: string[]
+}
+
+function estSuppressions(v: unknown): v is Suppressions {
+  return (
+    typeof v === 'object' && v !== null && (v as Suppressions).type === 'suppressions' &&
+    Array.isArray((v as Suppressions).ids)
+  )
+}
 
 const attendre = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -99,9 +126,14 @@ function effectif(m: ManifesteCatalogue, t: TypeExport): number {
 
 interface Contexte {
   version: string
+  mode: ModeImport
+  /** Mode complet : lignes attendues en tout (manifeste) et deja lues. */
   total: number
   fait: number
-  poster: (etape: string, fait: number) => void
+  /** Mode difference : types termines et types a faire (le total n'est pas connu d'avance). */
+  rang: number
+  nTypes: number
+  poster: (etape: string, part: number) => void
 }
 
 /**
@@ -111,12 +143,14 @@ interface Contexte {
  * Une coupure en plein flux remonte donc, et c'est `executer` qui reprend --
  * au type pres, grace a `catalogue.enCours`.
  */
-async function* exporter<T>(type: TypeExport, ctx: Contexte): AsyncGenerator<T[]> {
+async function* exporter<T>(type: TypeExport, ctx: Contexte, depuis?: string): AsyncGenerator<T[]> {
   let r: Response | undefined
+  const chemin = `/catalogue/export?type=${type}` + (depuis ? `&depuis=${encodeURIComponent(depuis)}` : '')
   for (let essai = 0; r === undefined; essai++) {
     try {
-      r = await appeler(`/catalogue/export?type=${type}`)
+      r = await appeler(chemin)
     } catch (e) {
+      if (e instanceof ErreurApi && e.statut === 409 && e.code === 'version_inconnue') throw new VersionInconnue()
       const rejouable = e instanceof ErreurReseau || (e instanceof ErreurApi && e.statut >= 500)
       if (!rejouable || essai + 1 >= ESSAIS_PAR_EXPORT) throw e
       await attendre(delaiRetry(essai))
@@ -125,11 +159,18 @@ async function* exporter<T>(type: TypeExport, ctx: Contexte): AsyncGenerator<T[]
   const v = versionDeEtag(r.headers.get('ETag'))
   if (v !== undefined && v !== ctx.version) throw new VersionChangee()
   if (!r.body) throw new ErreurReseau('flux absent')
+  const annonce = Number(r.headers.get('X-Elements') ?? 0)
+  let lu = 0
   try {
     for await (const lot of lireNdjson<T>(r.body, LOT)) {
       yield lot
+      lu += lot.length
       ctx.fait += lot.length
-      ctx.poster(`Téléchargement des ${LIBELLE[type]}`, ctx.fait)
+      const part =
+        ctx.mode === 'difference' && type !== 'categories'
+          ? partDifference(ctx.rang, ctx.nTypes, lu, annonce)
+          : partAvancement(ctx.fait, ctx.total)
+      ctx.poster(`${depuis ? 'Mise à jour' : 'Téléchargement'} des ${LIBELLE[type]}`, part)
     }
   } catch (e) {
     // Une coupure en plein corps n'est pas une erreur de l'API : c'est du reseau.
@@ -138,28 +179,52 @@ async function* exporter<T>(type: TypeExport, ctx: Contexte): AsyncGenerator<T[]
   }
 }
 
+/**
+ * Importe un type. En mode difference, la premiere ligne du flux liste les
+ * identifiants supprimes ; les autres lignes sont ajoutees ou remplacees. Un
+ * serveur qui repond en complet malgre `depuis` (premiere ligne ordinaire) est
+ * traite comme un import complet. Renvoie le nombre de lignes appliquees.
+ */
 async function importerType(
   type: Exclude<TypeExport, 'categories'>,
   categories: CategorieApi[],
   ctx: Contexte,
+  depuis: string | undefined,
 ): Promise<number> {
   const t: TypeContenu = type
-  // Cles deja en base pour ce type : celles que l'export ne reverra pas ont
-  // disparu du serveur et doivent partir -- mais seulement APRES un export
+  // Cles deja en base pour ce type : celles que l'export complet ne reverra pas
+  // ont disparu du serveur et doivent partir -- mais seulement APRES un export
   // complet, pour qu'un import interrompu ne laisse pas un catalogue troue.
-  const anciennes = new Set((await db.catalogue.where('type').equals(t).primaryKeys()) as string[])
+  let anciennes: Set<string> | undefined
+  if (!depuis) anciennes = new Set((await db.catalogue.where('type').equals(t).primaryKeys()) as string[])
   const comptes = new Map<string, number>()
+  let suppressions: string[] | undefined
+  let premier = true
   let n = 0
-  for await (const lot of exporter<ChaineApi | FilmApi | SerieApi>(type, ctx)) {
-    const entrees = lot.map((b) => versEntree(t, b, separerPrefixe))
+  for await (let lot of exporter<ChaineApi | FilmApi | SerieApi | Suppressions>(type, ctx, depuis)) {
+    if (premier) {
+      premier = false
+      if (estSuppressions(lot[0])) {
+        suppressions = lot[0].ids
+        lot = lot.slice(1)
+      } else if (!anciennes) {
+        anciennes = new Set((await db.catalogue.where('type').equals(t).primaryKeys()) as string[])
+      }
+    }
+    const entrees = (lot as Array<ChaineApi | FilmApi | SerieApi>).map((b) => versEntree(t, b, separerPrefixe))
     for (const e of entrees) {
-      anciennes.delete(e.cle)
+      anciennes?.delete(e.cle)
       if (e.categorie) comptes.set(e.categorie, (comptes.get(e.categorie) ?? 0) + 1)
     }
-    await db.catalogue.bulkPut(entrees)
+    if (entrees.length > 0) await db.catalogue.bulkPut(entrees)
     n += entrees.length
   }
-  if (anciennes.size > 0) await db.catalogue.bulkDelete([...anciennes])
+  if (suppressions !== undefined) {
+    if (suppressions.length > 0) await db.catalogue.bulkDelete(suppressions.map((id) => cleDe(t, id)))
+    n += suppressions.length
+  } else if (anciennes && anciennes.size > 0) {
+    await db.catalogue.bulkDelete([...anciennes])
+  }
 
   // Les categories masquees le restent apres un reimport : c'est un choix de
   // l'utilisateur (et un reglage de profil), pas une donnee du fournisseur.
@@ -167,6 +232,13 @@ async function importerType(
     (await db.categories.where('[type+masquee]').equals([t, 1]).toArray()).map((c) => c.cle),
   )
   const siennes = categories.filter((c) => c.type === t)
+  if (suppressions !== undefined) {
+    // Difference : les compteurs ne se deduisent pas du flux ; on recompte par
+    // l'index [type+categorie] (une requete par categorie, sur l'index).
+    comptes.clear()
+    for (const c of siennes)
+      comptes.set(c.id, await db.catalogue.where('[type+categorie]').equals([t, c.id]).count())
+  }
   await db.transaction('rw', db.categories, async () => {
     await db.categories.where('type').equals(t).delete()
     await db.categories.bulkPut(
@@ -181,6 +253,7 @@ async function importerType(
 }
 
 async function executer(force: boolean, poster: (m: DepuisWorker) => void): Promise<void> {
+  let sansDifference = false
   for (let tentative = 0; tentative < ESSAIS_VERSION; tentative++) {
     const etat = await lireEtat()
     poster({ type: 'avancement', avancement: { etape: 'Vérification du catalogue', part: 0 } })
@@ -188,12 +261,13 @@ async function executer(force: boolean, poster: (m: DepuisWorker) => void): Prom
     if (manifeste === 'inchange') {
       poster({
         type: 'fini', importe: false, version: etat.versionComplete ?? '', entrees: 0, categories: 0,
+        mode: 'complet', traitees: 0,
       })
       return
     }
-    const decision = decider(etat, manifeste, force)
+    const decision: Decision = decider(etat, manifeste, { force, sansDifference })
     if (decision.action === 'rien') {
-      poster({ type: 'fini', importe: false, version: manifeste.version, entrees: 0, categories: 0 })
+      poster({ type: 'fini', importe: false, version: manifeste.version, entrees: 0, categories: 0, mode: 'complet', traitees: 0 })
       return
     }
     if (!decision.reprise) {
@@ -201,30 +275,37 @@ async function executer(force: boolean, poster: (m: DepuisWorker) => void): Prom
       // vrai : on l'oublie, faute de quoi une coupure suivie d'une reprise sans
       // `force` croirait la base a jour. Il est repose a la toute fin.
       await db.reglages.delete(CLE_VERSION)
-      await db.reglages.put({ cle: CLE_EN_COURS, valeur: { version: decision.version, faits: [] } })
     }
-
     // Les types deja termines (reprise) comptent comme faits dans la barre.
     const dejaFaits = new Set<TypeExport>(decision.reprise ? etat.enCours!.faits : [])
+    await db.reglages.put({
+      cle: CLE_EN_COURS,
+      valeur: { version: decision.version, faits: [...dejaFaits], ...(decision.depuis ? { depuis: decision.depuis } : {}) },
+    })
+
+    const aFaire = decision.restants.filter((t) => t !== 'categories')
     const ctx: Contexte = {
       version: decision.version,
+      mode: decision.mode,
       total: total(manifeste),
       fait: [...dejaFaits].reduce((n, t) => n + effectif(manifeste, t), 0),
-      poster: (etape, fait) =>
-        poster({ type: 'avancement', avancement: { etape, part: partAvancement(fait, total(manifeste)) } }),
+      rang: 0,
+      nTypes: aFaire.length,
+      poster: (etape, part) => poster({ type: 'avancement', avancement: { etape, part } }),
     }
     try {
       const categories: CategorieApi[] = []
       for await (const lot of exporter<CategorieApi>('categories', ctx)) categories.push(...lot)
 
       const faits = dejaFaits
-      let entrees = 0
-      for (const type of decision.restants) {
-        if (type === 'categories') continue
-        entrees += await importerType(type, categories, ctx)
+      let traitees = 0
+      for (const type of aFaire) {
+        traitees += await importerType(type, categories, ctx, decision.depuis)
+        ctx.rang++
         faits.add(type)
         await db.reglages.put({
-          cle: CLE_EN_COURS, valeur: { version: decision.version, faits: [...faits] },
+          cle: CLE_EN_COURS,
+          valeur: { version: decision.version, faits: [...faits], ...(decision.depuis ? { depuis: decision.depuis } : {}) },
         })
       }
       // Compte total apres import : celui de la base, pas seulement de cette passe.
@@ -236,12 +317,19 @@ async function executer(force: boolean, poster: (m: DepuisWorker) => void): Prom
       await db.reglages.delete(CLE_EN_COURS)
       poster({
         type: 'fini', importe: true, version: decision.version,
-        entrees: entreesBase || entrees, categories: categories.length,
+        entrees: entreesBase, categories: categories.length, mode: decision.mode, traitees,
       })
       return
     } catch (e) {
       if (e instanceof VersionChangee) {
         // L'etat `enCours` porte l'ancienne version : `decider` repartira de zero.
+        continue
+      }
+      if (e instanceof VersionInconnue) {
+        // Le serveur ne connait plus notre version : meme cible, en complet. Les
+        // types deja termines par difference sont bien a la nouvelle version.
+        sansDifference = true
+        tentative--
         continue
       }
       throw e

@@ -51,7 +51,9 @@ export default function Reglages() {
     if (!r) return
     poserEtat(
       r.importe
-        ? `${r.entrees.toLocaleString('fr-FR')} entrées importées, ${r.categories} catégories.`
+        ? r.mode === 'difference'
+          ? `${r.traitees.toLocaleString('fr-FR')} changements appliqués, ${r.entrees.toLocaleString('fr-FR')} entrées en base.`
+          : `${r.entrees.toLocaleString('fr-FR')} entrées importées, ${r.categories} catégories.`
         : 'Le catalogue est déjà à jour : rien à télécharger.',
     )
   }

@@ -492,7 +492,9 @@ const SCENARIOS = {
 
 if (process.env.CHARGE) {
   SCENARIOS.charge = async (navigateur) => {
-    const taille = { chaines: 25_000, films: 40_000, series: 5_000 }
+    // CHARGE_TAILLE='{"chaines":22000,"films":107000,"series":25686}' rejoue la
+    // mesure de reference de l'import complet (154 686 entrees, US-36 CA5).
+    const taille = process.env.CHARGE_TAILLE ? JSON.parse(process.env.CHARGE_TAILLE) : { chaines: 25_000, films: 40_000, series: 5_000 }
     await scenario(navigateur, { taille }, async ({ serveur, page }) => {
       const t0 = Date.now()
       await seConnecter(page)

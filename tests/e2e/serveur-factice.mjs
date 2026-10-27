@@ -63,6 +63,10 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     echecExport: null, // { type, apres } : coupe le flux apres N lignes, une fois
     conflitProchainPut: null, // fonction appelee juste avant de repondre 409
     requetes: [],
+    // US-36 : instantanes du catalogue par version (pour `depuis=`), et evenements
+    // de telemetrie recus (POST /diagnostic/evenements).
+    versions: new Map(), // version -> { live, vod, series } (copies)
+    evenements: [],
     latenceChunk,
     profilsMax: 10,
     sessionNom: false, // true : GET /compte rend `session.nom` (US-16b)
@@ -100,17 +104,34 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     return { categories: c.categories.length, chaines: c.live.length, films: c.vod.length, series: c.series.length }
   }
 
-  async function exporter(req, res, type) {
+  const instantane = () => ({ live: [...etat.catalogue.live], vod: [...etat.catalogue.vod], series: [...etat.catalogue.series] })
+  /** Retient le catalogue courant sous sa version, comme le journal du serveur. */
+  const retenirVersion = () => { if (!etat.versions.has(etat.version)) etat.versions.set(etat.version, instantane()) }
+
+  async function exporter(req, res, type, depuis) {
     const c = etat.catalogue
-    const lignes = type === 'categories' ? c.categories : type === 'live' ? c.live : type === 'vod' ? c.vod : type === 'series' ? c.series : null
+    let lignes = type === 'categories' ? c.categories : type === 'live' ? c.live : type === 'vod' ? c.vod : type === 'series' ? c.series : null
     if (!lignes) return erreur(res, 400, 'requete_invalide')
     if (req.headers['if-none-match'] === etag()) { res.writeHead(304, { ETag: etag() }); return res.end() }
+    let supprimes
+    if (depuis && type !== 'categories') {
+      // Export par difference (US-36 CA3) : lignes dont le JSON a change depuis
+      // l'instantane de cette version, et identifiants disparus.
+      const ancien = depuis === etat.version ? instantane() : etat.versions.get(depuis)
+      if (!ancien) return erreur(res, 409, 'version_inconnue', 'version inconnue ou trop ancienne : import complet necessaire')
+      const avant = new Map(ancien[type].map((l) => [l.id, JSON.stringify(l)]))
+      const courants = new Set(lignes.map((l) => l.id))
+      lignes = lignes.filter((l) => avant.get(l.id) !== JSON.stringify(l))
+      supprimes = [...avant.keys()].filter((id) => !courants.has(id))
+    }
     const entetes = { 'Content-Type': 'application/x-ndjson', ETag: etag(), 'X-Elements': String(lignes.length) }
+    if (supprimes) entetes['X-Supprimes'] = String(supprimes.length)
     const gzip = /gzip/.test(req.headers['accept-encoding'] ?? '')
     if (gzip) entetes['Content-Encoding'] = 'gzip'
     res.writeHead(200, entetes)
     const sortie = gzip ? zlib.createGzip() : res
     if (gzip) sortie.pipe(res)
+    if (supprimes) sortie.write(JSON.stringify({ type: 'suppressions', ids: supprimes }) + '\n')
     const coupe = etat.echecExport && etat.echecExport.type === type ? etat.echecExport.apres : Infinity
     const PAQUET = 100
     for (let i = 0; i < lignes.length; i += PAQUET) {
@@ -142,11 +163,19 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
       if (op === 'requetes') return json(res, 200, etat.requetes)
       if (op === 'vider-requetes') { etat.requetes.length = 0; return json(res, 200, {}) }
       if (op === 'nouvelle-version') {
+        // L'ancienne version reste connue (journal des differences), sauf
+        // `sansHistorique` : elle est oubliee, comme une version purgee.
+        if (c.sansHistorique) etat.versions.clear()
+        else retenirVersion()
         etat.version = c.version ?? `v${Date.now()}`
         if (c.retirerFilms) etat.catalogue.vod.splice(0, c.retirerFilms)
         if (c.ajouterFilms) for (let i = 0; i < c.ajouterFilms; i++) etat.catalogue.vod.push({ ...etat.catalogue.vod[0], id: `iptva:${90000 + i}`, nom: `Nouveauté ${i}`, ajoute: new Date().toISOString(), lecture: `/api/v1/vod/iptva:${90000 + i}` })
+        if (c.renommerFilms) for (let i = 0; i < c.renommerFilms; i++) etat.catalogue.vod[i] = { ...etat.catalogue.vod[i], nom: `${etat.catalogue.vod[i].nom} (remasterisé)` }
+        if (c.retirerChaines) etat.catalogue.live.splice(0, c.retirerChaines)
         return json(res, 200, { version: etat.version })
       }
+      if (op === 'oublier-versions') { etat.versions.clear(); return json(res, 200, {}) }
+      if (op === 'evenements') return json(res, 200, etat.evenements)
       if (op === 'echec-export') { etat.echecExport = c; return json(res, 200, {}) }
       if (op === 'expirer-sessions') { etat.sessions.clear(); return json(res, 200, {}) }
       if (op === 'reglages') { const r = reg(c.profil); Object.assign(r.valeurs, c.valeurs); for (const k of c.supprimer ?? []) delete r.valeurs[k]; r.revision++; return json(res, 200, r) }
@@ -243,7 +272,12 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
       if (req.headers['if-none-match'] === etag()) { res.writeHead(304, { ETag: etag() }); return res.end() }
       return json(res, 200, { version: etat.version, ...total(), synchronise: new Date().toISOString() }, { ETag: etag() })
     }
-    if (p === '/catalogue/export') return exporter(req, res, url.searchParams.get('type'))
+    if (p === '/catalogue/export') return exporter(req, res, url.searchParams.get('type'), url.searchParams.get('depuis'))
+    if (p === '/diagnostic/evenements' && req.method === 'POST') {
+      const c = await corpsJson(req)
+      for (const e of c?.evenements ?? []) etat.evenements.push(e)
+      res.writeHead(204); return res.end()
+    }
     // --- US-28 : fiche d'un film / d'une serie avec ses details ---------------------------
     m = /^\/(films|series)\/([^/]+)$/.exec(p)
     if (m && req.method === 'GET') {
