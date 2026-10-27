@@ -4,6 +4,7 @@ import PlaqueChaine, { avancement, plageHoraire, type ProgrammeCourant } from '.
 import EtiquettePays from './EtiquettePays'
 import Badge4K from './Badge4K'
 import type { EntreeCatalogue } from '../lib/db'
+import { LIBELLE_QUALITE, type Qualite } from '../lib/variantes'
 
 // Ligne de chaîne du mode Liste de Direct. Le dossier de conception la veut
 // porteuse de son programme en cours — « 20:00 – 21:00 · Journal » — parce que
@@ -35,7 +36,27 @@ export interface LigneChaineProps {
   programme?: ProgrammeCourant
   /** Horloge partagée : une liste entière ne doit pas tenir un minuteur par ligne. */
   maintenant: number
+  /** Qualités des variantes du groupe (US-39 CA1), de la plus haute à la plus basse ; vide : chaîne sans variante. */
+  qualites?: Qualite[]
   surOuvrir: () => void
+}
+
+/** « 4K · FHD · HD » : les variantes disponibles, sans la ligne pour chacune. */
+export function BadgesVariantes(props: { qualites?: Qualite[] }) {
+  return (
+    <Show when={props.qualites && props.qualites.length > 1}>
+      <span
+        data-role="variantes"
+        title={`${props.qualites!.length} variantes : ${props.qualites!.map((q) => LIBELLE_QUALITE[q]).join(', ')}`}
+        style={{
+          flex: 'none', 'font-family': 'var(--moov-font-mono)', 'font-size': '10px', 'line-height': '14px',
+          padding: '0 5px', 'border-radius': 'var(--r-2xs)', background: 'var(--acc-bg)', color: 'var(--acc-fg)',
+        }}
+      >
+        {props.qualites!.map((q) => LIBELLE_QUALITE[q]).join(' · ')}
+      </span>
+    </Show>
+  )
 }
 
 export default function LigneChaine(props: LigneChaineProps) {
@@ -73,6 +94,7 @@ export default function LigneChaine(props: LigneChaineProps) {
             <span style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'min-width': '0' }}>
               <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.entree.nom}</span>
               <Badge4K nom={props.entree.nom} />
+              <BadgesVariantes qualites={props.qualites} />
             </span>
             <span class="tronque" style={{ 'font-size': '12px', 'line-height': '16px', color: 'var(--fg3)' }}>
               {props.programme?.titre ?? 'Aucun programme disponible'}
@@ -83,6 +105,7 @@ export default function LigneChaine(props: LigneChaineProps) {
       <span style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'min-width': '0' }}>
         <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.entree.nom}</span>
         <Badge4K nom={props.entree.nom} />
+        <BadgesVariantes qualites={props.qualites} />
         <EtiquettePays pays={props.entree.pays} />
       </span>
 

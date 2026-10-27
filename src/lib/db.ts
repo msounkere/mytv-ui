@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie'
 import { cleDe, estIdentifiantEpisode } from './identifiants'
+import { cleGroupeEntree } from './variantes'
 import type { CategorieApi, ChaineApi, FilmApi, SerieApi, TypeApi } from './api'
 
 // 21 791 chaines + 106 973 films ne peuvent pas etre re-telecharges a chaque
@@ -45,6 +46,38 @@ export interface EntreeCatalogue {
   epgId?: string
   /** Episodes seulement : cle de la serie parente (l'historique serveur l'exige). */
   serie?: string
+  /**
+   * Chaines seulement : cle du GROUPE de variantes (US-39), `pays|nom normalise`
+   * (voir variantes.ts). Indexee : « TF1 », « TF1 FHD » et « TF1 4K » se
+   * retrouvent en une requete, quelle que soit leur categorie.
+   */
+  groupe?: string
+}
+
+/**
+ * Une lecture de direct telle que le lecteur l'a vecue (US-39 CA2) : ce que la
+ * telemetrie note deja, agrege par lecture et garde ICI, sur l'appareil, pour
+ * noter la fluidite de chaque variante dans le contexte de cet appareil.
+ */
+export interface LectureMesuree {
+  n?: number
+  /** Numero de chaine (`{chaine}` de `/live/{chaine}.m3u8`). */
+  chaine: string
+  appareil: string
+  /** Millisecondes du debut. */
+  debut: number
+  dureeS: number
+  segments: number
+  /** Mediane du debit estime par hls.js, en kbit/s (0 si aucun segment). */
+  debitKbps: number
+  /** Classe de debit de la liaison pendant cette lecture : `faible` (< 5), `moyen` (5-15), `eleve` (> 15 Mbit/s). */
+  classe?: 'faible' | 'moyen' | 'eleve'
+  /** Blocages (`video:waiting`) apres les premieres images. */
+  blocages: number
+  /** Erreurs hls.js fatales. */
+  erreurs: number
+  /** Reprises : recuperations hls.js, reessais, reprises apres occupation. */
+  redemarrages: number
 }
 
 export interface Categorie {
@@ -114,6 +147,7 @@ export const db = new Dexie('mytv') as Dexie & {
   historique: EntityTable<Historique, 'cle'>
   reglages: EntityTable<Reglage, 'cle'>
   journal: EntityTable<LigneJournal, 'n'>
+  lectures: EntityTable<LectureMesuree, 'n'>
 }
 
 db.version(1).stores({
@@ -147,6 +181,22 @@ db.version(4)
   .upgrade(async (tx) => {
     for (const t of ['catalogue', 'categories', 'favoris', 'reprises', 'historique', 'journal', 'reglages'])
       await tx.table(t).clear()
+  })
+
+// Version 5 (US-39) : index `groupe` sur le catalogue (variantes d'une chaine)
+// et table `lectures` (telemetrie agregee par lecture, pour le score de
+// fluidite). Les chaines deja importees recoivent leur cle de groupe ici : une
+// fois, ~22 000 lignes, sans attendre la prochaine synchronisation. Les films et
+// series n'ont pas de groupe et restent hors de l'index.
+db.version(5)
+  .stores({
+    catalogue: 'cle, type, categorie, [type+categorie], nom, [type+ajouteLe], [type+note], groupe',
+    lectures: '++n, chaine, debut',
+  })
+  .upgrade(async (tx) => {
+    await tx.table('catalogue').where('type').equals('live').modify((e: EntreeCatalogue) => {
+      e.groupe = cleGroupeEntree(e)
+    })
   })
 
 /** Minuscules, sans accents : rend la recherche insensible a « é » vs « e ». */
@@ -196,6 +246,7 @@ export function versEntree(
     annee: Number.isFinite(annee) && annee > 0 ? annee : undefined,
     numero: 'numero' in brut ? brut.numero : undefined,
     epgId: 'epg_id' in brut ? brut.epg_id || undefined : undefined,
+    groupe: type === 'live' ? cleGroupeEntree({ nom: titre, pays }) : undefined,
   }
 }
 

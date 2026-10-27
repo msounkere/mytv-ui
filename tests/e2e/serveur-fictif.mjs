@@ -27,6 +27,9 @@
 //   (US-25 : comme le vrai serveur, le code est aussi dans l'en-tete X-Mytv-Erreur)
 //   (coupures) film iptva:107  remux annonce 120 s mais corps TRONQUE a 3 s (le serveur coupe quand son remux casse)
 //              film iptva:108  remux SANS X-Mytv-Duree (duree inconnue)
+//   (US-39) chaines 1301, 1302, 1303  variantes d'une meme chaine (HD, FHD, 4K), normales ; 1302 repond sa playlist en 400 ms
+//   (US-38 CA4) `?qualite=eco` ou `X-Mytv-Qualite: eco` sur une playlist ou un film : `X-Mytv-Mode: video`
+//               (reencodage a debit reduit), et le journal retient `qualite` (requete) et `qualiteEntete` (en-tete)
 import { createServer } from 'node:http'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
@@ -117,11 +120,12 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
     if (numero === '106' && fois('vod106') <= 2)
       return erreur(res, 503, 'compte_utilise_ailleurs', 'occupe', { 'Retry-After': '2', 'X-Mytv-Erreur': 'compte_utilise_ailleurs' })
     if (numero === '103' && fois('vod103') === 1) return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
-    const remux = numero === '101' || numero === '107' || numero === '108'
+    const eco = url.searchParams.get('qualite') === 'eco' || req.headers['x-mytv-qualite'] === 'eco'
+    const remux = numero === '101' || numero === '107' || numero === '108' || eco
     const entetes = { 'Content-Type': remux ? 'video/mp4' : 'audio/mpeg', 'Cache-Control': 'private, no-store' }
     if (remux) {
       const duree = numero === '108' ? {} : { 'X-Mytv-Duree': '120' }
-      res.writeHead(200, { ...entetes, 'Accept-Ranges': 'none', ...duree, 'X-Mytv-Mode': 'remux' })
+      res.writeHead(200, { ...entetes, 'Accept-Ranges': 'none', ...duree, 'X-Mytv-Mode': eco ? 'video' : 'remux' })
       return res.end(tete ? undefined : numero === '107' ? FILM_TRONQUE : FILM)
     }
     const plage = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
@@ -139,7 +143,10 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
   const serveur = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const chemin = decodeURIComponent(url.pathname)
-    journal.push({ methode: req.method, chemin, requete: url.search, t: Date.now(), cap: req.headers['x-mytv-capacites'] })
+    journal.push({
+      methode: req.method, chemin, requete: url.search, t: Date.now(), cap: req.headers['x-mytv-capacites'],
+      qualite: url.searchParams.get('qualite') ?? undefined, qualiteEntete: req.headers['x-mytv-qualite'],
+    })
 
     if (chemin === '/__journal') return json(res, 200, journal)
     if (chemin === '/__evenements') return json(res, 200, evenements)
@@ -173,12 +180,13 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
         if (chaine === '1003') return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
         if (chaine === '1002' && fois('live1002') <= 2) return erreur(res, 503, 'place_occupee', 'occupe', { 'Retry-After': '1' })
         if (chaine === '1005' && fois('live1005') === 1) return erreur(res, 502, 'amont', 'amont indisponible')
-        const mode = forcer ?? (chaine === '1102' ? 'audio' : 'direct')
+        const eco = url.searchParams.get('qualite') === 'eco' || req.headers['x-mytv-qualite'] === 'eco'
+        const mode = eco ? 'video' : forcer ?? (chaine === '1102' ? 'audio' : 'direct')
         const servir = () => {
           res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store', 'X-Mytv-Mode': mode })
           res.end(playlist(chaine))
         }
-        return chaine === '1102' ? void setTimeout(servir, 5000) : servir()
+        return chaine === '1102' ? void setTimeout(servir, 5000) : chaine === '1302' ? void setTimeout(servir, 400) : servir()
       }
       if ((m = /^\/live\/([A-Za-z0-9_-]+)\/seg\/jeton(\d+)$/.exec(r))) {
         if (m[1] === '1204' && etat.get('coupe1204') !== false && Number(m[2]) >= 2) {
