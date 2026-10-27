@@ -50,7 +50,27 @@ export function masquerUrl(url: string | undefined): string | undefined {
 export function noter(type: string, details: Evenement = {}): void {
   if (tampon.length >= TAILLE_MAX_TAMPON) tampon.shift()
   tampon.push({ type, t: Math.round(performance.now() - debut) / 1000, ...details })
+  for (const f of abonnes) {
+    try {
+      f(type, details)
+    } catch {
+      // Un abonne qui plante ne doit ni perdre l'evenement ni gener la lecture.
+    }
+  }
   armer()
+}
+
+type Abonne = (type: string, details: Evenement) => void
+const abonnes = new Set<Abonne>()
+
+/**
+ * Observe les evenements AVANT leur envoi, sur la page meme (US-39 CA2) : le
+ * score de fluidite se calcule a partir de ce que le lecteur note deja, sans
+ * rien demander de plus au serveur ni au fournisseur. Renvoie le desabonnement.
+ */
+export function abonnerEvenements(f: Abonne): () => void {
+  abonnes.add(f)
+  return () => abonnes.delete(f)
 }
 
 /**
