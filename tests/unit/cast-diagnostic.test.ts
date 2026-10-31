@@ -1,24 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { diffusionPossible, origineLocale, urlPourDiffusion, diffusionResoutLeCodec } from '../../src/lib/cast'
+import { diffusionResoutLeCodec } from '../../src/lib/cast'
 import { construireEnvoi, masquerUrl } from '../../src/lib/diagnostic'
 import { traduireHls } from '../../src/lib/lecteur'
 
-test('Cast : possible seulement depuis le reseau local', () => {
-  for (const h of ['192.168.50.3', '10.0.0.4', '172.16.5.5', '172.31.255.1', '127.0.0.1', 'localhost', 'mytv.local', 'mediaserver', '[fd12::1]'])
-    assert.equal(origineLocale(h), true, h)
-  for (const h of ['mytv.msocasa.com', '8.8.8.8', '172.32.0.1', '172.15.0.1', 'example.org'])
-    assert.equal(origineLocale(h), false, h)
-  assert.equal(diffusionPossible('192.168.50.3'), true)
-  assert.equal(diffusionPossible('mytv.msocasa.com'), false)
-})
-
-test("Cast : l'URL est la lecture du serveur, absolue, sans secret ni jeton", () => {
-  const u = urlPourDiffusion('/api/v1/live/845410.m3u8', 'http://192.168.50.3:8096')
-  assert.equal(u, 'http://192.168.50.3:8096/api/v1/live/845410.m3u8')
-  assert.doesNotMatch(u, /@|token|jeton|password/i)
-  assert.equal(urlPourDiffusion('/api/v1/vod/iptva:5521', 'http://mytv.local'), 'http://mytv.local/api/v1/vod/iptva:5521')
-})
+// La diffusion elle-meme (lien signe, capacites du televiseur, telemetrie) est
+// dans cast.test.ts (US-41) ; « reseau local » n'existe plus cote interface.
 
 test('Cast : EAC3/AC3/DTS se diffusent', () => {
   assert.equal(diffusionResoutLeCodec('eac3'), true)

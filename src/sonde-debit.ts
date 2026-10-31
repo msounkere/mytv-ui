@@ -1,11 +1,28 @@
 import { createSignal } from 'solid-js'
-import { origineLocale } from './lib/cast'
 
 // Le débit affiché par l'en-tête était une constante (« 24 Mbit/s ») reprise de
 // la maquette. Sur cette installation la valeur est doublement fausse : le
 // tunnel plafonne autour de 10 Mbit/s et le réseau local fait plus de dix fois
 // mieux. Un chiffre décoratif à cet endroit est pire que pas de chiffre, parce
 // que c'est précisément sur lui qu'on décide d'une qualité de flux.
+
+/**
+ * Le nom d'hote designe-t-il le reseau local ? Adresses privees (RFC 1918),
+ * boucle locale, lien local, noms en `.local`/`.lan` et noms sans point. Ne
+ * sert qu'a NOMMER la liaison (« Domicile » / « Distant ») : la diffusion vers
+ * un televiseur ne depend plus du reseau (lien signe, US-41).
+ */
+export function origineLocale(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (h === 'localhost' || h === '::1') return true
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h)
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])]
+    return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)
+  }
+  if (/^f[cd][0-9a-f]{2}:/.test(h) || h.startsWith('fe80:')) return true
+  return !h.includes('.') || h.endsWith('.local') || h.endsWith('.lan')
+}
 
 /** Vrai quand la page est servie sans passer par le tunnel. */
 export function enLocal(): boolean {

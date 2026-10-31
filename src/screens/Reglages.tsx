@@ -10,6 +10,7 @@ import { db } from '../lib/db'
 import { etatSynchro } from '../lib/synchro'
 import { messageErreur } from './ChoixProfil'
 import { LIBELLE_QUALITE_MODE, choisirQualite, qualite, type ModeQualite } from '../lib/qualite'
+import { choisirTeleviseurEac3, choisirTeleviseurHevc, televiseurEac3, televiseurHevc } from '../lib/cast'
 import { noter } from '../lib/diagnostic'
 
 // Qualité du flux (US-38 CA4) : Auto laisse le serveur décider ; Éco demande un
@@ -19,6 +20,14 @@ import { noter } from '../lib/diagnostic'
 const QUALITES: Array<{ cle: ModeQualite; detail: string }> = [
   { cle: 'auto', detail: 'le serveur choisit (direct, ou conversion seulement si le navigateur ne lit pas le format)' },
   { cle: 'eco', detail: 'flux réencodé à débit réduit (480p, ~1,2 Mbit/s) — pour une liaison à moins de 5 Mbit/s' },
+]
+
+// Capacités du téléviseur (US-41 CA2) : distinctes de celles du navigateur, elles
+// décident de ce que le serveur convertit pour l'appareil de diffusion. Par
+// défaut un téléviseur décode tout ; mémorisées par appareil, comme la qualité.
+const CAPACITES_TV: Array<{ cle: 'eac3' | 'hevc'; libelle: string; lire: () => boolean; poser: (v: boolean) => void }> = [
+  { cle: 'eac3', libelle: 'Le téléviseur décode EAC3/AC3', lire: televiseurEac3, poser: choisirTeleviseurEac3 },
+  { cle: 'hevc', libelle: 'Le téléviseur décode HEVC', lire: televiseurHevc, poser: choisirTeleviseurHevc },
 ]
 
 // Écran minimal : compte et profils, catalogue, état du service.
@@ -195,6 +204,35 @@ export default function Reglages() {
             >
               <strong style={{ width: '48px', 'flex-shrink': 0 }}>{LIBELLE_QUALITE_MODE[q.cle]}</strong>
               <span class="secondaire" style={{ 'font-size': '12px' }}>{q.detail}</span>
+            </button>
+          )}
+        </For>
+      </div>
+
+      <h3 style={{ 'font-size': '14px', margin: '0 0 4px' }}>Diffusion vers un téléviseur</h3>
+      <p class="secondaire" style={{ margin: '0 0 8px', 'font-size': '12px' }}>
+        Ce que le téléviseur sait décoder : le serveur ne convertit que le reste. La diffusion n’est jamais en qualité Éco.
+      </p>
+      <div style={{ display: 'grid', gap: '6px', margin: '0 0 16px' }}>
+        <For each={CAPACITES_TV}>
+          {(c) => (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={c.lire()}
+              data-role={`televiseur-${c.cle}`}
+              onClick={() => {
+                c.poser(!c.lire())
+                noter('televiseur:capacite', { capacite: c.cle, actif: c.lire() })
+              }}
+              style={{
+                display: 'flex', gap: '10px', 'align-items': 'center', 'text-align': 'left',
+                padding: '8px 12px', border: `1px solid ${c.lire() ? 'var(--acc-fg)' : 'var(--line)'}`,
+                'border-radius': 'var(--r-md)', background: c.lire() ? 'var(--acc-bg)' : 'transparent',
+              }}
+            >
+              <strong style={{ width: '48px', 'flex-shrink': 0 }}>{c.lire() ? 'Oui' : 'Non'}</strong>
+              <span style={{ 'font-size': '13px' }}>{c.libelle}</span>
             </button>
           )}
         </For>

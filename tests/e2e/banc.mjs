@@ -49,7 +49,9 @@ export async function jusqua(condition, delaiMs = 10_000, pasMs = 100) {
 }
 
 /**
- * @param {{ ecran: 'lecture'|'guide', timezoneId?: string, locale?: string, limites?: object }} opts
+ * @param {{ ecran: 'lecture'|'guide', timezoneId?: string, locale?: string, limites?: object,
+ *           scripts?: Array<() => void> }} opts  `scripts` : poses avant le chargement de la page
+ *           (doublures d'API du navigateur, compteurs).
  */
 export async function ouvrirBanc(opts) {
   const serveur = await demarrerServeur({ dossier: DIST_HARNAIS, limites: opts.limites })
@@ -89,6 +91,7 @@ export async function ouvrirBanc(opts) {
       const lire = HTMLMediaElement.prototype.play
       HTMLMediaElement.prototype.play = function () { this.muted = true; return lire.call(this) }
     })
+  for (const s of opts.scripts ?? []) await page.addInitScript(s)
   await page.goto(`${serveur.origine}/index.html?ecran=${opts.ecran}`)
   await page.waitForFunction(() => !!window.harnais)
 

@@ -2,29 +2,46 @@ import { Show } from 'solid-js'
 import Icone from './Icone'
 import { estBureau, estMobile } from '../lib/gabarit'
 import { ENCRE, ENCRE2, ENCRE3 } from './ControlesLecteur'
-import type { EtatDiffusion } from '../lib/cast'
+import { libelleExpiration, type EtatDiffusion } from '../lib/cast'
 
 // Le choix de l'appareil appartient au navigateur (Remote Playback API) : aucun
 // SDK tiers n'est chargé. Ce panneau explique ce qui va se passer et déclenche
 // le sélecteur natif — il ne liste pas des appareils qu'il ne peut pas voir.
+//
+// Sans Remote Playback (Firefox), il reste utile : le lien signé se copie et
+// s'ouvre dans le navigateur ou le lecteur du téléviseur (US-41 CA4).
 
 const LIBELLE_ETAT: Record<EtatDiffusion, string> = {
-  indisponible: 'Aucun appareil visible depuis ce réseau',
+  indisponible: 'Le navigateur cherche les appareils au moment du choix',
   prete: 'Chrome, Edge et Safari proposent leurs appareils',
   connexion: 'Connexion à l’appareil…',
   diffusion: 'Diffusion en cours — cette page sert de télécommande',
 }
 
+/** Où en est le lien à copier (navigateur sans Remote Playback). */
+export type EtatLien =
+  | { etat: 'aucun' }
+  | { etat: 'demande' }
+  | { etat: 'copie'; expire: string }
+  /** Le presse-papiers est refusé : le lien est montré, à copier à la main. */
+  | { etat: 'affiche'; lien: string; expire: string }
+  | { etat: 'erreur'; message: string }
+
 export default function DialogueDiffusion(props: {
   etat: EtatDiffusion
+  /** Le navigateur sait diffuser (Remote Playback API ou AirPlay). */
+  supportee: boolean
+  lien: EtatLien
   /** Hauteur à réserver sous le panneau pour ne pas couvrir les contrôles. */
   basPx: number
   /** Le téléviseur décode l'EAC3 que le navigateur refuse. */
   resoutLeCodec: boolean
   surChoisir: () => void
   surArreter: () => void
+  surCopierLien: () => void
   surFermer: () => void
 }) {
+  const enCours = () => props.etat === 'diffusion' || props.etat === 'connexion'
   return (
     <div
       role="dialog"
@@ -54,56 +71,103 @@ export default function DialogueDiffusion(props: {
           </button>
         </div>
         <p style={{ margin: 0, 'font-size': '12px', 'line-height': '17px', color: ENCRE2 }}>
-          Le téléviseur va chercher le flux lui-même, en plein débit sur le réseau local.
+          Le téléviseur va chercher le flux lui-même, par un lien signé valable 12 h, d’ici ou de n’importe où.
         </p>
       </div>
 
-      <div style={{ padding: '6px 10px 4px' }}>
-        <span
-          style={{
-            'font-size': '11px', 'font-weight': 'var(--w-strong)',
-            'text-transform': 'uppercase', 'letter-spacing': '.06em', color: ENCRE3,
-          }}
-        >
-          Appareils du navigateur
-        </span>
-      </div>
-
-      <button
-        onClick={props.etat === 'diffusion' ? props.surArreter : props.surChoisir}
-        disabled={props.etat === 'indisponible'}
-        aria-disabled={props.etat === 'indisponible'}
-        style={{
-          display: 'flex', 'align-items': 'center', gap: '10px',
-          width: '100%', padding: '8px 10px', 'text-align': 'left',
-          'border-radius': 'var(--r-xs)',
-          color: props.etat === 'diffusion' ? 'var(--acc-fg)' : ENCRE,
-          background: props.etat === 'diffusion' ? 'var(--acc-bg)' : undefined,
-          opacity: props.etat === 'indisponible' ? 0.5 : undefined,
-          cursor: props.etat === 'indisponible' ? 'not-allowed' : undefined,
-        }}
+      <Show
+        when={props.supportee}
+        fallback={
+          <>
+            <p data-role="diffusion-indisponible" style={{ margin: 0, padding: '6px 10px 8px', 'font-size': '12px', 'line-height': '17px', color: ENCRE }}>
+              Diffusion disponible dans Chrome, Edge ou Safari.
+            </p>
+            <button
+              data-role="copier-lien"
+              onClick={props.surCopierLien}
+              disabled={props.lien.etat === 'demande'}
+              style={{
+                display: 'flex', 'align-items': 'center', gap: '10px',
+                width: '100%', padding: '8px 10px', 'text-align': 'left',
+                'border-radius': 'var(--r-xs)', color: ENCRE,
+              }}
+            >
+              <span style={{ flex: '0 0 auto', display: 'grid', color: ENCRE2 }}>
+                <Icone nom="cast" taille={20} />
+              </span>
+              <span style={{ flex: 1, 'min-width': 0, display: 'grid' }}>
+                <span style={{ 'font-size': '13px', 'font-weight': 'var(--w-strong)' }}>Copier le lien pour le téléviseur</span>
+                <span style={{ 'font-size': '12px', color: ENCRE2 }}>
+                  Lien signé, 12 h, à ouvrir dans le navigateur ou le lecteur du téléviseur
+                </span>
+              </span>
+            </button>
+            <Show when={props.lien.etat !== 'aucun'}>
+              <p data-role="lien-etat" style={{ margin: 0, padding: '4px 10px 8px', 'font-size': '12px', 'line-height': '17px', color: props.lien.etat === 'erreur' ? 'var(--err)' : 'var(--acc-fg)' }}>
+                {props.lien.etat === 'demande' && 'Demande du lien…'}
+                {props.lien.etat === 'copie' && `Lien copié — ${libelleExpiration(props.lien.expire)}`}
+                {props.lien.etat === 'affiche' && `Lien prêt — ${libelleExpiration(props.lien.expire)} (à copier ci-dessous)`}
+                {props.lien.etat === 'erreur' && props.lien.message}
+              </p>
+            </Show>
+            <Show when={props.lien.etat === 'affiche' && props.lien}>
+              {(l) => (
+                <input
+                  readOnly
+                  aria-label="Lien pour le téléviseur"
+                  value={l().lien}
+                  onFocus={(e) => e.currentTarget.select()}
+                  style={{ width: 'calc(100% - 20px)', margin: '0 10px 8px', 'font-size': '11px' }}
+                />
+              )}
+            </Show>
+          </>
+        }
       >
-        <span style={{ flex: '0 0 auto', display: 'grid', color: props.etat === 'diffusion' ? 'var(--acc-fg)' : ENCRE2 }}>
-          <Icone nom="cast" taille={20} plein={props.etat === 'diffusion'} />
-        </span>
-        <span style={{ flex: 1, 'min-width': 0, display: 'grid' }}>
-          <span style={{ 'font-size': '13px', 'font-weight': 'var(--w-strong)' }}>
-            {props.etat === 'diffusion' ? 'Arrêter la diffusion' : 'Choisir un appareil'}
-          </span>
-          <span class="tronque" style={{ 'font-size': '12px', color: ENCRE2 }}>{LIBELLE_ETAT[props.etat]}</span>
-        </span>
-        <Show when={props.resoutLeCodec}>
+        <div style={{ padding: '6px 10px 4px' }}>
           <span
-            class="num"
             style={{
-              flex: '0 0 auto', padding: '1px 6px', 'font-size': '11px',
-              'border-radius': 'var(--r-2xs)', background: 'var(--cod-bg)', color: 'var(--cod)',
+              'font-size': '11px', 'font-weight': 'var(--w-strong)',
+              'text-transform': 'uppercase', 'letter-spacing': '.06em', color: ENCRE3,
             }}
           >
-            EAC3 OK
+            Appareils du navigateur
           </span>
-        </Show>
-      </button>
+        </div>
+
+        <button
+          data-role={enCours() ? 'arreter-diffusion' : 'diffuser'}
+          onClick={enCours() ? props.surArreter : props.surChoisir}
+          style={{
+            display: 'flex', 'align-items': 'center', gap: '10px',
+            width: '100%', padding: '8px 10px', 'text-align': 'left',
+            'border-radius': 'var(--r-xs)',
+            color: props.etat === 'diffusion' ? 'var(--acc-fg)' : ENCRE,
+            background: props.etat === 'diffusion' ? 'var(--acc-bg)' : undefined,
+          }}
+        >
+          <span style={{ flex: '0 0 auto', display: 'grid', color: props.etat === 'diffusion' ? 'var(--acc-fg)' : ENCRE2 }}>
+            <Icone nom="cast" taille={20} plein={props.etat === 'diffusion'} />
+          </span>
+          <span style={{ flex: 1, 'min-width': 0, display: 'grid' }}>
+            <span style={{ 'font-size': '13px', 'font-weight': 'var(--w-strong)' }}>
+              {enCours() ? 'Arrêter la diffusion' : 'Choisir un appareil'}
+            </span>
+            <span class="tronque" style={{ 'font-size': '12px', color: ENCRE2 }}>{LIBELLE_ETAT[props.etat]}</span>
+          </span>
+          <Show when={props.resoutLeCodec}>
+            <span
+              class="num"
+              style={{
+                flex: '0 0 auto', padding: '1px 6px', 'font-size': '11px',
+                'border-radius': 'var(--r-2xs)', background: 'var(--cod-bg)', color: 'var(--cod)',
+              }}
+            >
+              EAC3 OK
+            </span>
+          </Show>
+        </button>
+      </Show>
 
       <p
         style={{

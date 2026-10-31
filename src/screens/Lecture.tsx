@@ -30,9 +30,11 @@ import {
 } from '../lib/modes-direct'
 import { noterOuverture, noterPosition, reprisePour, estFavori, basculerFavori } from '../lib/preferences'
 import {
-  creerDiffusion, preparerDiffusion, urlPourDiffusion, diffusionResoutLeCodec, diffusionPossible,
-  type EtatDiffusion,
+  creerDiffusion, demanderLien, detailsDiffusion, diffusionResoutLeCodec, lienAbsolu, parametresDiffusion,
+  preparerDiffusion, reglagesTeleviseur, type Diffusion, type EtatDiffusion,
 } from '../lib/cast'
+import type { EtatLien } from '../components/DialogueDiffusion'
+import { versErreurLecteur } from '../lib/api'
 import { modePipDisponible, ouvrirPipDocument, basculerPipNatif } from '../lib/pip'
 import type { EntreeCatalogue } from '../lib/db'
 import ColonnePistes from './lecture/ColonnePistes'
@@ -104,6 +106,12 @@ export default function Lecture(props: {
 
   const [erreur, poserErreur] = createSignal<ErreurLecteur | null>(null)
   const [etatDiffusion, poserEtatDiffusion] = createSignal<EtatDiffusion>('indisponible')
+  /** Le navigateur sait diffuser (Remote Playback API ou AirPlay) ; sinon le lien se copie (CA4). */
+  const [diffusionSupportee, poserDiffusionSupportee] = createSignal(false)
+  /** Le flux local est coupé : la source de l'élément est le lien signé, pour l'appareil (US-41 CA3). */
+  const [diffusionEnCours, poserDiffusionEnCours] = createSignal(false)
+  /** Navigateur sans Remote Playback : le lien signé se copie (US-41 CA4). */
+  const [lienEtat, poserLienEtat] = createSignal<EtatLien>({ etat: 'aucun' })
   const [enPip, poserEnPip] = createSignal(false)
   const [favori, poserFavori] = createSignal(false)
 
@@ -337,6 +345,14 @@ export default function Lecture(props: {
       poserErreur(null)
       return
     }
+    // Diffusion (US-41 CA3) : le flux local vient d'être détaché par le
+    // nettoyage ci-dessous, et rien ne rouvre tant que l'appareil a la main —
+    // un seul flux, celui du téléviseur. À l'arrêt, cet effet rouvre.
+    if (diffusionEnCours()) {
+      poserChargement(false)
+      poserErreur(null)
+      return
+    }
     let attache: Attache | undefined
     let annule = false
     const abandon = new AbortController()
@@ -516,18 +532,34 @@ export default function Lecture(props: {
     })
   })
 
-  // Diffusion : disponible dès que le navigateur voit un appareil compatible.
-  createEffect(() => {
-    const d = creerDiffusion(video)
-    poserEtatDiffusion(d.etat())
-    const stop = d.surChangement(poserEtatDiffusion)
-    onCleanup(stop)
+  // Diffusion : l'objet suit l'élément <video> pour toute la vie du lecteur.
+  let diffusion!: Diffusion
+  let debutDiffusionMs = 0
+  onMount(() => {
+    diffusion = creerDiffusion(video)
+    poserDiffusionSupportee(diffusion.supportee())
+    poserEtatDiffusion(diffusion.etat())
+    diffusion.surChangement((e) => {
+      poserEtatDiffusion(e)
+      if (!diffusionEnCours()) return
+      if (e === 'diffusion') {
+        debutDiffusionMs = Date.now()
+        noter('diffusion:debut', detailsDiffusion(lectureEntree(props.entree), navigator.userAgent))
+      } else if (e !== 'connexion') {
+        // L'appareil a lâché (arrêt depuis le téléviseur, perte) : retour local.
+        void terminerDiffusion()
+      }
+    })
+    onCleanup(() => diffusion.detacher())
   })
 
   // Mémorisation de la position de lecture pour la VOD.
   createEffect(() => {
     const entree = props.entree
     if (entree.type === 'live') return
+    // Pendant la diffusion, l'élément porte le lien signé (position à zéro) :
+    // la position atteinte est gardée à part, rien à mémoriser ici.
+    if (diffusionEnCours()) return
     const noter = () => {
       // Le décalage du dernier `?t=` est compris dans `position()` : sans lui,
       // reprendre un film déplacé le ramènerait au début.
@@ -547,29 +579,82 @@ export default function Lecture(props: {
     })
   })
 
+  /**
+   * Diffuser (US-41 CA1) : 1. le serveur remet un lien signé pour l'adresse de
+   * lecture, avec les capacités du téléviseur (CA2) ; 2. le flux local est
+   * coupé et l'élément reçoit ce lien SANS le charger (CA3) ; 3. le sélecteur
+   * natif. L'appareil va chercher le flux lui-même, sans cookie, d'où qu'il soit.
+   */
   async function diffuser() {
-    if (!diffusionPossible()) {
-      notifier('La diffusion n’est possible que depuis le réseau local', 'limite')
+    if (diffusionEnCours()) return
+    const lecture = lectureEntree(props.entree)
+    let lien
+    try {
+      lien = await demanderLien(lecture, parametresDiffusion(reglagesTeleviseur(), qualite()))
+    } catch (e) {
+      notifier(`Lien de diffusion refusé : ${versErreurLecteur(e).message}`, 'erreur')
       return
     }
-    // L'appareil va chercher le flux lui-même, sans cookie : le serveur le
-    // reconnaît à son adresse réseau (compte technique local). On lui donne donc
-    // l'adresse de lecture, absolue, sur l'origine de cette page.
-    const locale = urlPourDiffusion(lectureEntree(props.entree))
+    // Un film repart d'où on en était quand la diffusion s'arrête (CA5).
+    if (!direct()) pointAtteint = pointDeReprise(position(), pointAtteint)
+    // Coupe le flux local (l'effet de source se retire) sans rendre la place :
+    // le téléviseur reprend le MÊME bail, comme s'il était cette session.
+    poserDiffusionEnCours(true)
+    annulerFinDifferee()
+    poserImageDisponible(false)
 
-    // En direct la vidéo est portée par MSE, que la diffusion ne sait pas
-    // envoyer : on repose une URL simple et on attend que les appareils se
-    // déclarent sur CETTE source avant d'ouvrir le sélecteur.
-    const pret = await preparerDiffusion(video, locale)
+    // En direct la vidéo était portée par MSE, que la diffusion ne sait pas
+    // envoyer : on pose le lien signé comme source simple et on attend que les
+    // appareils se déclarent sur CETTE source avant d'ouvrir le sélecteur.
+    const pret = await preparerDiffusion(video, lien.url)
     if (!pret) {
-      notifier("Aucun appareil de diffusion ne répond sur ce réseau", 'limite')
+      notifier('Aucun appareil de diffusion ne répond', 'limite')
+      await terminerDiffusion()
       return
     }
-    await creerDiffusion(video).choisir().catch(() => {})
+    await diffusion.choisir().catch(() => {})
+    // Sélecteur refermé sans appareil : rien à attendre, on rouvre ici.
+    if (etatDiffusion() !== 'diffusion' && etatDiffusion() !== 'connexion') await terminerDiffusion()
+  }
+
+  /** Retour à la lecture locale par l'adresse normale (cookie), position conservée (US-41 CA5). */
+  async function terminerDiffusion() {
+    if (!diffusionEnCours()) return
+    if (debutDiffusionMs) {
+      noter('diffusion:fin', detailsDiffusion(lectureEntree(props.entree), navigator.userAgent, (Date.now() - debutDiffusionMs) / 1000))
+      debutDiffusionMs = 0
+    }
+    diffusion.vider()
+    poserDiffusionEnCours(false)
   }
 
   async function arreterDiffusion() {
-    await creerDiffusion(video).arreter().catch(() => {})
+    if (etatDiffusion() === 'diffusion') {
+      // Le navigateur propose « Arrêter la diffusion » ; s'il garde l'appareil, on reste télécommande.
+      await diffusion.arreter().catch(() => {})
+      if (etatDiffusion() === 'diffusion') return
+    }
+    await terminerDiffusion()
+  }
+
+  /** Navigateur sans Remote Playback (US-41 CA4) : le lien signé, absolu, dans le presse-papiers. */
+  async function copierLien() {
+    const lecture = lectureEntree(props.entree)
+    poserLienEtat({ etat: 'demande' })
+    try {
+      const lien = await demanderLien(lecture, parametresDiffusion(reglagesTeleviseur(), qualite()))
+      const absolu = lienAbsolu(lien.url)
+      // Jamais le lien dans la télémétrie : seulement la ressource.
+      noter('diffusion:lien-copie', detailsDiffusion(lecture, navigator.userAgent))
+      try {
+        await navigator.clipboard.writeText(absolu)
+        poserLienEtat({ etat: 'copie', expire: lien.expire })
+      } catch {
+        poserLienEtat({ etat: 'affiche', lien: absolu, expire: lien.expire })
+      }
+    } catch (e) {
+      poserLienEtat({ etat: 'erreur', message: `Lien de diffusion refusé : ${versErreurLecteur(e).message}` })
+    }
   }
 
   async function basculerPip() {
@@ -590,6 +675,9 @@ export default function Lecture(props: {
   }
 
   function basculerLecture() {
+    // Pendant la préparation de la diffusion, un `play()` local chargerait le
+    // lien signé ici même : interdit tant que l'appareil n'a pas la main (CA3).
+    if (diffusionEnCours() && etatDiffusion() !== 'diffusion') return
     if (video.paused) void video.play().catch(() => {})
     else video.pause()
   }
@@ -752,7 +840,6 @@ export default function Lecture(props: {
       libelle: 'Diffuser vers un téléviseur',
       titre: 'Diffuser vers un téléviseur (C)',
       actif: etatDiffusion() === 'diffusion',
-      desactive: !diffusionPossible(),
       surAction: () => calques.poserDiffusionOuverte((v) => !v),
     },
     {
@@ -787,7 +874,7 @@ export default function Lecture(props: {
     const actions: ActionErreur[] = []
     // Les MP4 en EAC3 sont illisibles en navigateur mais décodés par les
     // téléviseurs : la sortie est dans le message, pas trois clics plus loin.
-    if (erreur()!.couche === 'codec' && etatDiffusion() !== 'indisponible')
+    if (erreur()!.couche === 'codec' && diffusionSupportee())
       actions.push({ libelle: 'Diffuser vers le téléviseur', principale: true, surAction: () => void diffuser() })
     actions.push({
       libelle: 'Réessayer',
@@ -1100,6 +1187,9 @@ export default function Lecture(props: {
           <Show when={calques.diffusionOuverte()}>
             <DialogueDiffusion
               etat={etatDiffusion()}
+              supportee={diffusionSupportee()}
+              lien={lienEtat()}
+              surCopierLien={() => void copierLien()}
               basPx={HAUTEUR_CONTROLES[direct() ? 'live' : 'vod'] + 16}
               resoutLeCodec={
                 // L'extension du catalogue ne dit rien du codec : on ne propose
