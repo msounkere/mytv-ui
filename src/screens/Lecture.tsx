@@ -624,11 +624,16 @@ export default function Lecture(props: {
       noter('diffusion:fin', detailsDiffusion(lectureEntree(props.entree), navigator.userAgent, (Date.now() - debutDiffusionMs) / 1000))
       debutDiffusionMs = 0
     }
-    await diffusion.arreter().catch(() => {})
+    diffusion.vider()
     poserDiffusionEnCours(false)
   }
 
   async function arreterDiffusion() {
+    if (etatDiffusion() === 'diffusion') {
+      // Le navigateur propose « Arrêter la diffusion » ; s'il garde l'appareil, on reste télécommande.
+      await diffusion.arreter().catch(() => {})
+      if (etatDiffusion() === 'diffusion') return
+    }
     await terminerDiffusion()
   }
 
