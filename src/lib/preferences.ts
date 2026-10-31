@@ -91,6 +91,18 @@ export async function oublierReprise(cle: string): Promise<void> {
   await invaliderReprises()
 }
 
+/**
+ * « Retirer de la liste » sur une SERIE de « Continuer a regarder » : la carte
+ * represente son episode le plus recent, mais retirer ce seul episode ferait
+ * remonter le precedent. On oublie donc toutes les positions de la serie.
+ */
+export async function oublierReprisesDeSerie(serie: string): Promise<void> {
+  const lignes = (await db.reprises.toArray()).filter((r) => r.serie === serie)
+  await db.reprises.bulkDelete(lignes.map((r) => r.cle))
+  for (const r of lignes) noterChangement({ genre: 'reprise', cle: r.cle, supprime: true })
+  await invaliderReprises()
+}
+
 /** « Marquer comme vu » : la position saute a la fin, et le geste voyage. */
 export async function marquerVu(cle: string): Promise<void> {
   const r = await db.reprises.get(cle)

@@ -12,7 +12,7 @@ import { ecran, poserOnglet } from '../etat'
 import { db, type EntreeCatalogue, type TypeContenu } from '../lib/db'
 import { clesAJoindre, joindreReprises } from '../lib/reprises-accueil'
 import { chainesAvecGuide, programmesEnCours as programmesDuMoment } from '../lib/chaines-guide'
-import { basculerFavori, marquerVu, oublierReprise } from '../lib/preferences'
+import { basculerFavori, marquerVu, oublierReprise, oublierReprisesDeSerie } from '../lib/preferences'
 import { gabarit as gabaritCoque } from '../lib/gabarit'
 import {
   FRAICHEUR, cles, donneePartagee, requete,
@@ -53,6 +53,8 @@ interface Reprise {
   progression: number
   reste: string
   sousTitre: string
+  /** Cle de la position memorisee : celle de l'EPISODE quand la carte est une serie. */
+  cleReprise: string
 }
 
 interface ChaineFavorite {
@@ -189,6 +191,7 @@ async function aReprendre(): Promise<Reprise[]> {
   trouvees.forEach((e, i) => { if (e) entrees.set(cles[i]!, e) })
   return joindreReprises(lignes, entrees, LIMITE_REPRISES).map(({ entree, ligne, episode }) => ({
     entree,
+    cleReprise: ligne.cle,
     progression: ligne.position / ligne.duree,
     reste: `Reste ${formaterDuree(ligne.duree - ligne.position)}`,
     sousTitre: [LIBELLE_TYPE[entree.type], episode ? 'épisode en cours' : anneeDuTitre(entree.nom)].filter(Boolean).join(' · '),
@@ -366,7 +369,7 @@ export default function Accueil(props: {
   surDetails?: (e: EntreeCatalogue) => void
   surRechercher: (requete: string) => void
 }) {
-  const [menu, poserMenu] = createSignal<{ entree: EntreeCatalogue; x: number; y: number } | null>(null)
+  const [menu, poserMenu] = createSignal<{ entree: EntreeCatalogue; cleReprise?: string; x: number; y: number } | null>(null)
 
   // Neuf rangées, neuf clés de cache. Celles qui décrivent un GESTE sont
   // périmées par le geste lui-même (`lib/preferences.ts`), celles qui décrivent
@@ -410,21 +413,26 @@ export default function Accueil(props: {
     await basculerFavori(e.cle)
   }
 
-  function entreesMenu(entree: EntreeCatalogue): EntreeMenu[] {
+  // POURQUOI `cleReprise` : la carte d'une serie en cours porte la cle de la SERIE,
+  // mais la position memorisee est celle de l'EPISODE (trou vu en reel le 31/10 :
+  // « marquer comme vu » et « retirer » n'agissaient sur rien).
+  function entreesMenu(entree: EntreeCatalogue, cleReprise = entree.cle): EntreeMenu[] {
+    const serieEnCours = entree.type === 'series' && cleReprise !== entree.cle
     return [
       { icone: 'play_arrow', libelle: 'Reprendre', action: () => props.surOuvrir(entree) },
       {
         icone: 'check_circle',
         libelle: 'Marquer comme vu',
         action: async () => {
-          await marquerVu(entree.cle)
+          await marquerVu(cleReprise)
         },
       },
       {
         icone: 'delete',
         libelle: 'Retirer de la liste',
         action: async () => {
-          await oublierReprise(entree.cle)
+          if (serieEnCours) await oublierReprisesDeSerie(entree.cle)
+          else await oublierReprise(cleReprise)
         },
       },
     ]
@@ -482,7 +490,7 @@ export default function Accueil(props: {
               sousTitre={r.sousTitre}
               reste={r.reste}
               surOuvrir={props.surOuvrir}
-              surMenu={(entree, p) => poserMenu({ entree, ...p })}
+              surMenu={(entree, p) => poserMenu({ entree, cleReprise: r.cleReprise, ...p })}
             />
           )}
         />
@@ -562,7 +570,7 @@ export default function Accueil(props: {
           <MenuContextuel
             x={m().x}
             y={m().y}
-            entrees={entreesMenu(m().entree)}
+            entrees={entreesMenu(m().entree, m().cleReprise)}
             surFermer={() => poserMenu(null)}
           />
         )}
