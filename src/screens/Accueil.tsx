@@ -10,6 +10,7 @@ import type { ProgrammeCourant } from '../components/PlaqueChaine'
 import { anneeDuTitre, titreCourt } from '../components/titres'
 import { ecran, poserOnglet } from '../etat'
 import { db, type EntreeCatalogue, type TypeContenu } from '../lib/db'
+import { clesAJoindre, joindreReprises } from '../lib/reprises-accueil'
 import { chainesAvecGuide, programmesEnCours as programmesDuMoment } from '../lib/chaines-guide'
 import { basculerFavori, marquerVu, oublierReprise } from '../lib/preferences'
 import { gabarit as gabaritCoque } from '../lib/gabarit'
@@ -181,17 +182,16 @@ async function aReprendre(): Promise<Reprise[]> {
   // On ratisse plus large que la limite : les contenus terminés à plus de 95 %
   // sont écartés comme dans `reprisePour`, et videraient sinon la rangée.
   const lignes = await db.reprises.orderBy('vuLe').reverse().limit(LIMITE_REPRISES * 3).toArray()
-  const utiles = lignes.filter((l) => l.duree > 0 && l.position / l.duree <= 0.95).slice(0, LIMITE_REPRISES)
-  const entrees = await db.catalogue.bulkGet(utiles.map((l) => l.cle))
-  const retenues = utiles.flatMap((l, i) => {
-    const e = entrees[i]
-    return e ? [{ entree: e, ligne: l }] : []
-  })
-  return retenues.map(({ entree, ligne }) => ({
+  // Un episode n'est pas dans le catalogue : il est joint par sa serie (lib/reprises-accueil).
+  const cles = clesAJoindre(lignes)
+  const trouvees = await db.catalogue.bulkGet(cles)
+  const entrees = new Map<string, EntreeCatalogue>()
+  trouvees.forEach((e, i) => { if (e) entrees.set(cles[i]!, e) })
+  return joindreReprises(lignes, entrees, LIMITE_REPRISES).map(({ entree, ligne, episode }) => ({
     entree,
     progression: ligne.position / ligne.duree,
     reste: `Reste ${formaterDuree(ligne.duree - ligne.position)}`,
-    sousTitre: [LIBELLE_TYPE[entree.type], anneeDuTitre(entree.nom)].filter(Boolean).join(' · '),
+    sousTitre: [LIBELLE_TYPE[entree.type], episode ? 'épisode en cours' : anneeDuTitre(entree.nom)].filter(Boolean).join(' · '),
   }))
 }
 
