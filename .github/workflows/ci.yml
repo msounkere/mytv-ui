@@ -1,0 +1,70 @@
+# Integration continue de l'interface mytv-ui.
+# - verifier : tsc, tests unitaires, build, tests de bout en bout (Chromium, faux serveur).
+# - publier  : sur main seulement, l'interface compilee (mytv-ui-dist.tgz) attachee a une version
+#              GitHub « vAAAAMMJJ-sha » ; la VM la tire avec deploy/gcp/mettre-a-jour.sh (depot mytv).
+# NODE_OPTIONS=--tls-max-v1.2 dans les scripts npm est une contrainte de media-server, sans effet ici.
+name: ci
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: tsc
+        run: npm run check
+      - name: tests unitaires
+        run: npm run test:unit
+      - name: build
+        run: npm run build
+      - name: aucun secret dans dist
+        run: npm run test:dist
+      - name: navigateur des tests de bout en bout
+        run: npx playwright install --with-deps chromium
+      - name: tests de bout en bout
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: captures
+          path: |
+            captures/
+            test-results/
+          if-no-files-found: ignore
+  publier:
+    needs: verifier
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: archiver
+        run: |
+          mkdir -p sortie
+          tar czf sortie/mytv-ui-dist.tgz dist
+          cd sortie && sha256sum * > SHA256SUMS
+      - name: publier la version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          etiquette="v$(date -u +%Y%m%d)-${GITHUB_SHA::7}"
+          gh release create "$etiquette" sortie/* --title "$etiquette" \
+            --notes "$(git log -1 --pretty=%s) — commit ${GITHUB_SHA::7}"
