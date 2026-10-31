@@ -30,6 +30,10 @@
 //   (US-39) chaines 1301, 1302, 1303  variantes d'une meme chaine (HD, FHD, 4K), normales ; 1302 repond sa playlist en 400 ms
 //   (US-38 CA4) `?qualite=eco` ou `X-Mytv-Qualite: eco` sur une playlist ou un film : `X-Mytv-Mode: video`
 //               (reencodage a debit reduit), et le journal retient `qualite` (requete) et `qualiteEntete` (en-tete)
+//   (US-40/41) `POST /api/v1/cast/lien` { lecture, parametres } -> { url: /api/v1/cast/<jeton>/..., expire } ;
+//              `GET|HEAD /api/v1/cast/<jeton>/live/<chaine>.m3u8|/seg/...|/vod/<id>` servis SANS cookie comme les
+//              routes normales (segments reecrits sous le prefixe signe) ; 401 jeton_invalide sinon ; OPTIONS 204 CORS.
+//              Le journal retient `corps` (lecture, parametres) de la demande de lien et `cookie` (presence).
 import { createServer } from 'node:http'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
@@ -80,11 +84,16 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
     return chaine !== '1105'
   }
 
-  function playlist(chaine) {
+  /** Liens de diffusion emis (US-40 CA1) : jeton -> { ressource, expire }. */
+  const liensCast = new Map()
+  const DUREE_CAST_MS = 12 * 3_600_000
+
+  function playlist(chaine, prefixe = '/api/v1') {
     // Segments STABLES d'une playlist a l'autre : meme jeton pour meme numero.
+    // Sous le prefixe signe, les segments restent sous ce prefixe (US-40 CA3).
     const lignes = ['#EXTM3U', '#EXT-X-VERSION:3', `#EXT-X-TARGETDURATION:${DUREE_SEGMENT}`, '#EXT-X-MEDIA-SEQUENCE:0']
     for (let i = 0; i < NB_SEGMENTS; i++) {
-      lignes.push(`#EXTINF:${DUREE_SEGMENT}.000,`, `/api/v1/live/${chaine}/seg/jeton${i}`)
+      lignes.push(`#EXTINF:${DUREE_SEGMENT}.000,`, `${prefixe}/live/${chaine}/seg/jeton${i}`)
     }
     lignes.push('#EXT-X-ENDLIST')
     return lignes.join('\n') + '\n'
@@ -143,10 +152,12 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
   const serveur = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const chemin = decodeURIComponent(url.pathname)
-    journal.push({
+    const entree = {
       methode: req.method, chemin, requete: url.search, t: Date.now(), cap: req.headers['x-mytv-capacites'],
       qualite: url.searchParams.get('qualite') ?? undefined, qualiteEntete: req.headers['x-mytv-qualite'],
-    })
+      cookie: req.headers.cookie !== undefined,
+    }
+    journal.push(entree)
 
     if (chemin === '/__journal') return json(res, 200, journal)
     if (chemin === '/__evenements') return json(res, 200, evenements)
@@ -156,9 +167,47 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
     }
 
     if (chemin.startsWith('/api/v1/')) {
-      const r = chemin.slice('/api/v1'.length)
+      let r = chemin.slice('/api/v1'.length)
       if (r === '/compte') return json(res, 200, { session: { id: 's', identifiant: 'test' }, profils: [], limites })
       let m
+      // --- Diffusion par lien signe (US-40) ----------------------------------------
+      if (r === '/cast/lien') {
+        if (req.method !== 'POST') return erreur(res, 405, 'methode_refusee', 'POST')
+        const morceaux = []
+        req.on('data', (c) => morceaux.push(c))
+        req.on('end', () => {
+          let corps
+          try { corps = JSON.parse(Buffer.concat(morceaux).toString('utf8')) } catch { return erreur(res, 400, 'requete_invalide', 'corps') }
+          entree.corps = corps
+          const lecture = typeof corps?.lecture === 'string' ? corps.lecture : ''
+          const cible = /^\/api\/v1\/(live\/[A-Za-z0-9_-]+\.m3u8|vod\/[^/?#]+)$/.exec(lecture)
+          if (!cible) return erreur(res, 400, 'requete_invalide', 'lecture inconnue')
+          const parametres = typeof corps.parametres === 'string' ? corps.parametres : ''
+          if (parametres && !/^(cap=[a-z0-9,]*|qualite=(auto|eco))(&(cap=[a-z0-9,]*|qualite=(auto|eco)))*$/.test(parametres))
+            return erreur(res, 400, 'requete_invalide', 'parametres')
+          const jeton = 'cast' + Math.random().toString(36).slice(2, 12)
+          const expire = new Date(Date.now() + DUREE_CAST_MS).toISOString()
+          liensCast.set(jeton, { ressource: cible[1], expire })
+          json(res, 200, { url: `/api/v1/cast/${jeton}/${cible[1]}${parametres ? '?' + parametres : ''}`, expire })
+        })
+        return
+      }
+      let prefixe = '/api/v1'
+      if ((m = /^\/cast\/([^/]+)(\/.*)$/.exec(r))) {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, HEAD', 'Access-Control-Allow-Headers': 'Range' })
+          return res.end()
+        }
+        if (req.method !== 'GET' && req.method !== 'HEAD') return erreur(res, 405, 'methode_refusee', 'GET, HEAD')
+        const lien = liensCast.get(m[1])
+        const reste = m[2]
+        const autorise = lien && (reste === '/' + lien.ressource || reste.startsWith('/' + lien.ressource.replace(/\.m3u8$/, '') + '/seg/'))
+        if (!autorise) return erreur(res, 401, 'jeton_invalide', 'jeton de diffusion absent, expire ou etranger')
+        res.setHeader('Access-Control-Allow-Origin', '*')
+        res.setHeader('Access-Control-Expose-Headers', 'X-Mytv-Mode, X-Mytv-Duree, X-Mytv-Codec')
+        prefixe = `/api/v1/cast/${m[1]}`
+        r = reste
+      }
       if ((m = /^\/live\/([A-Za-z0-9_-]+)\.m3u8$/.exec(r))) {
         const chaine = m[1]
         if (chaine === '1004') return erreur(res, 401, 'non_authentifie', 'session expiree')
@@ -184,7 +233,7 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
         const mode = eco ? 'video' : forcer ?? (chaine === '1102' ? 'audio' : 'direct')
         const servir = () => {
           res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store', 'X-Mytv-Mode': mode })
-          res.end(playlist(chaine))
+          res.end(playlist(chaine, prefixe))
         }
         return chaine === '1102' ? void setTimeout(servir, 5000) : chaine === '1302' ? void setTimeout(servir, 400) : servir()
       }

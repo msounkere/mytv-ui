@@ -29,8 +29,14 @@ export interface Diffusion {
   etat: () => EtatDiffusion
   /** Ouvre le selecteur d appareils du navigateur. */
   choisir: () => Promise<void>
-  /** Retire la source signee : l'appareil est lache, l'element est vide. */
+  /**
+   * Demande a l'utilisateur de lacher l'appareil : la Remote Playback API n'a
+   * pas de deconnexion programmee, `prompt()` en etat connecte propose
+   * « Arreter la diffusion » (idem AirPlay). L'evenement `disconnect` suit.
+   */
   arreter: () => Promise<void>
+  /** Retire la source signee de l'element, sans rien charger a la place. */
+  vider: () => void
   /** Prevenu a chaque changement d etat. */
   surChangement: (cb: (e: EtatDiffusion) => void) => () => void
   detacher: () => void
@@ -84,10 +90,12 @@ export function creerDiffusion(video: HTMLVideoElement): Diffusion {
       else airplay.webkitShowPlaybackTargetPicker?.()
     },
     async arreter() {
-      if (remote) await remote.cancelWatchAvailability().catch(() => {})
-      // Vider la source signee : l'appareil est lache (le navigateur rompt la
-      // session distante d'un element dont la source disparait), et rien n'est
-      // charge localement. La lecture locale rouvre ensuite par l'adresse normale.
+      if (remote) {
+        if (remote.state !== 'disconnected') await remote.prompt()
+      } else airplay.webkitShowPlaybackTargetPicker?.()
+    },
+    vider() {
+      if (remote) void remote.cancelWatchAvailability().catch(() => {})
       video.removeAttribute('src')
       video.removeAttribute('preload')
       video.load()
@@ -272,13 +280,20 @@ export async function preparerDiffusion(
   if (!remote && !airplay.webkitShowPlaybackTargetPicker) return false
 
   if (video.getAttribute('src') !== url) {
+    // Un tour de boucle d'abord : le flux precedent vient d'etre detache par un
+    // `load()` explicite (hls.js vide l'element), et Firefox rattache une source
+    // posee dans la meme tache a CE chargement explicite — qui ignore
+    // `preload="none"` (mesure : une requete de playlist). Apres le tour, le
+    // chargement explicite s'est acheve sur un element vide.
+    await new Promise<void>((r) => setTimeout(r, 0))
     // `preload="none"` AVANT la source : le navigateur ne doit rien aller
     // chercher — le flux est pour l'appareil, et l'abonnement n'en admet qu'un.
     video.preload = 'none'
-    // `load()` est indispensable : sans lui l'element garde son flux MSE et
-    // la surveillance continue de ne rien voir.
+    // Poser `src` suffit a lancer l'algorithme de chargement (le flux MSE est
+    // detache, la surveillance voit la nouvelle adresse). SURTOUT PAS `load()` :
+    // un appel explicite vaut intention de lire, et Chromium ignore alors
+    // `preload="none"` — mesure : playlist et segments charges localement.
     video.src = url
-    video.load()
   }
   if (!remote) return true
 
