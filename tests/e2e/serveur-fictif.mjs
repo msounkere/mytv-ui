@@ -183,7 +183,7 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
           const cible = /^\/api\/v1\/(live\/[A-Za-z0-9_-]+\.m3u8|vod\/[^/?#]+)$/.exec(lecture)
           if (!cible) return erreur(res, 400, 'requete_invalide', 'lecture inconnue')
           const parametres = typeof corps.parametres === 'string' ? corps.parametres : ''
-          if (parametres && !/^(cap=[a-z0-9,]*|qualite=(auto|eco))(&(cap=[a-z0-9,]*|qualite=(auto|eco)))*$/.test(parametres))
+          if (parametres && !/^(cap=[a-z0-9,]*|qualite=(auto|eco)|t=[0-9]+)(&(cap=[a-z0-9,]*|qualite=(auto|eco)|t=[0-9]+))*$/.test(parametres))
             return erreur(res, 400, 'requete_invalide', 'parametres')
           const jeton = 'cast' + Math.random().toString(36).slice(2, 12)
           const expire = new Date(Date.now() + DUREE_CAST_MS).toISOString()

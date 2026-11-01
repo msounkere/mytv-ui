@@ -4,7 +4,7 @@ import {
   capacitesTeleviseur, demanderLien, detailsDiffusion, libelleExpiration, lienAbsolu, lienValide, lireReglageTeleviseur,
   parametresDiffusion,
   avecPosition,
-} from "../../src/lib/cast"
+} from '../../src/lib/cast'
 import { origineLocale } from '../../src/sonde-debit'
 
 // US-41 : diffuser depuis n'importe ou, par lien signe (contrat US-40).
