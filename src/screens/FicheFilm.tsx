@@ -8,6 +8,10 @@ import { titreCourt } from '../components/titres'
 import { cibleDe, dureeLongue, useDetails } from '../lib/details'
 import { basculerFavori, estFavori } from '../lib/preferences'
 import { estBureau, estMobile } from '../lib/gabarit'
+import { BadgePret, BoutonAVoir, LigneDisponibilite, useAVoirCles } from '../components/BoutonAVoir'
+import { estPret } from '../lib/a-voir-serveur'
+import { useDisponibilite } from '../lib/disponibilite'
+import { lectureEnCours } from '../etat'
 import type { EntreeCatalogue } from '../lib/db'
 
 // Fiche d'un film (US-28). Les details -- synopsis, genre, duree, casting,
@@ -15,6 +19,10 @@ import type { EntreeCatalogue } from '../lib/db'
 // fiche, une seule fois par film, et jamais pour une carte d'une liste. Le service
 // ne fait pas echouer la fiche quand le fournisseur est en panne : nom, annee et
 // note du catalogue restent affiches, et le resume dit pourquoi il manque.
+//
+// US-43 : le bouton « À voir » (CA1), le badge « Prêt » quand le serveur tient
+// le fichier (CA3) et la sonde de disponibilite, demandee a l'ouverture seulement
+// si aucune lecture n'est en cours (CA5).
 
 const marge = () => (estBureau() ? 24 : 14)
 
@@ -44,6 +52,9 @@ export default function FicheFilm(props: {
 }) {
   const [details, { refetch }] = useDetails(() => cibleDe(props.film))
   const [favori, poserFavori] = createSignal(false)
+  const aVoir = useAVoirCles()
+  const dansAVoir = () => aVoir()?.has(props.film.cle) ?? false
+  const disponibilite = useDisponibilite(() => props.film.idServeur, () => lectureEnCours() === null)
 
   onMount(() => {
     void estFavori(props.film.cle).then(poserFavori)
@@ -117,6 +128,7 @@ export default function FicheFilm(props: {
               <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
                 <EtiquettePays pays={props.film.pays} />
                 <h1 title={titre()} style={{ margin: 0, 'text-wrap': 'balance' }}>{titre()}</h1>
+                <BadgePret visible={estPret(props.film.cle)} />
               </div>
 
               <p class="secondaire num" data-role="meta" style={{ margin: 0, 'font-size': '13px', 'min-height': '18px' }}>
@@ -134,8 +146,11 @@ export default function FicheFilm(props: {
 
               <FaitsContenu details={details()} />
 
+              <LigneDisponibilite disponibilite={disponibilite()} cle={props.film.cle} present={dansAVoir()} />
+
               <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '8px', 'margin-top': '4px' }}>
                 <Action principal icone="play_arrow" plein libelle="Regarder" surClic={() => props.surLire(props.film)} />
+                <BoutonAVoir cle={props.film.cle} present={dansAVoir()} />
                 <Action
                   icone="star"
                   plein={favori()}

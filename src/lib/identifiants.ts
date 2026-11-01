@@ -67,3 +67,33 @@ export function clesCandidates(idServeur: string): string[] {
     ? [cleDe('series', idServeur)]
     : TYPES_CONTENU.map((t) => cleDe(t, idServeur))
 }
+
+// --- Liste « À voir » (US-42 CA1 / US-43 CA1) ---------------------------------
+// Le serveur range cette liste par identifiant TYPE : `vod:iptva:5521` pour un
+// film, `serie:iptva:s77` pour une serie (lot9.md). C'est presque la cle locale,
+// a un `s` pres : on traduit a la frontiere, comme pour les favoris.
+
+const MOTIF_A_VOIR = /^(vod|serie):[A-Za-z0-9_-]{1,32}:[A-Za-z0-9_.-]{1,64}$/
+
+/** `vod:iptva:5521` -> `vod:iptva:5521` ; `series:iptva:s77` -> `serie:iptva:s77`. */
+export function idAVoirDeCle(cle: string): string {
+  const i = cle.indexOf(':')
+  const type = cle.slice(0, i)
+  const id = cle.slice(i + 1)
+  if (type === 'vod' && estIdentifiantValide(id) && !estIdentifiantEpisode(id)) return `vod:${id}`
+  if (type === 'series' && estIdentifiantValide(id) && !estIdentifiantEpisode(id)) return `serie:${id}`
+  throw new Error(`cle sans place dans « À voir » : ${cle}`)
+}
+
+/** Inverse : identifiant du serveur -> cle locale ; `undefined` si la forme est inconnue. */
+export function cleDeIdAVoir(id: string): string | undefined {
+  if (!MOTIF_A_VOIR.test(id)) return undefined
+  const i = id.indexOf(':')
+  return `${id.slice(0, i) === 'vod' ? 'vod' : 'series'}:${id.slice(i + 1)}`
+}
+
+/** Segment de chemin de `/profil/a_voir/{id}` : la forme est verifiee, rien n'est encode. */
+export function cheminAVoir(id: string): string {
+  if (!MOTIF_A_VOIR.test(id)) throw new Error(`identifiant « À voir » invalide : ${id}`)
+  return id
+}

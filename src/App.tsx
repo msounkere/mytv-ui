@@ -10,6 +10,8 @@ import {
 } from './etat'
 import { db } from './lib/db'
 import { gabarit } from './lib/gabarit'
+import { estPret } from './lib/a-voir-serveur'
+import { noter } from './lib/diagnostic'
 import BarreLaterale, { type ClefNav } from './components/BarreLaterale'
 import BandeauAbonnement from './components/BandeauAbonnement'
 import BandeauImport from './components/BandeauImport'
@@ -25,6 +27,7 @@ const FicheSerie = lazy(() => import('./screens/FicheSerie'))
 const FicheFilm = lazy(() => import('./screens/FicheFilm'))
 const Guide = lazy(() => import('./screens/Guide'))
 const Reglages = lazy(() => import('./screens/Reglages'))
+const AVoir = lazy(() => import('./screens/AVoir'))
 
 // Coque permanente : rail de navigation, en-tête, surface unique. Changer
 // d'écran ne recharge jamais la page — le zapping doit rester sous la seconde.
@@ -49,7 +52,7 @@ function cheminInterne(complet: string): string {
 }
 
 /** Écrans que le routeur monte et démonte lui-même : quelques nœuds chacun. */
-const ECRANS_LEGERS: ReadonlySet<string> = new Set(['recherche', 'serie', 'film', 'reglages'])
+const ECRANS_LEGERS: ReadonlySet<string> = new Set(['recherche', 'serie', 'film', 'reglages', 'a_voir'])
 
 function Chargement() {
   return <p class="tertiaire" style={{ padding: '16px' }}>Chargement…</p>
@@ -124,6 +127,7 @@ export default function App() {
       <Route path="/serie/:cle" component={EcranFiche} />
       <Route path="/film/:cle" component={EcranFicheFilm} />
       <Route path="/reglages" component={() => <Reglages />} />
+      <Route path="/a-voir" component={() => <AVoir surOuvrir={ouvrir} surDetails={ouvrirDetails} />} />
       {/* Une adresse inconnue ne doit pas donner un écran vide. */}
       <Route path="*" component={() => <Navigate href="/" />} />
     </Router>
@@ -197,7 +201,7 @@ function Coque(props: RouteSectionProps) {
   // onglets de Parcours. Le rail les présente séparément parce que c'est ainsi
   // que l'utilisateur les cherche, pas parce que le code les sépare.
   function naviguerRail(cle: ClefNav) {
-    if (cle === 'accueil' || cle === 'guide' || cle === 'reglages') poserEcran(cle)
+    if (cle === 'accueil' || cle === 'guide' || cle === 'reglages' || cle === 'a_voir') poserEcran(cle)
     else poserOnglet(cle)
   }
 
@@ -205,7 +209,7 @@ function Coque(props: RouteSectionProps) {
   // série reste « Séries », une lecture reste l'onglet de son contenu.
   function navActive(): ClefNav | undefined {
     const e = ecran()
-    if (e === 'accueil' || e === 'guide' || e === 'reglages') return e
+    if (e === 'accueil' || e === 'guide' || e === 'reglages' || e === 'a_voir') return e
     if (e === 'parcours') return onglet()
     if (e === 'serie') return 'series'
     if (e === 'film') return 'vod'
@@ -221,6 +225,7 @@ function Coque(props: RouteSectionProps) {
     if (e === 'film') return 'Films'
     if (e === 'guide') return 'Guide'
     if (e === 'reglages') return 'Réglages'
+    if (e === 'a_voir') return 'À voir'
     if (e === 'recherche') return 'Recherche'
     const s = selection()
     return s ? { live: 'Direct', vod: 'Film', series: 'Série' }[s.type] : 'Lecture'
@@ -342,9 +347,20 @@ function Coque(props: RouteSectionProps) {
                     urlForcee={urlEpisode()}
                     suivant={
                       episodeSuivant()
-                        ? { titre: episodeSuivant()!.nom, lire: () => lireEpisode(episodeSuivant()!) }
+                        ? {
+                            titre: episodeSuivant()!.nom,
+                            // Le serveur tient-il deja l'episode suivant ? Le decompte le dit (US-43 CA4).
+                            pret: estPret(episodeSuivant()!.cle),
+                            lire: () => {
+                              const vers = episodeSuivant()!
+                              // Telemetrie : identifiants seulement (US-43 CA5).
+                              noter('enchainement:suivant', { de: e().cle, vers: vers.cle, pret: estPret(vers.cle) })
+                              lireEpisode(vers)
+                            },
+                          }
                         : undefined
                     }
+                    surSuivantListe={ouvrir}
                     surChanger={changerDeChaine}
                     surFermer={arreterLecture}
                     surRetour={quitterLecteur}

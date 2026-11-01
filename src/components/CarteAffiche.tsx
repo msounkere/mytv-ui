@@ -3,6 +3,7 @@ import Icone from './Icone'
 import { plaque, plaqueTexte } from './couleurs'
 import { RAYON_VISUEL } from './aplats'
 import { titreCourt } from './titres'
+import { BadgePret } from './BoutonAVoir'
 import type { EntreeCatalogue } from '../lib/db'
 
 // Carte 2:3 du dossier de conception (composant « PosterCard »). L'affiche
@@ -22,9 +23,14 @@ export interface CarteAfficheProps {
   favori?: boolean
   /** Avancement entre 0 et 1 ; absent = pas de barre. */
   progression?: number
+  /** Dans la liste « À voir » (US-43 CA1) ; `surAVoir` absent = pas de bouton. */
+  aVoir?: boolean
+  /** Le serveur tient le fichier pret (US-43 CA3). */
+  pret?: boolean
   surOuvrir: (e: EntreeCatalogue) => void
   surLire?: (e: EntreeCatalogue) => void
   surFavori?: (e: EntreeCatalogue) => void
+  surAVoir?: (e: EntreeCatalogue) => void
 }
 
 /** Squelette affiché pendant que la rangée interroge IndexedDB. */
@@ -132,6 +138,7 @@ export default function CarteAffiche(props: CarteAfficheProps) {
               Nouveau
             </span>
           </Show>
+          <BadgePret visible={!!props.pret} taille="carte" />
           <span style={{ flex: 1 }} />
           <Show when={props.favori}>
             <span style={{ color: '#fff', display: 'flex' }}>
@@ -171,6 +178,16 @@ export default function CarteAffiche(props: CarteAfficheProps) {
                 nom="star"
                 plein={props.favori}
                 libelle={props.favori ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+                surClic={() => basculer()(props.entree)}
+              />
+            )}
+          </Show>
+          <Show when={props.surAVoir}>
+            {(basculer) => (
+              <BoutonSurvol
+                nom={props.aVoir ? 'check' : 'add'}
+                plein={props.aVoir}
+                libelle={props.aVoir ? 'Retirer de « À voir »' : 'Ajouter à « À voir »'}
                 surClic={() => basculer()(props.entree)}
               />
             )}

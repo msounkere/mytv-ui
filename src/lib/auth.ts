@@ -100,8 +100,9 @@ async function cloisonner(identite: string): Promise<void> {
   if (vue === identite) return
   ecrireLocal(CLE_IDENTITE_LOCALE, identite)
   const { db } = await import('./db')
-  await db.transaction('rw', [db.favoris, db.historique, db.reprises, db.journal, db.reglages], async () => {
+  await db.transaction('rw', [db.favoris, db.historique, db.reprises, db.journal, db.reglages, db.a_voir], async () => {
     await db.favoris.clear()
+    await db.a_voir.clear()
     await db.historique.clear()
     await db.reprises.clear()
     await db.journal.clear()

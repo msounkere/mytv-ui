@@ -2,6 +2,7 @@ import Dexie, { type EntityTable } from 'dexie'
 import { cleDe, estIdentifiantEpisode } from './identifiants'
 import { cleGroupeEntree } from './variantes'
 import type { CategorieApi, ChaineApi, FilmApi, SerieApi, TypeApi } from './api'
+import type { Preparation } from './a-voir-regles'
 
 // 21 791 chaines + 106 973 films ne peuvent pas etre re-telecharges a chaque
 // navigation : le catalogue est importe une fois (export en bloc de l'API, voir
@@ -117,10 +118,31 @@ export interface Reglage {
   valeur: unknown
 }
 
+/**
+ * Element de la liste « À voir » (US-43 CA1) : un film ou une SERIE (jamais un
+ * episode : une serie y est un seul element, la preparation travaille episode
+ * par episode cote serveur). Copie locale de `GET /profil/a_voir`, qui fait foi
+ * au demarrage ; les gestes passent par le journal comme les favoris.
+ */
+export interface AVoir {
+  /** Cle locale (`vod:iptva:5521`, `series:iptva:s77`). */
+  cle: string
+  /** Position dans la liste, 1 = en tete. */
+  rang: number
+  /** Millisecondes de l'ajout. */
+  ajouteLe: number
+  /** Serie : episodes a tenir prets d'avance (defaut du serveur si absent). */
+  episodesAvance?: number
+  /** Serie : point de depart impose (sinon l'episode entame). */
+  depuis?: { saison: number; episode: number }
+  /** Etat de preparation rendu par le serveur a la derniere lecture ; absent hors ligne. */
+  preparation?: Preparation
+}
+
 /** Les genres d'etat personnel qui passent par le journal (un changement = un
  *  geste a rejouer vers le service). Les reglages, eux, se synchronisent par
  *  fusion (voir reglages-fusion.ts) et n'ont pas de journal. */
-export type GenreEtat = 'favori' | 'historique' | 'reprise'
+export type GenreEtat = 'favori' | 'historique' | 'reprise' | 'a_voir'
 
 /**
  * Changement local en attente d'envoi. Il existe parce qu'une table seule ne
@@ -148,6 +170,7 @@ export const db = new Dexie('mytv') as Dexie & {
   reglages: EntityTable<Reglage, 'cle'>
   journal: EntityTable<LigneJournal, 'n'>
   lectures: EntityTable<LectureMesuree, 'n'>
+  a_voir: EntityTable<AVoir, 'cle'>
 }
 
 db.version(1).stores({
@@ -198,6 +221,12 @@ db.version(5)
       e.groupe = cleGroupeEntree(e)
     })
   })
+
+// Version 6 (US-43) : la liste « À voir », ordonnee par `rang`. Table ajoutee
+// seule : rien d'existant n'est reindexe.
+db.version(6).stores({
+  a_voir: 'cle, rang',
+})
 
 /** Minuscules, sans accents : rend la recherche insensible a « é » vs « e ». */
 export function normaliser(s: string): string {

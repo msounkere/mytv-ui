@@ -118,6 +118,14 @@ export const cles = {
   /** Fiche détaillée d'une série, telle que le relais la rend. */
   /** Saisons d'une serie, telles que l'API les rend (`/series/{id}/saisons`). */
   serie: (id: string) => ['serie', id] as const,
+  /** Saisons brutes de l'API, partagees entre la fiche et l'enchainement (US-43 CA4). */
+  saisons: (id: string) => ['serie', id, 'saisons'] as const,
+  /** Liste « À voir » (US-43) : une cle de geste, perimee par chaque ecriture et chaque relecture du serveur. */
+  aVoir: ['a_voir'] as const,
+  aVoirCles: ['a_voir', 'cles'] as const,
+  aVoirAccueil: ['a_voir', 'accueil'] as const,
+  /** Sonde de disponibilite d'un film ou d'un episode (US-43 CA5), gardee 10 min comme au serveur. */
+  disponibilite: (id: string) => ['disponibilite', id] as const,
   /** Details (synopsis, genre...) d'un film ou d'une serie, par identifiant serveur. */
   details: (id: string) => ['details', id] as const,
 } as const
@@ -145,6 +153,12 @@ export const clientRequetes = new QueryClient({
       // Revenir sur l'onglet ne doit rien relire : la synchronisation s'en
       // charge déjà, et elle invalide ce qu'elle a vraiment changé.
       refetchOnWindowFocus: false,
+      // La plupart des requêtes lisent IndexedDB : hors ligne, elles doivent
+      // répondre, pas rester « en pause » (comportement par défaut de TanStack
+      // quand `navigator.onLine` est faux — constaté : un ajout à « À voir »
+      // sans réseau n'apparaissait pas sur la fiche, US-43 CA1). Les requêtes
+      // réseau échouent alors franchement, et chaque écran sait déjà le dire.
+      networkMode: 'always',
       staleTime: FRAICHEUR.catalogue,
       // Le cas courant est une lecture d'IndexedDB : la garder coûte de la
       // mémoire, la rebâtir coûte 154 106 entrées. On la garde — et c'est
@@ -337,6 +351,7 @@ export function invaliderTout(): Promise<void> {
     invaliderHistorique(),
     invaliderReprises(),
     invaliderEpingles(),
+    invaliderAVoir(),
     invaliderCategories('live'),
     invaliderCategories('vod'),
     invaliderCategories('series'),
@@ -411,6 +426,11 @@ export function invaliderReprisesRegroupees(): void {
     derniereReprise = Date.now()
     void invaliderReprises()
   }, PAS_REPRISE - depuis)
+}
+
+/** Liste « À voir » : ajout, retrait, ordre, options, et chaque relecture de l'etat de preparation. */
+export function invaliderAVoir(): Promise<void> {
+  return clientRequetes.invalidateQueries({ queryKey: cles.aVoir })
 }
 
 /** Épinglage d'une catégorie de Direct. */

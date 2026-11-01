@@ -9,7 +9,7 @@ import { gabarit } from '../lib/gabarit'
 // rend 148 px au catalogue — c'est une ligne d'affiches de plus — mais coûte la
 // lecture immédiate des rubriques, donc c'est un choix, pas un défaut.
 
-export type ClefNav = 'accueil' | 'live' | 'vod' | 'series' | 'guide' | 'reglages'
+export type ClefNav = 'accueil' | 'live' | 'vod' | 'series' | 'guide' | 'a_voir' | 'reglages'
 
 const ENTREES: Array<{ cle: ClefNav; icone: string; libelle: string }> = [
   { cle: 'accueil', icone: 'home', libelle: 'Accueil' },
@@ -17,6 +17,8 @@ const ENTREES: Array<{ cle: ClefNav; icone: string; libelle: string }> = [
   { cle: 'vod', icone: 'movie', libelle: 'Films' },
   { cle: 'series', icone: 'video_library', libelle: 'Séries' },
   { cle: 'guide', icone: 'tv_guide', libelle: 'Guide' },
+  // US-43 CA2 : la liste que le serveur prepare d'avance.
+  { cle: 'a_voir', icone: 'view_list', libelle: 'À voir' },
 ]
 
 /** Rubrique que le flux en cours fait vivre, pour y poser le point bleu. */

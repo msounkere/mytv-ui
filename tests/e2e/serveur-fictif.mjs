@@ -34,6 +34,10 @@
 //              `GET|HEAD /api/v1/cast/<jeton>/live/<chaine>.m3u8|/seg/...|/vod/<id>` servis SANS cookie comme les
 //              routes normales (segments reecrits sous le prefixe signe) ; 401 jeton_invalide sinon ; OPTIONS 204 CORS.
 //              Le journal retient `corps` (lecture, parametres) de la demande de lien et `cookie` (presence).
+//   (US-43)    `GET /api/v1/profil/a_voir` -> { elements } poses par `POST /__a_voir` (etat de preparation simule) ;
+//              `PUT|DELETE /api/v1/profil/a_voir[/{id}]` -> 204, journalises ; `GET /api/v1/vod/{id}/disponibilite`
+//              -> reponse posee par `POST /__disponibilite` ({ id, reponse }), sinon { etat: immediat, debit_kbps: 12000 } ;
+//              `requis_kbps` (debit du fichier) toujours present, 8000 par defaut.
 import { createServer } from 'node:http'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
@@ -83,6 +87,15 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
     if (chaine === '1104') return m === 'video'
     return chaine !== '1105'
   }
+
+  /** US-43 : liste « À voir » rendue telle quelle, et reponses de la sonde par identifiant. */
+  let aVoir = []
+  const disponibilite = new Map()
+  const lireCorps = (req) => new Promise((ok) => {
+    const morceaux = []
+    req.on('data', (c) => morceaux.push(c))
+    req.on('end', () => { try { ok(JSON.parse(Buffer.concat(morceaux).toString('utf8') || 'null')) } catch { ok(undefined) } })
+  })
 
   /** Liens de diffusion emis (US-40 CA1) : jeton -> { ressource, expire }. */
   const liensCast = new Map()
@@ -162,9 +175,12 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
     if (chemin === '/__journal') return json(res, 200, journal)
     if (chemin === '/__evenements') return json(res, 200, evenements)
     if (chemin === '/__reinit') {
-      journal.length = 0; evenements.length = 0; etat = new Map()
+      journal.length = 0; evenements.length = 0; etat = new Map(); aVoir = []; disponibilite.clear()
       return json(res, 200, { ok: true })
     }
+    if (chemin === '/__a_voir' && req.method === 'POST') return void lireCorps(req).then((c) => { aVoir = c?.elements ?? []; json(res, 200, { ok: true }) })
+    if (chemin === '/__disponibilite' && req.method === 'POST')
+      return void lireCorps(req).then((c) => { if (c?.reponse) disponibilite.set(c.id, c.reponse); else disponibilite.delete(c?.id); json(res, 200, { ok: true }) })
 
     if (chemin.startsWith('/api/v1/')) {
       let r = chemin.slice('/api/v1'.length)
@@ -254,6 +270,13 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
         res.writeHead(204)
         return res.end()
       }
+      // US-43 : liste « À voir » et sonde de disponibilite.
+      if (r === '/profil/a_voir' && req.method === 'GET') return json(res, 200, { elements: aVoir })
+      if (r === '/profil/a_voir' && req.method === 'PUT') return void lireCorps(req).then((c) => { entree.corps = c; res.writeHead(204); res.end() })
+      if ((m = /^\/profil\/a_voir\/(.+)$/.exec(r)) && (req.method === 'PUT' || req.method === 'DELETE'))
+        return void lireCorps(req).then((c) => { entree.corps = c; res.writeHead(204); res.end() })
+      if ((m = /^\/vod\/([^/]+)\/disponibilite$/.exec(r)) && req.method === 'GET')
+        return json(res, 200, { mesure: new Date().toISOString(), requis_kbps: 8000, ...(disponibilite.get(m[1]) ?? { etat: 'immediat', debit_kbps: 12000 }) })
       if ((m = /^\/vod\/(.+)$/.exec(r)) && (req.method === 'GET' || req.method === 'HEAD')) return repondreFilm(req, res, url, m[1])
       if (r === '/epg/grille') {
         const chaines = (url.searchParams.get('chaines') ?? '').split(',').filter(Boolean)

@@ -5,11 +5,18 @@
 //
 // Il sert a verifier l'interface, pas le serveur : le harnais `cmd/mytv-dev`
 // (US-15) prendra le relais pour la recette de bout en bout (US-22).
+//
+// Lot 9 (US-42 / US-43) : liste « À voir » par profil (/profil/a_voir), etats de
+// preparation SIMULES qui evoluent a chaque lecture (attente -> en cours -> pret),
+// pilotables par __test/preparation ; sonde GET /vod/{id}/disponibilite pilotable
+// par __test/disponibilite ; et GET|HEAD /vod/{id} sert un MP3 silencieux (6 s
+// pour un film, 18 s pour un episode) pour que l'enchainement se joue vraiment.
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import crypto from 'node:crypto'
+import { mp3 } from './media.mjs'
 
 const TYPES_MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
@@ -81,6 +88,15 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     // US-28 : reponses de GET /films/{id} et /series/{id}. Cle = identifiant ; valeur =
     // { statut (HTTP), latence (ms), statutDetails, details } ; absent = fiche complete par defaut.
     details: new Map(),
+    // Lot 9 : liste « À voir » par profil : profil -> [{ contenu, episodes_avance?, depuis?, ajoute }].
+    aVoir: new Map(),
+    // Etat de preparation impose par un test : contenu -> { etat, octets, total, debit_kbps, cause }.
+    preparationForcee: new Map(),
+    // Compteur de lectures par contenu, pour l'evolution simulee ; `preparationAuto` la coupe.
+    preparationLectures: new Map(),
+    preparationAuto: true,
+    // Reponse de la sonde par identifiant ; defaut : immediat.
+    disponibilite: new Map(),
   }
   let nProfil = 0
   const reg = (p) => {
@@ -155,6 +171,72 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     sortie.end()
   }
 
+  const FILM = mp3(6)
+  const EPISODE = mp3(18)
+  const DEFAUT_EPISODES_AVANCE = 2
+
+  /** Episodes d'une serie `iptva:s<num>` (memes identifiants que /series/{id}/saisons). */
+  const episodesDe = (idSerie) => {
+    const num = Number(idSerie.split(':s')[1])
+    const liste = []
+    for (const sn of [1, 2]) for (const en of [1, 2, 3]) liste.push({ contenu: `iptva:${num * 100 + sn * 10 + en}.mkv`, saison: sn, episode: en })
+    return liste
+  }
+
+  /**
+   * Etat simule d'un fichier : impose par un test, sinon il avance a chaque
+   * lecture de la liste (attente, en cours 35 %, en cours 80 %, pret).
+   */
+  const etatFichier = (contenu, avancer) => {
+    const force = etat.preparationForcee.get(contenu)
+    if (force) return { ...force }
+    if (!etat.preparationAuto) return { etat: 'attente' }
+    const n = etat.preparationLectures.get(contenu) ?? 0
+    if (avancer) etat.preparationLectures.set(contenu, n + 1)
+    if (n === 0) return { etat: 'attente' }
+    if (n === 1) return { etat: 'en_cours', octets: 350, total: 1000, debit_kbps: 2100 }
+    if (n === 2) return { etat: 'en_cours', octets: 800, total: 1000, debit_kbps: 2400 }
+    return { etat: 'pret', octets: 1000, total: 1000 }
+  }
+
+  /** Vrai quand le fichier d'un contenu `/vod/{id}` est pret (lecture depuis le disque). */
+  const fichierPret = (id) => {
+    for (const liste of etat.aVoir.values())
+      for (const e of liste) {
+        if (e.contenu === `vod:${id}` && etatFichier(e.contenu, false).etat === 'pret') return true
+        if (e.contenu.startsWith('serie:') && episodesDe(e.contenu.slice('serie:'.length)).some((ep) => ep.contenu === id) && etatFichier(id, false).etat === 'pret') return true
+      }
+    return false
+  }
+
+  /** La liste d'un profil, avec l'etat de preparation de chaque element (contrat ui-5.contrat.demande). */
+  const listeAVoir = (profil, avancer) =>
+    (etat.aVoir.get(profil) ?? []).map((e, i) => {
+      const base = { contenu: e.contenu, rang: i + 1, ajoute: e.ajoute, episodes_avance: e.episodes_avance ?? DEFAUT_EPISODES_AVANCE, ...(e.depuis ? { depuis: e.depuis } : {}) }
+      if (e.contenu.startsWith('vod:')) return { ...base, ...etatFichier(e.contenu, avancer) }
+      const tous = episodesDe(e.contenu.slice('serie:'.length))
+      const depart = e.depuis ? Math.max(0, tous.findIndex((x) => x.saison === e.depuis.saison && x.episode === e.depuis.episode)) : 0
+      const episodes = tous.slice(depart, depart + base.episodes_avance).map((ep) => ({ ...ep, ...etatFichier(ep.contenu, avancer) }))
+      const premier = episodes[0] ?? { etat: 'attente' }
+      return { ...base, etat: premier.etat, ...(premier.octets !== undefined ? { octets: premier.octets, total: premier.total } : {}), ...(premier.debit_kbps ? { debit_kbps: premier.debit_kbps } : {}), ...(premier.cause ? { cause: premier.cause } : {}), episodes }
+    })
+
+  const repondreMedia = (req, res, id) => {
+    const corps = id.endsWith('.mkv') ? EPISODE : FILM
+    const entetes = { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, no-store', 'Accept-Ranges': 'bytes', ...(fichierPret(id) ? { 'X-Mytv-Source': 'prepare' } : {}) }
+    const tete = req.method === 'HEAD'
+    const plage = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
+    if (plage) {
+      const debut = plage[1] === '' ? Math.max(0, corps.length - Number(plage[2])) : Number(plage[1])
+      const fin = plage[1] === '' || plage[2] === '' ? corps.length - 1 : Math.min(Number(plage[2]), corps.length - 1)
+      if (debut >= corps.length) return erreur(res, 416, 'plage_invalide', 'hors fichier')
+      res.writeHead(206, { ...entetes, 'Content-Range': `bytes ${debut}-${fin}/${corps.length}`, 'Content-Length': fin - debut + 1 })
+      return res.end(tete ? undefined : corps.subarray(debut, fin + 1))
+    }
+    res.writeHead(200, { ...entetes, 'Content-Length': corps.length })
+    return res.end(tete ? undefined : corps)
+  }
+
   const serveur = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1')
     const chemin = url.pathname
@@ -165,7 +247,7 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     if (chemin.startsWith('/__test/')) {
       const op = chemin.slice('/__test/'.length)
       const c = await corpsJson(req)
-      if (op === 'etat') return json(res, 200, { version: etat.version, total: total(), favoris: Object.fromEntries(etat.favoris), historique: Object.fromEntries([...etat.historique].map(([k, v]) => [k, [...v.values()]])), reglages: Object.fromEntries(etat.reglages), profils: etat.profils, sessions: etat.sessions.size })
+      if (op === 'etat') return json(res, 200, { version: etat.version, total: total(), favoris: Object.fromEntries(etat.favoris), historique: Object.fromEntries([...etat.historique].map(([k, v]) => [k, [...v.values()]])), reglages: Object.fromEntries(etat.reglages), profils: etat.profils, sessions: etat.sessions.size, aVoir: Object.fromEntries(etat.aVoir) })
       if (op === 'requetes') return json(res, 200, etat.requetes)
       if (op === 'vider-requetes') { etat.requetes.length = 0; return json(res, 200, {}) }
       if (op === 'nouvelle-version') {
@@ -202,6 +284,13 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
       if (op === 'details') { etat.details.set(c.id, c.reglage); return json(res, 200, {}) }
       if (op === 'details-effacer') { etat.details.clear(); return json(res, 200, {}) }
       if (op === 'latence') { etat.latenceChunk = c.ms; return json(res, 200, {}) }
+      // Lot 9 : liste « À voir » semee (`elements` : [{ contenu, episodes_avance?, depuis? }]),
+      // etat de preparation impose (`contenu`, `reglage` ou null pour lever), evolution automatique,
+      // reponse de la sonde (`id`, `reponse`).
+      if (op === 'a-voir') { etat.aVoir.set(c.profil, (c.elements ?? []).map((e) => ({ ...e, ajoute: e.ajoute ?? new Date().toISOString() }))); return json(res, 200, {}) }
+      if (op === 'preparation') { if (c.reglage) etat.preparationForcee.set(c.contenu, c.reglage); else etat.preparationForcee.delete(c.contenu); return json(res, 200, {}) }
+      if (op === 'preparation-auto') { etat.preparationAuto = !!c.actif; etat.preparationLectures.clear(); return json(res, 200, {}) }
+      if (op === 'disponibilite') { if (c.reponse) etat.disponibilite.set(c.id, c.reponse); else etat.disponibilite.delete(c.id); return json(res, 200, {}) }
       return erreur(res, 404, 'inconnu')
     }
 
@@ -320,10 +409,50 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
       })
     }
 
+    // --- Lot 9 : sonde de disponibilite, puis le fichier lui-meme (film ou episode) ---------
+    m = /^\/vod\/([^/]+)\/disponibilite$/.exec(p)
+    if (m && req.method === 'GET') {
+      // Contrat accepte par le coordinateur : `requis_kbps` = debit du fichier retenu par la sonde (8000 par defaut).
+      const d = etat.disponibilite.get(m[1]) ?? (fichierPret(m[1]) ? { etat: 'pret', debit_kbps: 0 } : { etat: 'immediat', debit_kbps: 12000 })
+      return json(res, 200, { mesure: new Date().toISOString(), requis_kbps: 8000, ...d })
+    }
+    m = /^\/vod\/([^/?]+)$/.exec(p)
+    if (m && (req.method === 'GET' || req.method === 'HEAD')) return repondreMedia(req, res, m[1])
+
     // --- Etat du profil actif ---------------------------------------------------
     if (p.startsWith('/profil/')) {
       if (!s.profil) return erreur(res, 409, 'profil_requis', 'Aucun profil actif')
       const profil = s.profil
+      // Lot 9 : liste « À voir » (contrat suppose : ui-5.contrat.demande).
+      if (p === '/profil/a_voir' && req.method === 'GET') return json(res, 200, { elements: listeAVoir(profil, true) })
+      if (p === '/profil/a_voir' && req.method === 'PUT') {
+        const c = await corpsJson(req)
+        if (!c || !Array.isArray(c.ids)) return erreur(res, 400, 'requete_invalide', 'ids')
+        const liste = etat.aVoir.get(profil) ?? []
+        const parId = new Map(liste.map((e) => [e.contenu, e]))
+        const ordonnee = c.ids.map((id) => parId.get(id)).filter(Boolean)
+        for (const e of liste) if (!ordonnee.includes(e)) ordonnee.push(e)
+        etat.aVoir.set(profil, ordonnee)
+        res.writeHead(204); return res.end()
+      }
+      m = /^\/profil\/a_voir\/(.+)$/.exec(p)
+      if (m) {
+        const id = m[1]
+        if (!/^(vod|serie):[A-Za-z0-9_-]{1,32}:[A-Za-z0-9_.-]{1,64}$/.test(id)) return erreur(res, 400, 'requete_invalide', 'identifiant')
+        const liste = etat.aVoir.get(profil) ?? []
+        if (req.method === 'PUT') {
+          const c = (await corpsJson(req)) ?? {}
+          entree.corps = c
+          if (c.episodes_avance !== undefined && !(Number.isInteger(c.episodes_avance) && c.episodes_avance > 0)) return erreur(res, 400, 'requete_invalide', 'episodes_avance')
+          const options = { ...(c.episodes_avance !== undefined ? { episodes_avance: c.episodes_avance } : {}), ...(c.depuis ? { depuis: { saison: c.depuis.saison, episode: c.depuis.episode } } : {}) }
+          const existant = liste.find((e) => e.contenu === id)
+          if (existant) { delete existant.episodes_avance; delete existant.depuis; Object.assign(existant, options) }
+          else liste.push({ contenu: id, ajoute: new Date().toISOString(), ...options })
+          etat.aVoir.set(profil, liste)
+        } else if (req.method === 'DELETE') etat.aVoir.set(profil, liste.filter((e) => e.contenu !== id))
+        else return erreur(res, 405, 'methode_refusee')
+        res.writeHead(204); return res.end()
+      }
       if (p === '/profil/favoris' && req.method === 'GET') {
         const tous = etat.favoris.get(profil) ?? []
         const limite = Math.min(Number(url.searchParams.get('limite') ?? 50), 200)

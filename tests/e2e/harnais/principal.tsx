@@ -22,6 +22,8 @@ brancherRouteur(chemin, (h) => poserChemin(h))
 
 const [entree, poserEntree] = createSignal<EntreeCatalogue | null>(null)
 const [urlForcee, poserUrlForcee] = createSignal<string | undefined>(undefined)
+/** US-43 CA4 : l'episode suivant annonce au lecteur (decompte de fin). */
+const [suivant, poserSuivant] = createSignal<{ titre: string; pret?: boolean; entree: Record<string, unknown>; url?: string } | undefined>(undefined)
 const ouvertures: string[] = []
 // Derniere entree non nulle : le lecteur lit encore son entree pendant qu'il se demonte.
 const derniere = createMemo<EntreeCatalogue | null>((prec) => entree() ?? prec, null)
@@ -29,7 +31,8 @@ const derniere = createMemo<EntreeCatalogue | null>((prec) => entree() ?? prec, 
 declare global {
   interface Window {
     harnais: {
-      ouvrir: (e: Record<string, unknown>, urlForcee?: string) => void
+      /** `suivant` : episode d'apres (entree + adresse), que le decompte de fin lance (US-43 CA4). */
+      ouvrir: (e: Record<string, unknown>, urlForcee?: string, suivant?: { titre: string; pret?: boolean; entree: Record<string, unknown>; url?: string }) => void
       fermer: () => void
       semer: (entrees: Array<Record<string, unknown>>) => Promise<void>
       /** Position memorisee d'un film, comme si on s'y etait arrete. */
@@ -44,8 +47,9 @@ declare global {
 }
 
 window.harnais = {
-  ouvrir: (e, forcee) => {
+  ouvrir: (e, forcee, apres) => {
     ouvertures.push(String(e['cle']))
+    poserSuivant(apres)
     poserUrlForcee(forcee)
     poserEntree(e as unknown as EntreeCatalogue)
   },
@@ -76,6 +80,11 @@ render(
           <Lecture
             entree={derniere()!}
             urlForcee={urlForcee()}
+            suivant={
+              suivant()
+                ? { titre: suivant()!.titre, pret: suivant()!.pret, lire: () => window.harnais.ouvrir(suivant()!.entree, suivant()!.url) }
+                : undefined
+            }
             surChanger={(n) => poserEntree(n)}
             surFermer={() => poserEntree(null)}
           />

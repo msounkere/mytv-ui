@@ -4,13 +4,15 @@ import { config, poserConfig } from '../config'
 import { ErreurApi, ErreurReseau, envoyer, json, type LectureApi, type Page, type ReglagesApi } from './api'
 import { estConnecte, limites, profilActifId, signalerProfilRequis } from './auth'
 import {
-  invaliderCategories, invaliderEpingles, invaliderFavoris, invaliderHistorique,
+  invaliderAVoir, invaliderCategories, invaliderEpingles, invaliderFavoris, invaliderHistorique,
   invaliderReprises,
 } from './requetes'
 import { serieAssociee } from './series-episodes'
+import { appliquerListeServeur, type AVoirElementApi } from './a-voir-serveur'
+import { CLE_ORDRE } from './a-voir-regles'
 import { fusionner, egaux, ecrireEnsemble, lireEnsemble, type Valeurs } from './reglages-fusion'
 import {
-  cheminContenu, cleDe, clesCandidates, estIdentifiantEpisode, idServeurDeCle, serieDeCle,
+  cheminAVoir, cheminContenu, cleDe, clesCandidates, estIdentifiantEpisode, idAVoirDeCle, idServeurDeCle, serieDeCle,
 } from './identifiants'
 
 /**
@@ -31,7 +33,11 @@ import {
  *     les recompose en un seul PUT ;
  *   - REGLAGES : un dictionnaire + une revision, ecrit d'un bloc. C'est le seul
  *     qui peut entrer en CONFLIT (`409 conflit`) : on fusionne a trois points
- *     (voir reglages-fusion.ts) puis on reessaie.
+ *     (voir reglages-fusion.ts) puis on reessaie ;
+ *   - « À VOIR » (US-43 CA1) : comme les favoris, une route par contenu (PUT
+ *     avec les options / DELETE, idempotents), plus UN PUT de l'ordre complet
+ *     quand il a change. `GET /profil/a_voir` fait foi au demarrage et porte
+ *     l'etat de preparation de chaque element (voir a-voir-serveur.ts).
  *
  * CE QUI NE REMONTE PAS : le catalogue (il vient du serveur) et le guide.
  */
@@ -71,14 +77,36 @@ export function noterChangement(c: Changement): void {
     .catch(() => undefined)
 }
 
+/**
+ * Meme chose, pour un geste ecrit dans une transaction Dexie : la ligne de
+ * journal est ajoutee DANS la transaction (donc visible de toute relecture qui
+ * verrait deja le geste), et `planifierGeste()` se fait apres. Sans cela une
+ * relecture du serveur pouvait s'intercaler entre l'ecriture et le journal, ne
+ * pas tenir le geste pour « en attente », et l'ecraser (US-43 CA1, constate).
+ */
+export async function journaliser(c: Changement): Promise<void> {
+  await db.journal.add({
+    genre: c.genre,
+    cle: c.cle,
+    maj: Date.now(),
+    supprime: c.supprime ? 1 : 0,
+    valeur: c.valeur,
+  } as LigneJournal)
+}
+
+export function planifierGeste(): void {
+  planifier(DELAI_GESTE)
+}
+
 // --- Envoi : le journal -----------------------------------------------------
 
 /** Une cle de journal = un contenu et une CLASSE de route : favoris d'un cote,
- *  historique (qui porte la reprise) de l'autre. */
-const classeDe = (g: GenreEtat) => (g === 'favori' ? 'favori' : 'lecture')
+ *  historique (qui porte la reprise) de l'autre, la liste « À voir » enfin. */
+type Classe = 'favori' | 'lecture' | 'a_voir'
+const classeDe = (g: GenreEtat): Classe => (g === 'favori' ? 'favori' : g === 'a_voir' ? 'a_voir' : 'lecture')
 
 interface Groupe {
-  classe: 'favori' | 'lecture'
+  classe: Classe
   cle: string
   /** Plus grand `n` du groupe : les lignes ajoutees pendant l'envoi restent. */
   dernier: number
@@ -93,8 +121,12 @@ function grouper(lignes: LigneJournal[]): Groupe[] {
     if (g) g.dernier = Math.max(g.dernier, l.n)
     else m.set(k, { classe, cle: l.cle, dernier: l.n })
   }
-  return [...m.values()]
+  // L'ordre de « À voir » part en dernier : les elements qu'il cite doivent
+  // deja exister cote serveur.
+  return [...m.values()].sort((a, b) => Number(estOrdre(a)) - Number(estOrdre(b)))
 }
+
+const estOrdre = (g: Groupe) => g.classe === 'a_voir' && g.cle === CLE_ORDRE
 
 /**
  * Envoie l'etat COURANT d'un contenu, pas le geste : un favori ajoute puis
@@ -103,6 +135,7 @@ function grouper(lignes: LigneJournal[]): Groupe[] {
  * a rien d'envoyable (episode dont la serie est inconnue).
  */
 async function envoyerGroupe(g: Groupe): Promise<boolean> {
+  if (g.classe === 'a_voir') return envoyerAVoir(g.cle)
   // Le serveur range tout par identifiant seul : la cle locale perd son type ici.
   const id = idServeurDeCle(g.cle)
   const chemin = cheminContenu(id)
@@ -127,6 +160,42 @@ async function envoyerGroupe(g: Groupe): Promise<boolean> {
   if (serie === 'requise') return false
   if (serie !== undefined) corps.serie = serie
   await envoyer(`/profil/historique/${chemin}`, { methode: 'PUT', corps })
+  return true
+}
+
+/**
+ * « À voir » : l'etat courant de l'element (present avec ses options, ou
+ * absent), ou l'ordre complet de la liste. Une cle qui n'a pas sa place dans la
+ * liste (chaine, episode) n'est pas envoyable.
+ */
+async function envoyerAVoir(cle: string): Promise<boolean> {
+  if (cle === CLE_ORDRE) {
+    const ids: string[] = []
+    for (const l of await db.a_voir.orderBy('rang').toArray()) {
+      try {
+        ids.push(idAVoirDeCle(l.cle))
+      } catch {
+        // Ligne sans place dans la liste : elle n'est pas envoyable, on l'ignore.
+      }
+    }
+    await envoyer('/profil/a_voir', { methode: 'PUT', corps: { ids } })
+    return true
+  }
+  let id: string
+  try {
+    id = idAVoirDeCle(cle)
+  } catch {
+    return false
+  }
+  const ligne = await db.a_voir.get(cle)
+  if (!ligne) {
+    await envoyer(`/profil/a_voir/${cheminAVoir(id)}`, { methode: 'DELETE' })
+    return true
+  }
+  const corps: { episodes_avance?: number; depuis?: { saison: number; episode: number } } = {}
+  if (ligne.episodesAvance !== undefined) corps.episodes_avance = ligne.episodesAvance
+  if (ligne.depuis) corps.depuis = ligne.depuis
+  await envoyer(`/profil/a_voir/${cheminAVoir(id)}`, { methode: 'PUT', corps })
   return true
 }
 
@@ -161,11 +230,15 @@ async function pousserJournal(): Promise<BilanEnvoi> {
 /** Cles qui ont un geste local pas encore parti : elles gagnent sur le serveur.
  *  Sans ce garde-fou, un favori coche a la mauvaise seconde reapparaitrait
  *  decoche sous les doigts de l'utilisateur. */
-async function enAttente(): Promise<{ favoris: Set<string>; lectures: Set<string> }> {
+async function enAttente(): Promise<{ favoris: Set<string>; lectures: Set<string>; aVoir: Set<string> }> {
   const favoris = new Set<string>()
   const lectures = new Set<string>()
-  for (const l of await db.journal.toArray()) (classeDe(l.genre) === 'favori' ? favoris : lectures).add(l.cle)
-  return { favoris, lectures }
+  const aVoir = new Set<string>()
+  for (const l of await db.journal.toArray()) {
+    const c = classeDe(l.genre)
+    ;(c === 'favori' ? favoris : c === 'a_voir' ? aVoir : lectures).add(l.cle)
+  }
+  return { favoris, lectures, aVoir }
 }
 
 /**
@@ -292,6 +365,32 @@ async function tirerHistorique(): Promise<{ historique: boolean; reprises: boole
       }
   }
   return { historique, reprises }
+}
+
+// --- Reception : « À voir » et son etat de preparation ----------------------
+
+/**
+ * `GET /profil/a_voir` : la liste ordonnee ET l'etat de preparation de chaque
+ * element. Appelee a chaque synchronisation, et toutes les 10 s par l'ecran
+ * « À voir » tant qu'il est ouvert (CA2). Renvoie vrai si la table a change.
+ * Un serveur qui n'a pas encore la route (404, 501) ne fait pas echouer le
+ * reste : la liste reste simplement locale.
+ */
+export async function tirerAVoir(): Promise<boolean> {
+  // Gestes en attente AVANT l'aller-retour (ceux du moment de l'ecriture sont
+  // relus dans la transaction d'application) : un geste parti, journal efface,
+  // pendant que cette reponse voyageait serait sinon ecrase par elle.
+  const { aVoir: avant } = await enAttente()
+  let r: { elements?: AVoirElementApi[] }
+  try {
+    r = await json<{ elements?: AVoirElementApi[] }>('/profil/a_voir')
+  } catch (e) {
+    if (e instanceof ErreurApi && (e.statut === 404 || e.statut === 501)) return false
+    throw e
+  }
+  const change = await appliquerListeServeur(Array.isArray(r.elements) ? r.elements : [], avant)
+  if (change) await invaliderAVoir()
+  return change
 }
 
 // --- Reglages : fusion a trois points ---------------------------------------
@@ -456,6 +555,7 @@ async function executer(): Promise<Resultat> {
       recus++
       await invaliderReprises()
     }
+    if (await tirerAVoir()) recus++
     await synchroReglages(profil)
     poserEtat('ok')
     poserDerniere(Date.now())
