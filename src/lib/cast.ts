@@ -190,6 +190,15 @@ export function parametresDiffusion(r: ReglagesTeleviseur, _qualiteNavigateur: M
   return 'cap=' + formaterCapacites(capacitesTeleviseur(r))
 }
 
+/**
+ * Un film diffuse repart de la position atteinte, pas du debut : `t=` (secondes entieres)
+ * est un parametre que le serveur accepte dans un lien signe. Rien pour le direct.
+ */
+export function avecPosition(parametres: string, secondes: number | undefined): string {
+  if (secondes === undefined || !Number.isFinite(secondes) || secondes < 1) return parametres
+  return parametres + '&t=' + Math.floor(secondes)
+}
+
 // --- Lien signe (US-41 CA1) ---------------------------------------------------
 
 export interface LienDiffusion {

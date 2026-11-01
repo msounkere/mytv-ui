@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import {
   capacitesTeleviseur, demanderLien, detailsDiffusion, libelleExpiration, lienAbsolu, lienValide, lireReglageTeleviseur,
   parametresDiffusion,
-} from '../../src/lib/cast'
+  avecPosition,
+} from "../../src/lib/cast"
 import { origineLocale } from '../../src/sonde-debit'
 
 // US-41 : diffuser depuis n'importe ou, par lien signe (contrat US-40).
@@ -84,4 +85,12 @@ test('CA4/CA5 : la telemetrie porte la ressource, le navigateur, la duree — ja
   assert.doesNotMatch(JSON.stringify(s), /JETON-SECRET|\/cast\//)
   assert.equal(s.ressource, '/api/v1/live/845410.m3u8')
   assert.equal(s.duree, 0)
+})
+
+// US-41 complement : un film diffuse repart de la position atteinte (t= accepte par le serveur).
+test('CA5 : t= ajoute pour un film a la position atteinte, jamais pour le direct ni sous 1 s', () => {
+  assert.equal(avecPosition('cap=hevc,eac3,ac3', 1427.8), 'cap=hevc,eac3,ac3&t=1427')
+  assert.equal(avecPosition('cap=hevc,eac3,ac3', undefined), 'cap=hevc,eac3,ac3')
+  assert.equal(avecPosition('cap=hevc,eac3,ac3', 0.4), 'cap=hevc,eac3,ac3')
+  assert.equal(avecPosition('cap=hevc,eac3,ac3', NaN), 'cap=hevc,eac3,ac3')
 })

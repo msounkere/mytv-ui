@@ -30,7 +30,7 @@ import {
 } from '../lib/modes-direct'
 import { noterOuverture, noterPosition, reprisePour, estFavori, basculerFavori } from '../lib/preferences'
 import {
-  creerDiffusion, demanderLien, detailsDiffusion, diffusionResoutLeCodec, lienAbsolu, parametresDiffusion,
+  creerDiffusion, demanderLien, detailsDiffusion, diffusionResoutLeCodec, lienAbsolu, parametresDiffusion, avecPosition,
   preparerDiffusion, reglagesTeleviseur, type Diffusion, type EtatDiffusion,
 } from '../lib/cast'
 import type { EtatLien } from '../components/DialogueDiffusion'
@@ -588,15 +588,16 @@ export default function Lecture(props: {
   async function diffuser() {
     if (diffusionEnCours()) return
     const lecture = lectureEntree(props.entree)
+    // Un film repart d'où on en était, sur le téléviseur comme au retour (CA5).
+    if (!direct()) pointAtteint = pointDeReprise(position(), pointAtteint)
+    const parametres = avecPosition(parametresDiffusion(reglagesTeleviseur(), qualite()), direct() ? undefined : pointAtteint)
     let lien
     try {
-      lien = await demanderLien(lecture, parametresDiffusion(reglagesTeleviseur(), qualite()))
+      lien = await demanderLien(lecture, parametres)
     } catch (e) {
       notifier(`Lien de diffusion refusé : ${versErreurLecteur(e).message}`, 'erreur')
       return
     }
-    // Un film repart d'où on en était quand la diffusion s'arrête (CA5).
-    if (!direct()) pointAtteint = pointDeReprise(position(), pointAtteint)
     // Coupe le flux local (l'effet de source se retire) sans rendre la place :
     // le téléviseur reprend le MÊME bail, comme s'il était cette session.
     poserDiffusionEnCours(true)
