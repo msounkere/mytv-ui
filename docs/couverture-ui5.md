@@ -24,6 +24,10 @@ Notes :
   l'accesseur du `Show` apres l'avoir ferme (lecture perimee, erreur de page) ; les requetes
   IndexedDB restaient « en pause » hors ligne (`networkMode: 'always'`) ; un episode quitte pour le
   suivant quelques secondes avant sa fin n'etait pas tenu pour vu.
+- Courses fermees en recette (« liste » rejoue 5 fois de suite vert) : la liste du serveur s'applique
+  dans une transaction avec le journal, les gestes ecrivent table ET journal dans une transaction, un
+  ordre local pas encore parti garde ses rangs, et les lignes de l'ecran restent stables entre deux
+  relectures.
 - La sonde est demandee pour le prochain episode NON VU de la saison affichee (il n'existe pas de
   fiche d'episode) et le resultat « inconnu » n'affiche rien.
 - Non joue : glisser-deposer HTML5 en e2e (meme chemin de code que les boutons), Firefox pour
