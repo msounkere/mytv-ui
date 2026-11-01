@@ -30,14 +30,19 @@ export async function estAVoir(cle: string): Promise<boolean> {
 /** Ajoute en fin de liste, ou met a jour les options d'un element deja present. Idempotent. */
 export async function ajouterAVoir(cle: string, options: OptionsAVoir = {}): Promise<void> {
   const id = idAVoirDeCle(cle)
-  const existant = await db.a_voir.get(cle)
-  if (existant) {
-    await db.a_voir.put({ ...existant, ...nettoyer(options) })
-  } else {
+  // Lecture et ecriture dans UNE transaction : la relecture du serveur (toutes
+  // les 10 s) ne doit pas s'intercaler entre les deux et perdre le geste.
+  const nouveau = await db.transaction('rw', db.a_voir, async () => {
+    const existant = await db.a_voir.get(cle)
+    if (existant) {
+      await db.a_voir.put({ ...existant, ...nettoyer(options) })
+      return false
+    }
     const dernier = await db.a_voir.orderBy('rang').last()
     await db.a_voir.put({ cle, rang: (dernier?.rang ?? 0) + 1, ajouteLe: Date.now(), ...nettoyer(options) })
-    noter('a_voir:ajout', { id })
-  }
+    return true
+  })
+  if (nouveau) noter('a_voir:ajout', { id })
   noterChangement({ genre: 'a_voir', cle })
   await invaliderAVoir()
 }
@@ -63,30 +68,36 @@ export async function basculerAVoir(cle: string, options: OptionsAVoir = {}): Pr
 
 /** Serie : episodes d'avance et « a partir de » (CA2). */
 export async function modifierOptionsAVoir(cle: string, options: OptionsAVoir): Promise<void> {
-  const existant = await db.a_voir.get(cle)
-  if (!existant) return
-  const ligne = { ...existant }
-  if ('episodesAvance' in options) {
-    if (options.episodesAvance === undefined) delete ligne.episodesAvance
-    else ligne.episodesAvance = options.episodesAvance
-  }
-  if ('depuis' in options) {
-    if (options.depuis === undefined) delete ligne.depuis
-    else ligne.depuis = options.depuis
-  }
-  await db.a_voir.put(ligne)
+  const trouve = await db.transaction('rw', db.a_voir, async () => {
+    const existant = await db.a_voir.get(cle)
+    if (!existant) return false
+    const ligne = { ...existant }
+    if ('episodesAvance' in options) {
+      if (options.episodesAvance === undefined) delete ligne.episodesAvance
+      else ligne.episodesAvance = options.episodesAvance
+    }
+    if ('depuis' in options) {
+      if (options.depuis === undefined) delete ligne.depuis
+      else ligne.depuis = options.depuis
+    }
+    await db.a_voir.put(ligne)
+    return true
+  })
+  if (!trouve) return
   noterChangement({ genre: 'a_voir', cle })
   await invaliderAVoir()
 }
 
 /** Nouvel ordre complet (glisser, monter, descendre). */
 export async function reordonnerAVoir(cles: string[]): Promise<void> {
-  const lignes = await db.a_voir.bulkGet(cles)
-  const misesAJour: AVoir[] = []
-  lignes.forEach((l, i) => {
-    if (l) misesAJour.push({ ...l, rang: i + 1 })
+  await db.transaction('rw', db.a_voir, async () => {
+    const lignes = await db.a_voir.bulkGet(cles)
+    const misesAJour: AVoir[] = []
+    lignes.forEach((l, i) => {
+      if (l) misesAJour.push({ ...l, rang: i + 1 })
+    })
+    await db.a_voir.bulkPut(misesAJour)
   })
-  await db.a_voir.bulkPut(misesAJour)
   noterChangement({ genre: 'a_voir', cle: CLE_ORDRE })
   await invaliderAVoir()
 }
