@@ -4,6 +4,9 @@
 // appellent -- l'Accueil, l'ecran « À voir », le lecteur et les fiches doivent
 // dire la meme chose du meme etat.
 
+/** Cle de journal qui dit « l'ordre de la liste a change » : un seul PUT de la liste entiere. */
+export const CLE_ORDRE = '*ordre*'
+
 /** Etats du moteur de preparation (contrat US-42 CA2). */
 export type EtatPreparation = 'attente' | 'en_cours' | 'pret' | 'echec'
 
