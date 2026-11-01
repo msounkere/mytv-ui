@@ -15,15 +15,16 @@ import { associerSerie } from './lib/preferences'
 // l'URL finit toujours par la contredire. Le bouton retour du navigateur, un
 // rechargement et un lien partagé reposent sur le même chemin que le rail.
 
-export type Ecran = 'accueil' | 'recherche' | 'parcours' | 'lecture' | 'serie' | 'film' | 'guide' | 'reglages'
+export type Ecran = 'accueil' | 'recherche' | 'parcours' | 'lecture' | 'serie' | 'film' | 'guide' | 'reglages' | 'a_voir'
 
 /** Écrans qu'une URL désigne à elle seule, sans identifiant de contenu. */
-export type EcranSimple = 'accueil' | 'parcours' | 'guide' | 'reglages'
+export type EcranSimple = 'accueil' | 'parcours' | 'guide' | 'reglages' | 'a_voir'
 
 const CHEMIN: Record<Exclude<EcranSimple, 'parcours'>, string> = {
   accueil: '/',
   guide: '/guide',
   reglages: '/reglages',
+  a_voir: '/a-voir',
 }
 
 /** Direct, Films et Séries sont le MÊME écran : seule l'URL les distingue. */
@@ -72,6 +73,8 @@ function ecranDuChemin(chemin: string): Ecran {
       return 'guide'
     case 'reglages':
       return 'reglages'
+    case 'a-voir':
+      return 'a_voir'
     case 'lecture':
       return 'lecture'
     case 'serie':

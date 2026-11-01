@@ -18,12 +18,18 @@ import ResumeContenu from '../components/ResumeContenu'
 import FaitsContenu from '../components/FaitsContenu'
 import { cibleDe, dureeLongue, useDetails } from '../lib/details'
 import { audioLisible, separerPrefixe } from '../lib/libelles'
-import { json, versErreurLecteur, type SaisonApi } from '../lib/api'
-import { cheminContenu } from '../lib/identifiants'
+import { versErreurLecteur, type SaisonApi } from '../lib/api'
 import { ErreurLecteur, LIBELLE_COUCHE } from '../lib/errors'
 import { progressions } from '../lib/preferences'
-import { FRAICHEUR, cles, requeteClefee } from '../lib/requetes'
+import { FRAICHEUR, cles, requete, requeteClefee } from '../lib/requetes'
+import { listeAVoir } from '../lib/a-voir'
 import { estBureau, estMobile } from '../lib/gabarit'
+import { BadgePret, BoutonAVoir, LigneDisponibilite, useAVoirCles } from '../components/BoutonAVoir'
+import { estPret } from '../lib/a-voir-serveur'
+import { useDisponibilite } from '../lib/disponibilite'
+import { chargerSaisons } from '../lib/saisons'
+import { prochainAVoir } from '../lib/episodes-suivants'
+import { lectureEnCours } from '../etat'
 import type { EntreeCatalogue } from '../lib/db'
 
 // Une serie n est pas une entree de plus dans une liste : c est un index. Le
@@ -39,6 +45,11 @@ import type { EntreeCatalogue } from '../lib/db'
 // Synopsis, genre, casting et bande-annonce de la SERIE viennent de `/series/{id}`
 // (details demandes a l'ouverture de la fiche, US-28) ; synopsis, vignette et date
 // de chaque EPISODE viennent des saisons. Tout champ absent est simplement masque.
+//
+// US-43 : « À voir » sur la serie (un seul element) et sur chaque episode (la
+// serie « a partir de » cet episode, CA1) ; badge « Prêt » sur les episodes que
+// le serveur tient (CA3) ; sonde du prochain episode a regarder, a l'ouverture,
+// hors lecture (CA5).
 
 interface PisteFfprobe {
   codec_name?: string
@@ -153,8 +164,8 @@ export default function FicheSerie(props: {
     () => props.serie.idServeur,
     async (id) => {
       try {
-        const r = await json<{ elements: SaisonApi[] }>(`/series/${cheminContenu(id)}/saisons`)
-        return versFiche(r.elements)
+        // Meme cache que l'enchainement du lecteur et la sonde (lib/saisons).
+        return versFiche(await chargerSaisons(id))
       } catch (e) {
         // `ErreurApi` (501 non disponible, 502 fournisseur...) devient l erreur
         // nommee que l ecran sait afficher, avec son action proposee.
@@ -269,6 +280,36 @@ export default function FicheSerie(props: {
     return p >= SEUIL_VU ? 'vu' : p > 0 ? 'encours' : null
   }
 
+  // --- « À voir » (US-43) -------------------------------------------------------
+  const aVoir = useAVoirCles()
+  const dansAVoir = () => aVoir()?.has(props.serie.cle) ?? false
+  // Point de depart retenu pour cette serie : la ligne de l'episode qui le porte le dit.
+  const [lignesAVoir] = requete(cles.aVoir, listeAVoir, { fraicheur: FRAICHEUR.geste })
+  const aVoirDepuis = () => lignesAVoir()?.find((l) => l.cle === props.serie.cle)?.depuis
+
+  // Le prochain episode a regarder (premier non vu de la saison affichee) : c'est
+  // lui que la sonde mesure, a l'ouverture de la fiche et hors lecture (CA5).
+  const [saisonsBrutes] = requeteClefee<string, SaisonApi[]>(
+    (id) => cles.saisons(id),
+    () => (fiche() ? props.serie.idServeur : undefined),
+    chargerSaisons,
+    { fraicheur: FRAICHEUR.relais, peremption: FRAICHEUR.relais, suspendre: false },
+  )
+  const prochain = createMemo(() => {
+    const s = saisonsBrutes()
+    const saison = saisonActive()
+    if (!s || saison === null) return undefined
+    const avancees = avancement() ?? new Map<string, number>()
+    return prochainAVoir(s.filter((x) => x.numero === saison), props.serie.nom, avancees, SEUIL_VU)
+  })
+  const disponibilite = useDisponibilite(
+    () => {
+      const p = prochain()
+      return p ? p.cle.slice('series:'.length) : undefined
+    },
+    () => lectureEnCours() === null,
+  )
+
   // Escape ferme la fiche : c est une vue de detail, pas une page de plus.
   onMount(() => {
     const auClavier = (e: KeyboardEvent) => {
@@ -357,6 +398,21 @@ export default function FicheSerie(props: {
           }}
         >
           Vu
+        </span>
+      </Show>
+
+      <BadgePret visible={estPret(e.cle)} />
+
+      {/* Un episode ajoute SA SERIE, « a partir de » lui : jamais un element par episode. */}
+      <Show when={!estMobile()}>
+        <span onClick={(ev) => ev.stopPropagation()} style={{ flex: '0 0 auto', display: 'flex' }}>
+          <BoutonAVoir
+            cle={props.serie.cle}
+            options={{ depuis: { saison: saisonActive() ?? 0, episode: e.numero } }}
+            present={dansAVoir() && aVoirDepuis()?.saison === saisonActive() && aVoirDepuis()?.episode === e.numero}
+            libelleAjout="À voir à partir d’ici"
+            compact
+          />
         </span>
       </Show>
 
@@ -480,7 +536,22 @@ export default function FicheSerie(props: {
                     style={{ margin: '8px 0 0', 'max-height': '7.2em', overflow: 'auto', 'font-size': '13px', color: 'var(--fg2)' }}
                   />
 
+                  <Show when={prochain()}>
+                    {(p) => (
+                      <div style={{ 'margin-top': '8px' }}>
+                        <LigneDisponibilite
+                          disponibilite={disponibilite()}
+                          cle={props.serie.cle}
+                          options={{ depuis: { saison: p().saison, episode: p().numero } }}
+                          present={dansAVoir()}
+                          prefixe={repere(p().saison, p().numero)}
+                        />
+                      </div>
+                    )}
+                  </Show>
+
                   <div style={{ 'margin-top': '8px', display: 'flex', 'flex-wrap': 'wrap', 'align-items': 'center', gap: '8px 16px' }}>
+                    <BoutonAVoir cle={props.serie.cle} present={dansAVoir()} />
                     <FaitsContenu details={details()} />
                     <Show when={details()?.bandeAnnonce}>
                       {(href) => (

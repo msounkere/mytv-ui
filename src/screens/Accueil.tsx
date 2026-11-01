@@ -8,7 +8,9 @@ import MenuContextuel, { type EntreeMenu } from '../components/MenuContextuel'
 import RangeeHorizontale from '../components/RangeeHorizontale'
 import type { ProgrammeCourant } from '../components/PlaqueChaine'
 import { anneeDuTitre, titreCourt } from '../components/titres'
-import { ecran, poserOnglet } from '../etat'
+import { ecran, poserEcran, poserOnglet } from '../etat'
+import { listeAVoirAccueil } from '../lib/a-voir'
+import { libellePreparation, resumeSerie } from '../lib/a-voir-regles'
 import { db, type EntreeCatalogue, type TypeContenu } from '../lib/db'
 import { clesAJoindre, joindreReprises } from '../lib/reprises-accueil'
 import { chainesAvecGuide, programmesEnCours as programmesDuMoment } from '../lib/chaines-guide'
@@ -384,6 +386,9 @@ export default function Accueil(props: {
   const [lesSeries] = requete(cles.recents('series', LIMITE_AFFICHES), () => recemmentAjoutes('series', LIMITE_AFFICHES))
   const [lesSimilaires] = requete(cles.recommandation, parceQue)
   const [laUne] = requete(cles.aLaUne, alaUne)
+  // US-43 CA3 : « À voir », les prets d'abord puis l'ordre de la liste ; perimee
+  // au geste et a chaque relecture de l'etat de preparation.
+  const [laListeAVoir] = requete(cles.aVoirAccueil, listeAVoirAccueil, { fraicheur: FRAICHEUR.geste })
 
   // Le badge « / » du champ de recherche vit désormais dans l'en-tête ; le
   // raccourci, lui, reste transverse (dossier, section 2).
@@ -476,6 +481,28 @@ export default function Accueil(props: {
             surBasculerFavori={basculer}
           />
         </Show>
+
+        <RangeeHorizontale
+          titre="À voir"
+          compteur={`${laListeAVoir()?.length ?? 0} à préparer`}
+          surToutVoir={() => poserEcran('a_voir')}
+          elements={laListeAVoir() ?? []}
+          largeurCarte={mesures().affiche}
+          ecart={mesures().ecartCartes}
+          gabarit={(j) => (
+            <CarteAffiche
+              entree={j.entree}
+              meta={j.entree.type === 'series' ? resumeSerie(j.element.preparation) : libellePreparation(j.element.preparation)}
+              pret={j.element.preparation?.etat === 'pret'}
+              favori={estFavori(j.entree.cle)}
+              // La carte ouvre la fiche ; « lecture rapide » passe par le lecteur habituel :
+              // aucune adresse speciale, le serveur choisit la source (CA3).
+              surOuvrir={props.surDetails ?? props.surOuvrir}
+              surLire={props.surOuvrir}
+              surFavori={basculer}
+            />
+          )}
+        />
 
         <RangeeHorizontale
           titre="Continuer à regarder"
