@@ -10,6 +10,8 @@ import {
 } from './etat'
 import { db } from './lib/db'
 import { gabarit } from './lib/gabarit'
+import { estPret } from './lib/a-voir-serveur'
+import { noter } from './lib/diagnostic'
 import BarreLaterale, { type ClefNav } from './components/BarreLaterale'
 import BandeauAbonnement from './components/BandeauAbonnement'
 import BandeauImport from './components/BandeauImport'
@@ -345,9 +347,20 @@ function Coque(props: RouteSectionProps) {
                     urlForcee={urlEpisode()}
                     suivant={
                       episodeSuivant()
-                        ? { titre: episodeSuivant()!.nom, lire: () => lireEpisode(episodeSuivant()!) }
+                        ? {
+                            titre: episodeSuivant()!.nom,
+                            // Le serveur tient-il deja l'episode suivant ? Le decompte le dit (US-43 CA4).
+                            pret: estPret(episodeSuivant()!.cle),
+                            lire: () => {
+                              const vers = episodeSuivant()!
+                              // Telemetrie : identifiants seulement (US-43 CA5).
+                              noter('enchainement:suivant', { de: e().cle, vers: vers.cle, pret: estPret(vers.cle) })
+                              lireEpisode(vers)
+                            },
+                          }
                         : undefined
                     }
+                    surSuivantListe={ouvrir}
                     surChanger={changerDeChaine}
                     surFermer={arreterLecture}
                     surRetour={quitterLecteur}

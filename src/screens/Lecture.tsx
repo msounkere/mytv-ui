@@ -13,8 +13,9 @@ import PanneauInfos from '../components/PanneauInfos'
 import MiniLecteur, { MARGE_MINI, hauteurMini } from '../components/MiniLecteur'
 import Notification, { type NotificationLecteur } from '../components/Notification'
 import {
-  BandeauReconnexion, DialogueReprise, ProchainEpisode, SEUIL_REPRISE,
+  BandeauReconnexion, DialogueReprise, ProchainContenu, ProchainEpisode, SEUIL_REPRISE,
 } from '../components/CalquesLecture'
+import { prochainAVoirApres, type AVoirJoint } from '../lib/a-voir'
 import { estBureau, estMobile } from '../lib/gabarit'
 import { ecran, poserEcran, revenirAuLecteur } from '../etat'
 import { attacher, type Attache } from '../lib/lecteur'
@@ -92,8 +93,11 @@ export default function Lecture(props: {
       l'identifiant n'est pas celui d'une entrée du catalogue. */
   urlForcee?: string
   /** Épisode qui suit, quand la fiche série le connaît : c'est lui que le
-      compte à rebours de fin enchaîne. Facultatif — sans lui, aucun décompte. */
-  suivant?: { titre: string; lire: () => void }
+      compte à rebours de fin enchaîne. Facultatif — sans lui, aucun décompte.
+      `pret` : le serveur le tient déjà sur son disque (US-43 CA4). */
+  suivant?: { titre: string; lire: () => void; pret?: boolean }
+  /** Film terminé (US-43 CA4) : ouvrir le prochain élément de la liste « À voir » (proposé, jamais lancé seul). */
+  surSuivantListe?: (e: EntreeCatalogue) => void
   surChanger: (e: EntreeCatalogue) => void
   /** Arrêt du flux (la croix) : libère la connexion. */
   surFermer: () => void
@@ -128,6 +132,8 @@ export default function Lecture(props: {
 
   const [miniReduit, poserMiniReduit] = createSignal(false)
   const [notification, poserNotification] = createSignal<NotificationLecteur | null>(null)
+  /** Film terminé : le prochain élément de la liste « À voir », proposé sans démarrage automatique (US-43 CA4). */
+  const [prochainListe, poserProchainListe] = createSignal<AVoirJoint | null>(null)
 
   // --- Ce que le serveur fait du flux --------------------------------------
   const [plan, poserPlan] = createSignal<Plan | null>(null)
@@ -374,6 +380,7 @@ export default function Lecture(props: {
       forcage = null
       etatEco = ETAT_ECO_INITIAL
       poserPropositionEco(false)
+      poserProchainListe(null)
       if (entree.type === 'live' && est4K(entree.nom)) notifier(MESSAGE_4K, 'limite')
       // Un autre contenu : le point atteint dans le précédent ne vaut plus rien.
       pointAtteint = 0
@@ -509,12 +516,29 @@ export default function Lecture(props: {
     // remux casse, tronque la reponse, et le navigateur prend la fin du corps pour
     // la fin du film. C'est une coupure : la reprise rouvre au point atteint (`?t=`).
     const alaFin = () => {
-      if (direct() || !finPrematuree(position(), duree())) return
-      noter('vod:fin-prematuree', { position: Math.round(position()), duree: Math.round(duree()) })
-      traiterErreur(new ErreurLecteur(
-        'reseau', 'Le flux s’est interrompu avant la fin du film.',
-        'Reprise automatique au point atteint.', 'ended_premature',
-      ))
+      if (direct()) return
+      if (finPrematuree(position(), duree())) {
+        noter('vod:fin-prematuree', { position: Math.round(position()), duree: Math.round(duree()) })
+        traiterErreur(new ErreurLecteur(
+          'reseau', 'Le flux s’est interrompu avant la fin du film.',
+          'Reprise automatique au point atteint.', 'ended_premature',
+        ))
+        return
+      }
+      // Vraie fin (US-43 CA4). Le contenu est vu : la position saute a la fin tout
+      // de suite, pour que la fiche et « Continuer a regarder » s'accordent avant
+      // meme que l'episode suivant demarre.
+      const d = duree()
+      if (Number.isFinite(d) && d > 0) void noterPosition(props.entree.cle, d, d)
+      // Un episode enchaine (decompte annulable) ; un film propose le prochain
+      // element de la liste, sans rien lancer.
+      if (props.suivant) calques.reboursAlaFin()
+      else {
+        const cle = props.entree.cle
+        void prochainAVoirApres(cle).then((j) => {
+          if (j && props.entree.cle === cle) poserProchainListe(j)
+        })
+      }
     }
     const evenements: Array<[string, () => void]> = [
       ['play', () => { poserEnPause(false); lire() }],
@@ -763,11 +787,14 @@ export default function Lecture(props: {
     surSonEcran: () => !horsLecteur(),
     direct,
     calqueOuvert: () =>
-      calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert(),
+      calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert() ||
+      calques.rebours() !== null || prochainListe() !== null,
     reveiller: calques.reveiller,
-    // Échap : ferme le calque ouvert ; sinon quitte l'écran (la lecture continue).
+    // Échap : ferme le calque ouvert — le décompte d'épisode suivant compris (US-43
+    // CA4 : Échap l'annule) ; sinon quitte l'écran (la lecture continue).
     fermerCalque: () => {
-      if (calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert()) calques.fermerCalque()
+      if (prochainListe() !== null) poserProchainListe(null)
+      else if (calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert() || calques.rebours() !== null) calques.fermerCalque()
       else props.surRetour()
     },
     zapper: zapping.zapper,
@@ -1107,11 +1134,31 @@ export default function Lecture(props: {
               <ProchainEpisode
                 titre={s().titre}
                 restant={calques.rebours()!}
+                pret={s().pret}
                 surLire={() => {
+                  // Lu AVANT d'arreter le decompte : l'arret ferme ce `Show`, et
+                  // son accesseur ne vaut plus rien ensuite (lecture perimee).
+                  const suivant = s()
                   calques.arreterRebours()
-                  s().lire()
+                  suivant.lire()
                 }}
                 surAnnuler={calques.annulerRebours}
+              />
+            )}
+          </Show>
+
+          <Show when={prochainListe()}>
+            {(j) => (
+              <ProchainContenu
+                titre={j().entree.nom}
+                type={j().entree.type}
+                pret={j().element.preparation?.etat === 'pret'}
+                surRegarder={() => {
+                  noter('enchainement:suivant', { de: props.entree.cle, vers: j().entree.cle, auto: false, liste: true })
+                  poserProchainListe(null)
+                  props.surSuivantListe?.(j().entree)
+                }}
+                surFermer={() => poserProchainListe(null)}
               />
             )}
           </Show>

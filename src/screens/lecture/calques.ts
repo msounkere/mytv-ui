@@ -91,6 +91,12 @@ export function creerCalques(opts: {
     arreterRebours()
   }
 
+  /** Vraie fin de l'episode (US-43 CA4) : le decompte demarre s'il n'a pas deja tourne ni ete refuse. */
+  function reboursAlaFin() {
+    if (!opts.suivant() || reboursRefuse() === opts.cle()) return
+    demarrerRebours()
+  }
+
   // Le décompte démarre à 15 s de la fin, une seule fois, et jamais si
   // l'utilisateur l'a déjà refusé pour ce contenu.
   createEffect(() => {
@@ -132,7 +138,7 @@ export function creerCalques(opts: {
     infosOuvertes, poserInfosOuvertes,
     diffusionOuverte, poserDiffusionOuverte,
     reprise, poserReprise,
-    rebours, arreterRebours, annulerRebours,
+    rebours, arreterRebours, annulerRebours, reboursAlaFin,
     fermerCalque, nouveauContenu,
   }
 }

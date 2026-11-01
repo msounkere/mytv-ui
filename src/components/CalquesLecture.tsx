@@ -138,6 +138,8 @@ export const AVANT_FIN_EPISODE = 15
 export function ProchainEpisode(props: {
   titre: string
   restant: number
+  /** Le serveur tient deja l'episode suivant sur son disque (US-43 CA4) : on le dit. */
+  pret?: boolean
   surLire: () => void
   surAnnuler: () => void
 }) {
@@ -157,6 +159,9 @@ export function ProchainEpisode(props: {
     >
       <span class="num" style={{ 'font-size': '12px', 'font-weight': 'var(--w-strong)', color: 'var(--acc-fg)' }}>
         Épisode suivant dans {props.restant} s
+        <Show when={props.pret}>
+          <span data-role="suivant-pret" style={{ color: 'var(--ok)' }}> · prêt (préparé d’avance)</span>
+        </Show>
       </span>
       <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.titre}</span>
       <div style={{ display: 'flex', gap: '8px' }}>
@@ -191,5 +196,48 @@ function BoutonCalque(props: {
       </Show>
       {props.children}
     </button>
+  )
+}
+
+/**
+ * Film termine (US-43 CA4) : le prochain element de la liste « À voir » est
+ * PROPOSE, jamais lance tout seul -- un film n'est pas un episode, rien ne dit
+ * qu'on enchaine.
+ */
+export function ProchainContenu(props: {
+  titre: string
+  type: 'vod' | 'series' | 'live'
+  pret?: boolean
+  surRegarder: () => void
+  surFermer: () => void
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-label="Film terminé"
+      data-role="prochain-contenu"
+      style={{
+        ...calque,
+        ...borne(),
+        right: estBureau() ? '16px' : '8px', bottom: estBureau() ? '120px' : '84px',
+        display: 'flex', 'flex-direction': 'column', gap: '10px',
+        padding: '16px', width: 'min(340px, calc(100% - 32px))',
+        background: VERRE,
+      }}
+    >
+      <span style={{ 'font-size': '12px', 'font-weight': 'var(--w-strong)', color: 'var(--acc-fg)' }}>
+        Film terminé · suivant dans votre liste « À voir »
+        <Show when={props.pret}>
+          <span data-role="suivant-pret" style={{ color: 'var(--ok)' }}> · prêt</span>
+        </Show>
+      </span>
+      <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.titre}</span>
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <BoutonCalque principal icone="play_arrow" surAction={props.surRegarder}>
+          {props.type === 'series' ? 'Ouvrir la série' : 'Regarder'}
+        </BoutonCalque>
+        <BoutonCalque surAction={props.surFermer}>Fermer</BoutonCalque>
+      </div>
+    </div>
   )
 }

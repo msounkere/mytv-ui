@@ -164,6 +164,8 @@ const [filmOuvert, poserFilmOuvert] = createSignal<EntreeCatalogue | null>(null)
 export { selection, poserSelection, urlEpisode, episodeSuivant, serieOuverte, poserSerieOuverte, filmOuvert, poserFilmOuvert }
 
 import { cheminApresLecture } from './lib/sortie-lecteur'
+import { chargerSaisons } from './lib/saisons'
+import { episodeApres } from './lib/episodes-suivants'
 
 const cheminLecture = (cle: string) => `/lecture/${cle}`
 
@@ -210,6 +212,10 @@ export function lireEpisode(ep: Episode & { suivant?: Episode }): void {
   // que ce soit.
   const serie = serieOuverte()
   if (serie) associerSerie(ep.cle, serie.cle)
+  // L'episode d'apres n'est connu de la fiche que pour la saison affichee et le
+  // premier lancement : au-dela (US-43 CA4, enchainement continu), on le relit
+  // dans les saisons de l'API, deja en cache.
+  if (!ep.suivant && serie) void chargerSuivant(serie, ep.cle)
   batch(() => {
     poserEpisodeSuivant(ep.suivant)
     poserUrlEpisode(ep.url)
@@ -228,6 +234,16 @@ export function lireEpisode(ep: Episode & { suivant?: Episode }): void {
     })
     aller(cheminLecture(ep.cle))
   })
+}
+
+async function chargerSuivant(serie: EntreeCatalogue, cle: string): Promise<void> {
+  try {
+    const n = episodeApres(await chargerSaisons(serie.idServeur), serie.nom, cle)
+    if (n && selection()?.cle === cle && !episodeSuivant())
+      poserEpisodeSuivant({ cle: n.cle, nom: n.nom, url: n.url, extension: n.extension })
+  } catch {
+    // Sans saisons lisibles, pas d'enchainement : le lecteur n'arme simplement rien.
+  }
 }
 
 /** Retour au lecteur, depuis l'en-tête ou depuis le mini-lecteur. */
