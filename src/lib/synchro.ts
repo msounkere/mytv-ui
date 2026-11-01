@@ -77,6 +77,27 @@ export function noterChangement(c: Changement): void {
     .catch(() => undefined)
 }
 
+/**
+ * Meme chose, pour un geste ecrit dans une transaction Dexie : la ligne de
+ * journal est ajoutee DANS la transaction (donc visible de toute relecture qui
+ * verrait deja le geste), et `planifierGeste()` se fait apres. Sans cela une
+ * relecture du serveur pouvait s'intercaler entre l'ecriture et le journal, ne
+ * pas tenir le geste pour « en attente », et l'ecraser (US-43 CA1, constate).
+ */
+export async function journaliser(c: Changement): Promise<void> {
+  await db.journal.add({
+    genre: c.genre,
+    cle: c.cle,
+    maj: Date.now(),
+    supprime: c.supprime ? 1 : 0,
+    valeur: c.valeur,
+  } as LigneJournal)
+}
+
+export function planifierGeste(): void {
+  planifier(DELAI_GESTE)
+}
+
 // --- Envoi : le journal -----------------------------------------------------
 
 /** Une cle de journal = un contenu et une CLASSE de route : favoris d'un cote,

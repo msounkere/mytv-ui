@@ -1,5 +1,5 @@
 import { db, type AVoir, type EntreeCatalogue } from './db'
-import { noterChangement } from './synchro'
+import { journaliser, planifierGeste } from './synchro'
 import { invaliderAVoir } from './requetes'
 import { noter } from './diagnostic'
 import { idAVoirDeCle } from './identifiants'
@@ -30,29 +30,36 @@ export async function estAVoir(cle: string): Promise<boolean> {
 /** Ajoute en fin de liste, ou met a jour les options d'un element deja present. Idempotent. */
 export async function ajouterAVoir(cle: string, options: OptionsAVoir = {}): Promise<void> {
   const id = idAVoirDeCle(cle)
-  // Lecture et ecriture dans UNE transaction : la relecture du serveur (toutes
-  // les 10 s) ne doit pas s'intercaler entre les deux et perdre le geste.
-  const nouveau = await db.transaction('rw', db.a_voir, async () => {
+  // Lecture, ecriture ET journal dans UNE transaction : la relecture du serveur
+  // (toutes les 10 s) ne doit pas s'intercaler et perdre le geste.
+  const nouveau = await db.transaction('rw', db.a_voir, db.journal, async () => {
     const existant = await db.a_voir.get(cle)
-    if (existant) {
-      await db.a_voir.put({ ...existant, ...nettoyer(options) })
-      return false
+    let cree = false
+    if (existant) await db.a_voir.put({ ...existant, ...nettoyer(options) })
+    else {
+      const dernier = await db.a_voir.orderBy('rang').last()
+      await db.a_voir.put({ cle, rang: (dernier?.rang ?? 0) + 1, ajouteLe: Date.now(), ...nettoyer(options) })
+      cree = true
     }
-    const dernier = await db.a_voir.orderBy('rang').last()
-    await db.a_voir.put({ cle, rang: (dernier?.rang ?? 0) + 1, ajouteLe: Date.now(), ...nettoyer(options) })
-    return true
+    await journaliser({ genre: 'a_voir', cle })
+    return cree
   })
   if (nouveau) noter('a_voir:ajout', { id })
-  noterChangement({ genre: 'a_voir', cle })
+  planifierGeste()
   await invaliderAVoir()
 }
 
 export async function retirerAVoir(cle: string): Promise<void> {
   const id = idAVoirDeCle(cle)
-  if ((await db.a_voir.get(cle)) === undefined) return
-  await db.a_voir.delete(cle)
+  const present = await db.transaction('rw', db.a_voir, db.journal, async () => {
+    if ((await db.a_voir.get(cle)) === undefined) return false
+    await db.a_voir.delete(cle)
+    await journaliser({ genre: 'a_voir', cle, supprime: true })
+    return true
+  })
+  if (!present) return
   noter('a_voir:retrait', { id })
-  noterChangement({ genre: 'a_voir', cle, supprime: true })
+  planifierGeste()
   await invaliderAVoir()
 }
 
@@ -68,7 +75,7 @@ export async function basculerAVoir(cle: string, options: OptionsAVoir = {}): Pr
 
 /** Serie : episodes d'avance et « a partir de » (CA2). */
 export async function modifierOptionsAVoir(cle: string, options: OptionsAVoir): Promise<void> {
-  const trouve = await db.transaction('rw', db.a_voir, async () => {
+  const trouve = await db.transaction('rw', db.a_voir, db.journal, async () => {
     const existant = await db.a_voir.get(cle)
     if (!existant) return false
     const ligne = { ...existant }
@@ -81,24 +88,26 @@ export async function modifierOptionsAVoir(cle: string, options: OptionsAVoir): 
       else ligne.depuis = options.depuis
     }
     await db.a_voir.put(ligne)
+    await journaliser({ genre: 'a_voir', cle })
     return true
   })
   if (!trouve) return
-  noterChangement({ genre: 'a_voir', cle })
+  planifierGeste()
   await invaliderAVoir()
 }
 
 /** Nouvel ordre complet (glisser, monter, descendre). */
 export async function reordonnerAVoir(cles: string[]): Promise<void> {
-  await db.transaction('rw', db.a_voir, async () => {
+  await db.transaction('rw', db.a_voir, db.journal, async () => {
     const lignes = await db.a_voir.bulkGet(cles)
     const misesAJour: AVoir[] = []
     lignes.forEach((l, i) => {
       if (l) misesAJour.push({ ...l, rang: i + 1 })
     })
     await db.a_voir.bulkPut(misesAJour)
+    await journaliser({ genre: 'a_voir', cle: CLE_ORDRE })
   })
-  noterChangement({ genre: 'a_voir', cle: CLE_ORDRE })
+  planifierGeste()
   await invaliderAVoir()
 }
 
