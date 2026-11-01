@@ -442,6 +442,7 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
         const liste = etat.aVoir.get(profil) ?? []
         if (req.method === 'PUT') {
           const c = (await corpsJson(req)) ?? {}
+          entree.corps = c
           if (c.episodes_avance !== undefined && !(Number.isInteger(c.episodes_avance) && c.episodes_avance > 0)) return erreur(res, 400, 'requete_invalide', 'episodes_avance')
           const options = { ...(c.episodes_avance !== undefined ? { episodes_avance: c.episodes_avance } : {}), ...(c.depuis ? { depuis: { saison: c.depuis.saison, episode: c.depuis.episode } } : {}) }
           const existant = liste.find((e) => e.contenu === id)

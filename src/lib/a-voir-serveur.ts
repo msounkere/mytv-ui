@@ -81,54 +81,61 @@ if (typeof indexedDB !== 'undefined') void db.a_voir.toArray().then(recalculerPr
 const meme = (a: AVoir | undefined, b: AVoir): boolean => a !== undefined && JSON.stringify(a) === JSON.stringify(b)
 
 /**
- * Applique la liste du serveur a la table locale. `gardes` : cles qui ont un
- * geste local pas encore parti -- elles gagnent sur le serveur (un element ajoute
- * hors ligne ne doit pas disparaitre sous les doigts), mais prennent quand
- * meme l'etat de preparation recu. Renvoie vrai si quelque chose a change.
+ * Applique la liste du serveur a la table locale, dans UNE transaction avec le
+ * journal : les gestes en attente (journal) sont lus et les lignes ecrites sans
+ * qu'un geste puisse se glisser entre les deux -- constate en recette : une
+ * option changee pendant la relecture periodique etait ecrasee par la reponse,
+ * puis envoyee sans l'option. `gardes` : cles dont un geste etait en attente
+ * AVANT l'aller-retour ; celles du journal au moment d'ecrire s'y ajoutent.
+ * Elles gagnent sur le serveur (present ou retire, leurs options) mais prennent
+ * quand meme l'etat de preparation recu. Renvoie vrai si quelque chose a change.
  */
-export async function appliquerListeServeur(elements: AVoirElementApi[], gardes: ReadonlySet<string>): Promise<boolean> {
-  const locaux = await db.a_voir.toArray()
-  const connus = new Map(locaux.map((l) => [l.cle, l]))
+export async function appliquerListeServeur(elements: AVoirElementApi[], gardesAvant: ReadonlySet<string>): Promise<boolean> {
   const recus = new Map<string, AVoirElementApi>()
   for (const e of elements) {
     const cle = cleDeIdAVoir(e.contenu)
     if (cle) recus.set(cle, e)
   }
-  // Un ordre local pas encore parti gagne sur les rangs du serveur : sinon la
-  // relecture periodique de l'etat (toutes les 10 s) defait un « Descendre »
-  // avant que le PUT de l'ordre ne parte.
-  const ordreLocal = gardes.has(CLE_ORDRE)
-  let change = false
-  for (const l of locaux)
-    if (!recus.has(l.cle) && !gardes.has(l.cle)) {
-      await db.a_voir.delete(l.cle)
+  const change = await db.transaction('rw', db.a_voir, db.journal, async () => {
+    const gardes = new Set(gardesAvant)
+    for (const l of await db.journal.toArray()) if (l.genre === 'a_voir') gardes.add(l.cle)
+    // Un ordre local pas encore parti gagne sur les rangs du serveur : sinon la
+    // relecture periodique de l'etat (toutes les 10 s) defait un « Descendre »
+    // avant que le PUT de l'ordre ne parte.
+    const ordreLocal = gardes.has(CLE_ORDRE)
+    const locaux = await db.a_voir.toArray()
+    const connus = new Map(locaux.map((l) => [l.cle, l]))
+    let change = false
+    for (const l of locaux)
+      if (!recus.has(l.cle) && !gardes.has(l.cle)) {
+        await db.a_voir.delete(l.cle)
+        change = true
+      }
+    let i = 0
+    for (const [cle, e] of recus) {
+      i++
+      const local = connus.get(cle)
+      const preparation = versPreparation(e)
+      let ligne: AVoir
+      if (gardes.has(cle)) {
+        if (!local) continue
+        ligne = { ...local, preparation }
+      } else {
+        ligne = {
+          cle,
+          rang: ordreLocal && local ? local.rang : typeof e.rang === 'number' ? e.rang : i,
+          ajouteLe: local?.ajouteLe ?? (Date.parse(e.ajoute) || Date.now()),
+          ...(e.episodes_avance !== undefined ? { episodesAvance: e.episodes_avance } : {}),
+          ...(e.depuis ? { depuis: { saison: e.depuis.saison, episode: e.depuis.episode } } : {}),
+          preparation,
+        }
+      }
+      if (meme(local, ligne)) continue
+      await db.a_voir.put(ligne)
       change = true
     }
-  let i = 0
-  for (const [cle, e] of recus) {
-    i++
-    const local = connus.get(cle)
-    const preparation = versPreparation(e)
-    let ligne: AVoir
-    if (gardes.has(cle)) {
-      // Geste local en attente : l'element reste tel que l'utilisateur l'a voulu
-      // (present ou retire, ses options), seul l'etat du serveur s'y ajoute.
-      if (!local) continue
-      ligne = { ...local, preparation }
-    } else {
-      ligne = {
-        cle,
-        rang: ordreLocal && local ? local.rang : typeof e.rang === 'number' ? e.rang : i,
-        ajouteLe: local?.ajouteLe ?? (Date.parse(e.ajoute) || Date.now()),
-        ...(e.episodes_avance !== undefined ? { episodesAvance: e.episodes_avance } : {}),
-        ...(e.depuis ? { depuis: { saison: e.depuis.saison, episode: e.depuis.episode } } : {}),
-        preparation,
-      }
-    }
-    if (meme(local, ligne)) continue
-    await db.a_voir.put(ligne)
-    change = true
-  }
+    return change
+  })
   recalculerPrets(await db.a_voir.toArray())
   return change
 }

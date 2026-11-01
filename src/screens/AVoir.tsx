@@ -48,7 +48,17 @@ export default function AVoir(props: {
     onCleanup(() => clearInterval(minuteur))
   })
 
-  const elements = () => liste() ?? []
+  // Lignes STABLES d'une relecture a l'autre : la relecture de l'etat (10 s)
+  // rend de nouveaux objets, et `For` remonterait les douze lignes -- selecteurs
+  // perdus, bouton vise qui disparait sous le doigt. Un element dont rien n'a
+  // change garde son objet, donc sa ligne.
+  const elements = createMemo<AVoirJoint[]>((precedents) => {
+    const avant = new Map(precedents.map((j) => [j.element.cle, j]))
+    return (liste() ?? []).map((j) => {
+      const p = avant.get(j.element.cle)
+      return p && JSON.stringify(p) === JSON.stringify(j) ? p : j
+    })
+  }, [])
 
   async function bouger(index: number, sens: -1 | 1) {
     const apres = deplacer(elements(), index, sens)

@@ -356,9 +356,9 @@ async function tirerHistorique(): Promise<{ historique: boolean; reprises: boole
  * reste : la liste reste simplement locale.
  */
 export async function tirerAVoir(): Promise<boolean> {
-  // Gestes en attente AVANT et APRES l'aller-retour : un geste parti (et son
-  // journal efface) pendant que cette reponse voyageait n'est connu d'aucun des
-  // deux instants pris seul, et une reponse plus vieille que lui l'ecraserait.
+  // Gestes en attente AVANT l'aller-retour (ceux du moment de l'ecriture sont
+  // relus dans la transaction d'application) : un geste parti, journal efface,
+  // pendant que cette reponse voyageait serait sinon ecrase par elle.
   const { aVoir: avant } = await enAttente()
   let r: { elements?: AVoirElementApi[] }
   try {
@@ -367,9 +367,7 @@ export async function tirerAVoir(): Promise<boolean> {
     if (e instanceof ErreurApi && (e.statut === 404 || e.statut === 501)) return false
     throw e
   }
-  const { aVoir: apres } = await enAttente()
-  const gardes = new Set([...avant, ...apres])
-  const change = await appliquerListeServeur(Array.isArray(r.elements) ? r.elements : [], gardes)
+  const change = await appliquerListeServeur(Array.isArray(r.elements) ? r.elements : [], avant)
   if (change) await invaliderAVoir()
   return change
 }
