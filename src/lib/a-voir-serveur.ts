@@ -1,7 +1,7 @@
 import { createSignal } from 'solid-js'
 import { db, type AVoir } from './db'
 import { cleDe, cleDeIdAVoir } from './identifiants'
-import type { EtatPreparation, Preparation, PreparationEpisode } from './a-voir-regles'
+import { CLE_ORDRE, type EtatPreparation, type Preparation, type PreparationEpisode } from './a-voir-regles'
 
 // Reception de `GET /profil/a_voir` (US-43 CA1 : le serveur fait foi au
 // demarrage ; CA2 : l'etat se relit toutes les 10 s sur l'ecran). Module a part
@@ -94,6 +94,10 @@ export async function appliquerListeServeur(elements: AVoirElementApi[], gardes:
     const cle = cleDeIdAVoir(e.contenu)
     if (cle) recus.set(cle, e)
   }
+  // Un ordre local pas encore parti gagne sur les rangs du serveur : sinon la
+  // relecture periodique de l'etat (toutes les 10 s) defait un « Descendre »
+  // avant que le PUT de l'ordre ne parte.
+  const ordreLocal = gardes.has(CLE_ORDRE)
   let change = false
   for (const l of locaux)
     if (!recus.has(l.cle) && !gardes.has(l.cle)) {
@@ -114,7 +118,7 @@ export async function appliquerListeServeur(elements: AVoirElementApi[], gardes:
     } else {
       ligne = {
         cle,
-        rang: typeof e.rang === 'number' ? e.rang : i,
+        rang: ordreLocal && local ? local.rang : typeof e.rang === 'number' ? e.rang : i,
         ajouteLe: local?.ajouteLe ?? (Date.parse(e.ajoute) || Date.now()),
         ...(e.episodes_avance !== undefined ? { episodesAvance: e.episodes_avance } : {}),
         ...(e.depuis ? { depuis: { saison: e.depuis.saison, episode: e.depuis.episode } } : {}),

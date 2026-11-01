@@ -27,7 +27,7 @@ import { estBureau, estMobile } from '../lib/gabarit'
 import { BadgePret, BoutonAVoir, LigneDisponibilite, useAVoirCles } from '../components/BoutonAVoir'
 import { estPret } from '../lib/a-voir-serveur'
 import { useDisponibilite } from '../lib/disponibilite'
-import { chargerSaisons } from '../lib/saisons'
+import { chargerSaisons, lireSaisons } from '../lib/saisons'
 import { prochainAVoir } from '../lib/episodes-suivants'
 import { lectureEnCours } from '../etat'
 import type { EntreeCatalogue } from '../lib/db'
@@ -292,7 +292,7 @@ export default function FicheSerie(props: {
   const [saisonsBrutes] = requeteClefee<string, SaisonApi[]>(
     (id) => cles.saisons(id),
     () => (fiche() ? props.serie.idServeur : undefined),
-    chargerSaisons,
+    lireSaisons,
     { fraicheur: FRAICHEUR.relais, peremption: FRAICHEUR.relais, suspendre: false },
   )
   const prochain = createMemo(() => {
@@ -336,14 +336,17 @@ export default function FicheSerie(props: {
     })
   }
 
+  // Une ligne = le bouton de lecture ET, a cote (jamais dedans : un bouton dans un
+  // bouton n'est ni valide ni accessible), le bouton « À voir à partir d'ici ».
   const Ligne = (e: Episode) => (
+    <div data-role="episode" style={{ display: 'flex', 'align-items': 'stretch', height: '100%', 'border-bottom': '1px solid var(--line)' }}>
     <button
       onClick={() => lire(e)}
       title={`${e.titre}${e.dureeSecondes ? ` · ${dureeLisible(e.dureeSecondes)}` : ''}${e.synopsis ? `\n${e.synopsis}` : ''}`}
       style={{
         display: 'flex', 'align-items': 'center', gap: estMobile() ? '10px' : '12px',
-        width: '100%', height: '100%', padding: estMobile() ? '8px 12px' : '8px 14px', 'text-align': 'left',
-        'border-radius': 0, 'border-bottom': '1px solid var(--line)',
+        flex: 1, 'min-width': 0, height: '100%', padding: estMobile() ? '8px 12px' : '8px 14px', 'text-align': 'left',
+        'border-radius': 0,
         opacity: etatDe(e.cle) === 'vu' ? '0.62' : '1',
       }}
     >
@@ -403,9 +406,14 @@ export default function FicheSerie(props: {
 
       <BadgePret visible={estPret(e.cle)} />
 
+      <span class="num secondaire" style={{ flex: '0 0 auto', 'font-size': '13px' }}>
+        {dureeLisible(e.dureeSecondes) ?? '—'}
+      </span>
+    </button>
+
       {/* Un episode ajoute SA SERIE, « a partir de » lui : jamais un element par episode. */}
       <Show when={!estMobile()}>
-        <span onClick={(ev) => ev.stopPropagation()} style={{ flex: '0 0 auto', display: 'flex' }}>
+        <span style={{ flex: '0 0 auto', display: 'flex', 'align-items': 'center', padding: '0 12px 0 4px' }}>
           <BoutonAVoir
             cle={props.serie.cle}
             options={{ depuis: { saison: saisonActive() ?? 0, episode: e.numero } }}
@@ -415,11 +423,7 @@ export default function FicheSerie(props: {
           />
         </span>
       </Show>
-
-      <span class="num secondaire" style={{ flex: '0 0 auto', 'font-size': '13px' }}>
-        {dureeLisible(e.dureeSecondes) ?? '—'}
-      </span>
-    </button>
+    </div>
   )
 
   return (

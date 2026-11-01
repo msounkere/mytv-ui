@@ -9,10 +9,14 @@ import { FRAICHEUR, cles, donneePartagee } from './requetes'
  * pousse peut-etre un flux au meme moment.
  */
 export function chargerSaisons(idServeur: string): Promise<SaisonApi[]> {
-  return donneePartagee(
-    cles.saisons(idServeur),
-    async () => (await json<{ elements: SaisonApi[] }>(`/series/${cheminContenu(idServeur)}/saisons`)).elements,
-    FRAICHEUR.relais,
-    FRAICHEUR.relais,
-  )
+  return donneePartagee(cles.saisons(idServeur), () => lireSaisons(idServeur), FRAICHEUR.relais, FRAICHEUR.relais)
+}
+
+/**
+ * L'appel brut, pour une requete d'ecran clefee `cles.saisons(id)` : elle ne
+ * doit PAS passer par `chargerSaisons`, qui attendrait la requete en vol sous la
+ * meme cle -- c'est-a-dire elle-meme.
+ */
+export async function lireSaisons(idServeur: string): Promise<SaisonApi[]> {
+  return (await json<{ elements: SaisonApi[] }>(`/series/${cheminContenu(idServeur)}/saisons`)).elements
 }

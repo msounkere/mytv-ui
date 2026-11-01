@@ -153,6 +153,12 @@ export const clientRequetes = new QueryClient({
       // Revenir sur l'onglet ne doit rien relire : la synchronisation s'en
       // charge déjà, et elle invalide ce qu'elle a vraiment changé.
       refetchOnWindowFocus: false,
+      // La plupart des requêtes lisent IndexedDB : hors ligne, elles doivent
+      // répondre, pas rester « en pause » (comportement par défaut de TanStack
+      // quand `navigator.onLine` est faux — constaté : un ajout à « À voir »
+      // sans réseau n'apparaissait pas sur la fiche, US-43 CA1). Les requêtes
+      // réseau échouent alors franchement, et chaque écran sait déjà le dire.
+      networkMode: 'always',
       staleTime: FRAICHEUR.catalogue,
       // Le cas courant est une lecture d'IndexedDB : la garder coûte de la
       // mémoire, la rebâtir coûte 154 106 entrées. On la garde — et c'est

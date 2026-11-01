@@ -5,7 +5,7 @@ import { titreCourt } from '../components/titres'
 import { listeAVoirJointe, modifierOptionsAVoir, reordonnerAVoir, retirerAVoir, type AVoirJoint } from '../lib/a-voir'
 import { deplacer, libellePreparation, repere, resumeSerie, type EtatPreparation } from '../lib/a-voir-regles'
 import { tirerAVoir } from '../lib/synchro'
-import { chargerSaisons } from '../lib/saisons'
+import { lireSaisons } from '../lib/saisons'
 import { episodesOrdonnes, type EpisodeLisible } from '../lib/episodes-suivants'
 import { FRAICHEUR, cles, requete, requeteClefee } from '../lib/requetes'
 import { estBureau, estMobile } from '../lib/gabarit'
@@ -157,7 +157,7 @@ function Ligne(props: {
   const [saisons] = requeteClefee(
     (id: string) => cles.saisons(id),
     () => (serie() ? e().idServeur : undefined),
-    chargerSaisons,
+    lireSaisons,
     { fraicheur: FRAICHEUR.relais, peremption: FRAICHEUR.relais, suspendre: false },
   )
   const episodes = createMemo<EpisodeLisible[]>(() => (saisons() ? episodesOrdonnes(saisons()!, e().nom) : []))

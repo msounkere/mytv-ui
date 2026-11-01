@@ -412,8 +412,9 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     // --- Lot 9 : sonde de disponibilite, puis le fichier lui-meme (film ou episode) ---------
     m = /^\/vod\/([^/]+)\/disponibilite$/.exec(p)
     if (m && req.method === 'GET') {
+      // Contrat accepte par le coordinateur : `requis_kbps` = debit du fichier retenu par la sonde (8000 par defaut).
       const d = etat.disponibilite.get(m[1]) ?? (fichierPret(m[1]) ? { etat: 'pret', debit_kbps: 0 } : { etat: 'immediat', debit_kbps: 12000 })
-      return json(res, 200, { mesure: new Date().toISOString(), ...d })
+      return json(res, 200, { mesure: new Date().toISOString(), requis_kbps: 8000, ...d })
     }
     m = /^\/vod\/([^/?]+)$/.exec(p)
     if (m && (req.method === 'GET' || req.method === 'HEAD')) return repondreMedia(req, res, m[1])

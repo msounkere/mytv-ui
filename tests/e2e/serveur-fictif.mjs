@@ -36,7 +36,8 @@
 //              Le journal retient `corps` (lecture, parametres) de la demande de lien et `cookie` (presence).
 //   (US-43)    `GET /api/v1/profil/a_voir` -> { elements } poses par `POST /__a_voir` (etat de preparation simule) ;
 //              `PUT|DELETE /api/v1/profil/a_voir[/{id}]` -> 204, journalises ; `GET /api/v1/vod/{id}/disponibilite`
-//              -> reponse posee par `POST /__disponibilite` ({ id, reponse }), sinon { etat: immediat, debit_kbps: 12000 }.
+//              -> reponse posee par `POST /__disponibilite` ({ id, reponse }), sinon { etat: immediat, debit_kbps: 12000 } ;
+//              `requis_kbps` (debit du fichier) toujours present, 8000 par defaut.
 import { createServer } from 'node:http'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
@@ -275,7 +276,7 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
       if ((m = /^\/profil\/a_voir\/(.+)$/.exec(r)) && (req.method === 'PUT' || req.method === 'DELETE'))
         return void lireCorps(req).then((c) => { entree.corps = c; res.writeHead(204); res.end() })
       if ((m = /^\/vod\/([^/]+)\/disponibilite$/.exec(r)) && req.method === 'GET')
-        return json(res, 200, { mesure: new Date().toISOString(), ...(disponibilite.get(m[1]) ?? { etat: 'immediat', debit_kbps: 12000 }) })
+        return json(res, 200, { mesure: new Date().toISOString(), requis_kbps: 8000, ...(disponibilite.get(m[1]) ?? { etat: 'immediat', debit_kbps: 12000 }) })
       if ((m = /^\/vod\/(.+)$/.exec(r)) && (req.method === 'GET' || req.method === 'HEAD')) return repondreFilm(req, res, url, m[1])
       if (r === '/epg/grille') {
         const chaines = (url.searchParams.get('chaines') ?? '').split(',').filter(Boolean)
