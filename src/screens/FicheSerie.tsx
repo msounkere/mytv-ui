@@ -460,7 +460,7 @@ export default function FicheSerie(props: {
           </Show>
           {/* Mobile : la date de diffusion cède la place — 390 px portent le
               titre, l'état et la durée, pas un troisième détail. */}
-          <Show when={e.diffuseLe && !estMobile()}>{(d) => <span class="num tronque">{d()}</span>}</Show>
+          <Show when={estMobile() ? undefined : e.diffuseLe}>{(d) => <span class="num tronque">{d()}</span>}</Show>
           <Show when={e.codecAudioMuet}>
             {(c) => (
               // Le navigateur n a pas de decodeur EAC3/AC3/DTS : on le dit avant
@@ -479,7 +479,7 @@ export default function FicheSerie(props: {
             )}
           </Show>
         </span>
-        <Show when={e.synopsis && !estMobile()}>
+        <Show when={estMobile() ? undefined : e.synopsis}>
           {(s) => (
             <span data-role="episode-resume" class="tertiaire tronque" style={{ display: 'block', 'font-size': '12px' }}>{s()}</span>
           )}

@@ -72,4 +72,6 @@ trois ↓ rapides : `page.on('crash')` jamais. A confirmer sur un iPhone reel (r
   (mesure ResizeObserver differee) -- aucun conflit attendu.
 - `tests/e2e/us43.mjs` (ui-7) : trois adaptations a la nouvelle fiche (« Ma liste a partir d'ici » par le menu
   de ligne ; sonde sans son propre bouton ; « Prêt » = chip `[data-role="chip-preparation"][data-etat="pret"]`).
+- `tests/e2e/us28.mjs` (ui-8) : une adaptation (la bande-annonce de la fiche film vit dans le menu « ⋯ », C §5.3) ;
+  `tests/e2e/us20-lecture.mjs` (ui-6) : plus de dialogue de reprise dans le lecteur (CA3).
 - `package.json` : ajout des parcours US-45 a `test:e2e` ; `tests/e2e/harnais/principal.tsx` : prop `surRetour`.
