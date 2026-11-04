@@ -20,11 +20,14 @@ export type Ecran = 'accueil' | 'recherche' | 'parcours' | 'lecture' | 'serie' |
 /** Écrans qu'une URL désigne à elle seule, sans identifiant de contenu. */
 export type EcranSimple = 'accueil' | 'parcours' | 'guide' | 'reglages' | 'a_voir'
 
+// Lot 10 : « À voir » devient « Ma liste » (modele cible). L'ecran interne garde
+// sa cle `a_voir` pour ne pas renommer tout ce qui la lit ; seule l'URL change.
+// L'ancien chemin `/a-voir` reste accepte (liens et favoris du navigateur).
 const CHEMIN: Record<Exclude<EcranSimple, 'parcours'>, string> = {
   accueil: '/',
   guide: '/guide',
   reglages: '/reglages',
-  a_voir: '/a-voir',
+  a_voir: '/ma-liste',
 }
 
 /** Direct, Films et Séries sont le MÊME écran : seule l'URL les distingue. */
@@ -32,6 +35,49 @@ const CHEMIN_ONGLET: Record<TypeContenu, string> = {
   live: '/direct',
   vod: '/films',
   series: '/series',
+}
+
+// --- Direct : categorie et mode dans l'URL (US-47 CA7) ---------------------
+// Un rechargement ou un lien partage doit retomber sur la categorie et le mode
+// qu'on regardait : `/direct?categorie=iptva:100&mode=cartes`. Les valeurs sont
+// RETENUES hors de Direct (Films, Accueil...) pour que l'onglet du rail y
+// ramene, et REMPLACENT l'entree d'historique : changer de categorie n'est pas
+// un ecran de plus a redescendre avec le bouton retour.
+
+export type ModeDirect = 'liste' | 'cartes'
+export interface ParametresDirect {
+  categorie?: string
+  mode?: ModeDirect
+}
+
+const [parametresDirect, poserParametresRetenus] = createSignal<ParametresDirect>({})
+export { parametresDirect }
+
+export function cheminDirect(p: ParametresDirect): string {
+  const q = new URLSearchParams()
+  if (p.categorie) q.set('categorie', p.categorie)
+  if (p.mode && p.mode !== 'liste') q.set('mode', p.mode)
+  const s = q.toString()
+  return `${CHEMIN_ONGLET.live}${s ? `?${s}` : ''}`
+}
+
+/** Lit `?categorie=&mode=` ; un mode inconnu est ignore, pas une erreur. */
+export function lireParametresDirect(recherche: string): ParametresDirect {
+  const q = new URLSearchParams(recherche)
+  const categorie = q.get('categorie') ?? undefined
+  const mode = q.get('mode')
+  return {
+    ...(categorie ? { categorie } : {}),
+    ...(mode === 'cartes' || mode === 'liste' ? { mode } : {}),
+  }
+}
+
+export function poserParametresDirect(p: ParametresDirect): void {
+  const suivant = { ...parametresDirect(), ...p }
+  poserParametresRetenus(suivant)
+  if (tete(lireChemin()) !== 'direct') return
+  const cible = cheminDirect(suivant)
+  if (cible !== lireChemin() + lireRecherche()) aller(cible, { replace: true })
 }
 
 const ONGLET_DU_CHEMIN: Record<string, TypeContenu | undefined> = {
@@ -74,6 +120,7 @@ function ecranDuChemin(chemin: string): Ecran {
     case 'reglages':
       return 'reglages'
     case 'a-voir':
+    case 'ma-liste':
       return 'a_voir'
     case 'lecture':
       return 'lecture'
@@ -102,7 +149,33 @@ function cleDuChemin(chemin: string, prefixe: 'lecture' | 'serie' | 'film'): str
 export type Aller = (href: string, options?: { replace?: boolean }) => void
 
 let lireChemin: () => string = () => '/'
+let lireRecherche: () => string = () => ''
 let aller: Aller = () => {}
+
+// --- Retour : UNE regle (US-47 CA7, US-45 CA2) ------------------------------
+// « Retour », Echap, « Fermer la lecture » reviennent a l'ECRAN PRECEDENT, par
+// la pile d'historique. On compte les navigations POUSSEES par l'application
+// depuis le chargement : tant qu'il y en a, `history.back()` reste dans
+// l'application ; sinon (lien direct, rechargement) on va au repli donne par
+// l'appelant, en REMPLACANT l'entree courante.
+let profondeur = 0
+let retourAttendu = false
+if (typeof window !== 'undefined')
+  window.addEventListener('popstate', () => {
+    if (retourAttendu) retourAttendu = false
+    else profondeur = Math.max(0, profondeur - 1)
+  })
+
+export function revenirEnArriere(repli: string): void {
+  if (profondeur > 0) {
+    profondeur -= 1
+    retourAttendu = true
+    window.history.back()
+  } else aller(repli, { replace: true })
+}
+
+/** Navigations internes encore depilables (tests et diagnostic). */
+export const profondeurHistorique = (): number => profondeur
 
 // L'onglet suit l'URL, mais SURVIT aux écrans qui n'en portent pas : Parcours
 // reste monté sous l'Accueil et le Guide, et le remettre sur Direct à chaque
@@ -111,15 +184,26 @@ const [ongletRetenu, poserOngletRetenu] = createSignal<TypeContenu>('live')
 
 export const onglet = ongletRetenu
 
-export function brancherRouteur(chemin: () => string, navigation: Aller): void {
+export function brancherRouteur(chemin: () => string, navigation: Aller, recherche: () => string = () => ''): void {
   lireChemin = chemin
-  aller = navigation
+  lireRecherche = recherche
+  aller = (href, options) => {
+    const courant = lireChemin() + lireRecherche()
+    if (!options?.replace && href !== courant) profondeur += 1
+    navigation(href, options)
+  }
   // `createComputed` et non `createEffect` : l'onglet doit être à jour AVANT
   // que Parcours ne se rende, faute de quoi il se peint une fois sur l'onglet
   // précédent — et sa grille repartirait du mauvais catalogue.
   createComputed(() => {
     const t = ONGLET_DU_CHEMIN[tete(chemin())]
     if (t) poserOngletRetenu(t)
+    // Les parametres du Direct portes par l'URL (lien partage, rechargement,
+    // bouton retour) font foi sur ceux retenus.
+    if (t === 'live') {
+      const p = lireParametresDirect(recherche())
+      if (p.categorie || p.mode) poserParametresRetenus((r) => ({ ...r, ...p }))
+    }
   })
 }
 
@@ -128,12 +212,16 @@ export const cleLecture = (): string | undefined => cleDuChemin(lireChemin(), 'l
 export const cleFiche = (): string | undefined => cleDuChemin(lireChemin(), 'serie')
 export const cleFicheFilm = (): string | undefined => cleDuChemin(lireChemin(), 'film')
 
+function cheminOnglet(t: TypeContenu): string {
+  return t === 'live' ? cheminDirect(parametresDirect()) : CHEMIN_ONGLET[t]
+}
+
 export function poserEcran(e: EcranSimple): void {
-  aller(e === 'parcours' ? CHEMIN_ONGLET[onglet()] : CHEMIN[e])
+  aller(e === 'parcours' ? cheminOnglet(onglet()) : CHEMIN[e])
 }
 
 export function poserOnglet(t: TypeContenu): void {
-  aller(CHEMIN_ONGLET[t])
+  aller(cheminOnglet(t))
 }
 
 /** La requête voyage dans l'URL : un résultat de recherche se partage. */
@@ -266,20 +354,38 @@ export function changerDeChaine(e: EntreeCatalogue): void {
 
 /**
  * Quitter l'écran du lecteur SANS arrêter : la lecture continue dans le
- * mini-lecteur. Un épisode ramène à la fiche de sa série, un film ou une chaîne
- * à sa liste (voir lib/sortie-lecteur).
+ * mini-lecteur. Retour = l'ecran precedent (pile d'historique) ; sans pile
+ * (lien direct), la fiche de la serie d'un episode, sinon la liste du contenu
+ * (voir lib/sortie-lecteur).
  */
 export function quitterLecteur(): void {
-  aller(cheminApresLecture(selection()))
+  if (ecran() !== 'lecture') return
+  revenirEnArriere(cheminApresLecture(selection()))
 }
 
-/** Arrêt explicite : c'est le seul geste qui libère la connexion du relais. */
+/**
+ * Cle du dernier contenu ARRETE : la coque ne doit pas la relire dans le
+ * catalogue pour rouvrir le flux tant que l'URL `/lecture/<cle>` n'a pas encore
+ * change (l'arret et le retour d'historique ne sont pas simultanes).
+ */
+const [cleArretee, poserCleArretee] = createSignal<string | undefined>(undefined)
+export { cleArretee }
+
+/**
+ * Arrêt explicite : c'est le seul geste qui libère la connexion du relais.
+ * Depuis le lecteur, on revient a l'ecran precedent ; depuis ailleurs (le
+ * mini-lecteur sur l'Accueil, la Recherche...), on RESTE ou l'on est : fermer
+ * une lecture n'a jamais ete une raison de changer d'ecran (audit A, bug 8).
+ */
 export function arreterLecture(): void {
-  const sortie = cheminApresLecture(selection())
+  const s = selection()
+  const auLecteur = ecran() === 'lecture'
+  const sortie = cheminApresLecture(s)
   batch(() => {
+    poserCleArretee(s?.cle)
     poserSelection(null)
-    aller(sortie)
   })
+  if (auLecteur) revenirEnArriere(sortie)
 }
 
 /**
@@ -346,10 +452,6 @@ export function basculerBarre(): void {
   }
 }
 
-// --- Qualité du flux ------------------------------------------------------
-// Choisie dans le panneau « Lecteur », lue par le panneau lui-même. Elle vit
-// ici parce que la barre, l'en-tête et le panneau en parlent tous les trois.
-
-export type ClefQualite = 'auto' | '1080' | '720' | '480'
-
-export const [qualite, poserQualite] = createSignal<ClefQualite>('auto')
+// La « qualite » que le panneau de l'en-tete posait ici n'etait lue par
+// personne (audit A, bug 2) : le seul reglage de qualite est `lib/qualite.ts`
+// (Auto / Eco), lu par le lecteur et memorise.

@@ -1,6 +1,8 @@
 import { For, Show, createSignal } from 'solid-js'
 import Icone from './Icone'
+import { ENTREES_PROFIL_MOBILE, type ClefNav } from './BarreLaterale'
 import { choisirProfil, deconnexion, profilActifId, profils } from '../lib/auth'
+import { estMobile } from '../lib/gabarit'
 
 // Menu du profil : changer de profil actif (CA5), reglages, deconnexion.
 //
@@ -8,10 +10,15 @@ import { choisirProfil, deconnexion, profilActifId, profils } from '../lib/auth'
 // reglages) : `choisirProfil` previent le service puis la synchronisation
 // recharge l'etat du nouveau profil -- le menu n'a rien d'autre a faire que
 // dire si ca a echoue.
+//
+// Telephone (US-47 CA3/CA5) : la barre basse n'a que cinq onglets ; cette
+// feuille porte donc Réglages EN PREMIER, puis Films, Séries et Guide.
 
 export default function MenuProfil(props: {
   profil: { nom: string; initiale: string; teinte: number }
   surReglages: () => void
+  /** Entrees de navigation reportees ici sur telephone (Films, Séries, Guide). */
+  surNaviguer?: (cle: ClefNav) => void
   surFermer: () => void
 }) {
   const [erreur, poserErreur] = createSignal('')
@@ -28,6 +35,11 @@ export default function MenuProfil(props: {
     }
   }
 
+  const naviguer = (cle: ClefNav) => {
+    props.surNaviguer?.(cle)
+    props.surFermer()
+  }
+
   return (
     <div class="panneau panneau--profil" role="menu" aria-label="Profil">
       <div class="profil-entete">
@@ -41,6 +53,30 @@ export default function MenuProfil(props: {
           </span>
         </span>
       </div>
+
+      <Show when={estMobile()}>
+        <div class="panneau-trait" />
+        <button
+          class="panneau-option"
+          role="menuitem"
+          data-role="menu-reglages"
+          onClick={() => {
+            props.surReglages()
+            props.surFermer()
+          }}
+        >
+          <Icone nom="settings" taille={18} />
+          <span style={{ flex: 1 }}>Réglages</span>
+        </button>
+        <For each={ENTREES_PROFIL_MOBILE}>
+          {(e) => (
+            <button class="panneau-option" role="menuitem" onClick={() => naviguer(e.cle)}>
+              <Icone nom={e.icone} taille={18} />
+              <span style={{ flex: 1 }}>{e.libelle}</span>
+            </button>
+          )}
+        </For>
+      </Show>
 
       <Show when={profils().length > 1}>
         <div class="panneau-trait" />
@@ -64,17 +100,20 @@ export default function MenuProfil(props: {
 
       <div class="panneau-trait" />
 
-      <button
-        class="panneau-option"
-        role="menuitem"
-        onClick={() => {
-          props.surReglages()
-          props.surFermer()
-        }}
-      >
-        <Icone nom="settings" taille={18} />
-        <span style={{ flex: 1 }}>Préférences et profils</span>
-      </button>
+      <Show when={!estMobile()}>
+        <button
+          class="panneau-option"
+          role="menuitem"
+          data-role="menu-reglages"
+          onClick={() => {
+            props.surReglages()
+            props.surFermer()
+          }}
+        >
+          <Icone nom="settings" taille={18} />
+          <span style={{ flex: 1 }}>Préférences et profils</span>
+        </button>
+      </Show>
       <button class="panneau-option" role="menuitem" onClick={() => void deconnexion()}>
         <Icone nom="link_off" taille={18} />
         <span style={{ flex: 1 }}>Se déconnecter</span>
