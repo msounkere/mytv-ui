@@ -244,7 +244,16 @@ function Coque(props: RouteSectionProps) {
     const cle = cleLecture()
     if (!cle || selection()?.cle === cle) return
     if (cle === cleArretee()) {
-      void repliDe(cle).then((chemin) => cleLecture() === cle && naviguer(chemin, { replace: true }))
+      // L'arret recule d'un pas dans l'historique (`revenirEnArriere`) : l'adresse
+      // change a la tache suivante, pas tout de suite. Naviguer ici vers le repli
+      // remplacerait l'entree courante PENDANT ce recul et l'annulerait (le
+      // « Arrêter » depuis le Direct finissait sur l'accueil en CI). Le repli ne
+      // sert que si, un instant plus tard, rien n'a bouge.
+      const minuterie = setTimeout(() => {
+        if (cleLecture() !== cle || selection()) return
+        void repliDe(cle).then((chemin) => cleLecture() === cle && !selection() && naviguer(chemin, { replace: true }))
+      }, 600)
+      onCleanup(() => clearTimeout(minuterie))
       return
     }
     void db.catalogue.get(cle).then((e) => {
