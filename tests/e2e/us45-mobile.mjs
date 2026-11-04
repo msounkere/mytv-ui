@@ -13,7 +13,9 @@ for (const moteur of moteursDemandes()) {
     const { page, serveur, video, commandes, videosAvecSource } = s
     const vw = gabarit === 'mobile' ? 390 : 844
     const boites = async () => commandes().getByRole('button').evaluateAll((els) => els.filter((e) => e.offsetParent !== null).map((e) => { const r = e.getBoundingClientRect(); return { nom: e.getAttribute('aria-label'), x: r.left, d: r.right, h: r.height, w: r.width } }))
-    const tap = async (x, y) => { if (moteur === 'firefox') await page.mouse.click(x, y); else await page.touchscreen.tap(x, y) }
+    // Firefox n'emule pas le tactile ; l'emulation tactile de WebKit sous Playwright est trop lente pour
+    // un double-tap : la souris produit les memes `click` sur la surface de gestes.
+    const tap = async (x, y) => { if (moteur === 'chromium') await page.touchscreen.tap(x, y); else await page.mouse.click(x, y) }
     try {
       // --- 1. Barre compacte qui tient dans la largeur ------------------------------------------------
       console.log(`[${moteur}/${gabarit}] 1. barre compacte`)
@@ -46,7 +48,10 @@ for (const moteur of moteursDemandes()) {
       console.log(`[${moteur}/${gabarit}] 2. gestes`)
       const opacite = () => commandes().evaluate((e) => getComputedStyle(e).opacity)
       // Le media factice dure 6 s : en boucle, pour que la fin de lecture ne vienne pas poser son calque.
-      await page.evaluate(() => { const vi = document.querySelector('video'); vi.loop = true; vi.currentTime = 0; return vi.play() })
+      await page.evaluate(() => { const vi = document.querySelector('video'); vi.loop = true; vi.currentTime = 0; return vi.play().catch(() => {}) })
+      // WebKit sans geste refuse parfois la lecture : le bouton central est le geste.
+      if (await page.evaluate(() => document.querySelector('video').paused)) await page.locator('[data-role="lecture-centrale"]').click().catch(() => {})
+      await attendre(async () => !(await video()).paused, { delai: 5000, quoi: 'lecture en cours' })
       await pause(3800)
       v.ok((await opacite()) === '0', 'commandes masquees apres 3,2 s de lecture')
       // A mi-hauteur (entre la barre du haut et celle du bas), decale du bouton central.
@@ -62,7 +67,7 @@ for (const moteur of moteursDemandes()) {
       const tAvant = (await video()).t
       const droite = { x: boiteVideo.x + boiteVideo.width * 0.85, y: boiteVideo.y + boiteVideo.height * 0.5 }
       await tap(droite.x, droite.y)
-      await pause(120)
+      await pause(60)
       await tap(droite.x, droite.y)
       await pause(600)
       const tApres = (await video()).t

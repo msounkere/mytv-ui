@@ -87,6 +87,9 @@ import {
 // décision, qui tient la connexion unique de l'abonnement. Ce qui s'en détachait sans l'affaiblir est dans
 // `./lecture/` : les voisines, les calques, les raccourcis, les pistes.
 
+/** Deux taps du meme cote dans cette fenetre = un double-tap (±10 s) ; au-dela, un tap simple (CA6). */
+const FENETRE_DOUBLE_TAP = 400
+
 /** Hauteur réelle de la barre de contrôles, mesurée sur la maquette. */
 const HAUTEUR_CONTROLES = { live: 68, vod: 94 }
 
@@ -1019,7 +1022,7 @@ export default function Lecture(props: {
     const r = cadre.getBoundingClientRect()
     const cote = e.clientX < r.left + r.width / 3 ? 'gauche' : e.clientX > r.right - r.width / 3 ? 'droite' : 'centre'
     const maintenant = Date.now()
-    if (maintenant - dernierTap < 320 && cote === coteDernierTap && cote !== 'centre' && !direct()) {
+    if (maintenant - dernierTap < FENETRE_DOUBLE_TAP && cote === coteDernierTap && cote !== 'centre' && !direct()) {
       // Double-tap lateral : ±10 s (YouTube, Netflix) ; le tap simple en attente est annule.
       clearTimeout(tapSimple)
       tapSimple = undefined
@@ -1033,7 +1036,7 @@ export default function Lecture(props: {
     tapSimple = setTimeout(() => {
       tapSimple = undefined
       calques.basculerCommandes()
-    }, 320)
+    }, FENETRE_DOUBLE_TAP)
   }
   onCleanup(() => clearTimeout(tapSimple))
 

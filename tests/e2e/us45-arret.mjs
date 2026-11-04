@@ -21,6 +21,14 @@ for (const moteur of moteursDemandes()) {
       v.ok(await attendre(() => putsHistorique(cle.replace(/^vod:/, '')).length >= 1, { delai: 4000 }).catch(() => false), `CA1 ${nom} : PUT /profil/historique immediat (keepalive)`)
       v.ok(!(await etatCouche()).presente, `CA1 ${nom} : la couche du lecteur est demontee`)
     }
+    /** « Arrêter le flux » : dans la barre (bureau) ou dans le menu « ⋯ » (telephone, tablette : CA6). */
+    const arreterParLesCommandes = async () => {
+      await reveil()
+      const croix = commandes().getByRole('button', { name: 'Arrêter le flux' })
+      if (await croix.count()) return croix.click()
+      await commandes().getByRole('button', { name: 'Plus d’options' }).click()
+      await page.locator('[data-role="menu-lecteur"]').getByRole('menuitem', { name: 'Arrêter le flux' }).click()
+    }
     const semer = async (cle) => {
       await s.ouvrirLecture(cle)
       await page.waitForFunction(() => (document.querySelector('video')?.readyState ?? 0) >= 2, null, { timeout: 20_000 })
@@ -38,8 +46,7 @@ for (const moteur of moteursDemandes()) {
     v.ok((await etatCouche()).presente && !(await etatCouche()).visible, 'Retour : la lecture continue, couche masquee (mini-lecteur)')
     await page.locator('[data-role="mini-lecteur"]').getByRole('button', { name: 'Revenir au lecteur' }).first().click()
     await attendre(async () => /^\/lecture\//.test(await chemin()), { quoi: 'retour au lecteur' })
-    await reveil()
-    await commandes().getByRole('button', { name: 'Arrêter le flux' }).click()
+    await arreterParLesCommandes()
     await apresArret('croix', 'vod:iptva:5001')
     // La couche n'est peinte sur aucun ecran suivant (D1).
     for (const [nom, cible] of [['Ma liste', '/a-voir'], ['Réglages', '/reglages'], ['Direct', '/direct']]) {
@@ -91,8 +98,7 @@ for (const moteur of moteursDemandes()) {
     const avant = putsHistorique('iptva:5005').length
     await page.evaluate(() => document.querySelector('video').pause())
     v.ok(await attendre(() => putsHistorique('iptva:5005').length > avant, { delai: 4000 }).catch(() => false), 'CA1 pause : PUT /profil/historique immediat')
-    await reveil()
-    await commandes().getByRole('button', { name: 'Arrêter le flux' }).click()
+    await arreterParLesCommandes()
     await pause(500)
 
     v.ok(s.violations.length === 0, 'aucune requete hors 127.0.0.1')
