@@ -16,13 +16,20 @@ function visible(el: Element): boolean {
   for (let a: Element | null = el; a; a = a.parentElement) {
     if (a.getAttribute('aria-hidden') === 'true') return false
     const cs = getComputedStyle(a)
-    if (cs.visibility === 'hidden' || cs.display === 'none') return false
+    // Les actions revelees au survol (opacite nulle) ne sont pas des cibles.
+    if (cs.visibility === 'hidden' || cs.display === 'none' || cs.opacity === '0') return false
   }
   return true
 }
 
+/**
+ * Cibles d'une rangee : les elements focalisables VISIBLES les plus externes.
+ * Une carte contient ses propres boutons (« ⋯ », lecture) : les fleches vont de
+ * carte en carte, pas de bouton en bouton a l'interieur d'une carte.
+ */
 function focalisables(conteneur: Element): HTMLElement[] {
-  return [...conteneur.querySelectorAll<HTMLElement>(FOCALISABLES)].filter(visible)
+  const tous = [...conteneur.querySelectorAll<HTMLElement>(FOCALISABLES)].filter(visible)
+  return tous.filter((e) => !tous.some((a) => a !== e && a.contains(e)))
 }
 
 function centreX(el: Element): number {
@@ -50,14 +57,17 @@ export function voisinHorizontal(actif: HTMLElement, sens: -1 | 1): HTMLElement 
   }
   const rangee = rangeeDe(actif)
   if (!rangee) return null
-  const r = actif.getBoundingClientRect()
-  const memeLigne = focalisables(rangee).filter((e) => {
-    if (e === actif || actif.contains(e) || e.contains(actif)) return false
+  // Depuis un bouton INTERNE a une carte, on raisonne depuis la carte.
+  const cibles = focalisables(rangee)
+  const porteur = cibles.find((e) => e.contains(actif)) ?? actif
+  const rp = porteur.getBoundingClientRect()
+  const memeLigne = cibles.filter((e) => {
+    if (e === porteur || porteur.contains(e) || e.contains(porteur)) return false
     const q = e.getBoundingClientRect()
-    return Math.abs(q.top + q.height / 2 - (r.top + r.height / 2)) < Math.max(r.height, q.height) / 2
+    return Math.abs(q.top + q.height / 2 - (rp.top + rp.height / 2)) < Math.max(rp.height, q.height) / 2
   })
   const candidats = memeLigne
-    .filter((e) => (sens > 0 ? e.getBoundingClientRect().left > r.left + 1 : e.getBoundingClientRect().right < r.right - 1))
+    .filter((e) => (sens > 0 ? e.getBoundingClientRect().left > rp.left + 1 : e.getBoundingClientRect().right < rp.right - 1))
     .sort((a, b) => sens * (a.getBoundingClientRect().left - b.getBoundingClientRect().left))
   return candidats[0] ?? null
 }
