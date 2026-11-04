@@ -88,8 +88,12 @@ export function creerFileToasts(
     emettre(d) {
       numero += 1
       const t: Toast = { ...d, id: numero, dureeMs: d.dureeMs ?? (d.action ? DUREE_TOAST_ANNULABLE : DUREE_TOAST) }
+      // Un nouveau geste REMPLACE le toast affiche (snackbar Material) : le faire
+      // attendre derriere le precedent (jusqu'a 6 s) rendait « Annuler » trompeur,
+      // le bouton visible defaisait encore le geste d'avant (fiche serie, US-45 CA4).
+      file.length = 0
       file.push(t)
-      if (!courant) afficher()
+      afficher()
       return t.id
     },
     fermer,

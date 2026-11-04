@@ -102,7 +102,7 @@ for (const gabarit of gabarits) {
     // Chip de preparation et sonde.
     await ouvrirFiche('/film/vod:iptva:5005')
     await attendre(async () => (await fiche.locator('[data-role="chip-preparation"]').count()) === 1, { quoi: 'chip' })
-    v.ok(/En préparation · 42 %/.test(await texte(fiche.locator('[data-role="chip-preparation"]'))), `CA3 chip d etat : « ${await texte(fiche.locator('[data-role="chip-preparation"]'))} »`)
+    v.ok(/^⟳ (En préparation · )?42 % · ~/.test(await texte(fiche.locator('[data-role="chip-preparation"]'))), `CA3 chip d etat : « ${await texte(fiche.locator('[data-role="chip-preparation"]'))} »`)
     v.ok((await fiche.locator('[data-role="disponibilite"]').count()) === 0, 'CA3 dans Ma liste : pas de ligne de sonde')
     v.ok((await fiche.locator('[data-role="ma-liste"]').count()) === 1, 'CA3 un seul bouton Ma liste')
     await ouvrirFiche('/film/vod:iptva:5004')
