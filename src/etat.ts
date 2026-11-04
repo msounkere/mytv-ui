@@ -207,8 +207,17 @@ export function lire(e: EntreeCatalogue): void {
     poserUrlEpisode(undefined)
     poserEpisodeSuivant(undefined)
     poserSelection(e)
-    aller(cheminLecture(e.cle))
+    aller(cheminLecture(e.cle), { replace: dejaEnLecture() })
   })
+}
+
+/**
+ * Deja sur /lecture/… (enchainement, « Prochain dans Ma liste ») : la lecture
+ * suivante REMPLACE l'entree d'historique, pour que « Retour » revienne a la
+ * fiche ou a l'ecran d'avant, et non a l'episode precedent (arbitrage ui-6).
+ */
+function dejaEnLecture(): boolean {
+  return ecran() === 'lecture'
 }
 
 export function ouvrirFicheFilm(e: EntreeCatalogue): void {
@@ -270,7 +279,7 @@ export function lireEpisode(ep: Episode & { suivant?: Episode }): void {
       recherche: ep.nom.toLowerCase(),
       extension: ep.extension,
     })
-    aller(cheminLecture(ep.cle))
+    aller(cheminLecture(ep.cle), { replace: dejaEnLecture() })
   })
 }
 

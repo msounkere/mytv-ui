@@ -10,7 +10,7 @@ import {
 import {
   EPISODES_AVANCE_MAX, EPISODES_AVANCE_MIN, LIBELLES, deplacer, enTeteListe, enTeteListeCourt, libelleEpisodesAvance, repere,
 } from '../lib/ma-liste-regles'
-import { budgetListe, derniereReception } from '../lib/a-voir-serveur'
+import { budgetListe, derniereReception, episodesAvanceDefaut } from '../lib/a-voir-serveur'
 import { etatSynchro, tirerAVoir } from '../lib/synchro'
 import { chargerSaisons, lireSaisons } from '../lib/saisons'
 import { episodesOrdonnes, type EpisodeLisible } from '../lib/episodes-suivants'
@@ -31,8 +31,6 @@ import type { EntreeCatalogue } from '../lib/db'
 
 /** Rafraichissement de l'etat de preparation, ecran ouvert. */
 export const PERIODE_ETAT = 10_000
-/** Valeur du serveur quand l'element n'en impose pas (contrat lot 9). */
-const DEFAUT_EPISODES_AVANCE = 2
 
 const LIBELLE_TYPE: Record<string, string> = { vod: 'Film', series: 'Série' }
 
@@ -251,14 +249,15 @@ function Ligne(props: {
     if (serie()) {
       if (el().depuis) parts.push(`dès ${repere(el().depuis!.saison, el().depuis!.episode)}`)
       const n = el().episodesAvance
-      if (n !== undefined) parts.push(`${n} épisode${n > 1 ? 's' : ''} d’avance`)
+      if (n) parts.push(`${n} épisode${n > 1 ? 's' : ''} d’avance`)
     }
     return parts.filter(Boolean).join(' · ')
   }
 
   const entreesMenu = (): EntreeMenu[] => {
-    const avance = el().episodesAvance
-    const n = avance ?? DEFAUT_EPISODES_AVANCE
+    // 0 ou absent : rien de choisi, le serveur applique `episodes_avance_defaut`.
+    const avance = el().episodesAvance || undefined
+    const n = avance ?? episodesAvanceDefaut()
     const valeurDepuis = el().depuis ? `${el().depuis!.saison}:${el().depuis!.episode}` : ''
     const options = [{ valeur: '', libelle: 'l’épisode entamé' }]
     if (episodes().length === 0 && el().depuis) options.push({ valeur: valeurDepuis, libelle: repere(el().depuis!.saison, el().depuis!.episode) })
@@ -272,7 +271,7 @@ function Ligne(props: {
         ? [
             {
               icone: 'video_library',
-              libelle: libelleEpisodesAvance(avance, DEFAUT_EPISODES_AVANCE),
+              libelle: libelleEpisodesAvance(avance, episodesAvanceDefaut()),
               compteur: {
                 surMoins: () => props.surOptions({ episodesAvance: Math.max(EPISODES_AVANCE_MIN, n - 1) }),
                 surPlus: () => props.surOptions({ episodesAvance: Math.min(EPISODES_AVANCE_MAX, n + 1) }),

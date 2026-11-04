@@ -224,9 +224,9 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
   /** La liste d'un profil, avec l'etat de preparation de chaque element (contrat ui-5.contrat.demande + US-44). */
   const listeAVoir = (profil, avancer) => {
     const elements = (etat.aVoir.get(profil) ?? []).map((e, i) => {
-      // Lot 10 : `episodes_avance` n'est rendu que s'il a ete choisi ; sinon le serveur applique
-      // son reglage (DEFAUT_EPISODES_AVANCE) sans le dire -- l'interface affiche « (réglage du serveur) ».
-      const base = { contenu: e.contenu, rang: i + 1, ajoute: e.ajoute, ...(e.episodes_avance !== undefined ? { episodes_avance: e.episodes_avance } : {}), ...(e.depuis ? { depuis: e.depuis } : {}) }
+      // Lot 10 (arbitrage) : `episodes_avance` vaut 0 tant que rien n'est choisi ; le reglage du serveur
+      // est rendu a part (`episodes_avance_defaut`) -- l'interface affiche « 2 (réglage du serveur) ».
+      const base = { contenu: e.contenu, rang: i + 1, ajoute: e.ajoute, episodes_avance: e.episodes_avance ?? 0, ...(e.depuis ? { depuis: e.depuis } : {}) }
       if (e.contenu.startsWith('vod:')) return { ...base, ...etatFichier(e.contenu, avancer) }
       const tous = episodesDe(e.contenu.slice('serie:'.length))
       const depart = e.depuis ? Math.max(0, tous.findIndex((x) => x.saison === e.depuis.saison && x.episode === e.depuis.episode)) : 0
@@ -464,7 +464,7 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
       if (!s.profil) return erreur(res, 409, 'profil_requis', 'Aucun profil actif')
       const profil = s.profil
       // Lot 9 : liste « À voir » (contrat suppose : ui-5.contrat.demande).
-      if (p === '/profil/a_voir' && req.method === 'GET') return json(res, 200, { elements: listeAVoir(profil, true), budget: { ...etat.budget } })
+      if (p === '/profil/a_voir' && req.method === 'GET') return json(res, 200, { elements: listeAVoir(profil, true), budget: { ...etat.budget }, episodes_avance_defaut: DEFAUT_EPISODES_AVANCE })
       // US-44 CA3 : remet les fichiers en echec de l'element en attente ; 404 hors liste.
       m = /^\/profil\/a_voir\/(.+)\/reessayer$/.exec(p)
       if (m && req.method === 'POST') {

@@ -4,7 +4,6 @@ import CarteAffiche, { SqueletteAffiche } from '../components/CarteAffiche'
 import CarteChaineFavorite from '../components/CarteChaineFavorite'
 import CarteDirect from '../components/CarteDirect'
 import CarteReprise from '../components/CarteReprise'
-import ToastHote from '../components/Toast'
 import type { EntreeMenu } from '../components/MenuContextuel'
 import RangeeHorizontale from '../components/RangeeHorizontale'
 import type { ProgrammeCourant } from '../components/PlaqueChaine'
@@ -510,8 +509,6 @@ export default function Accueil(props: {
 
   return (
     <div style={{ height: '100%', overflow: 'auto' }}>
-      {/* L'hote des toasts : un seul pour l'application (voir Toast.tsx). */}
-      <ToastHote />
       <div
         style={{
           'max-width': '1560px', margin: '0 auto', padding: mesures().padding,

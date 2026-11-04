@@ -522,10 +522,10 @@ const SCENARIOS = {
       const titres = (await rangee.getByRole('button', { name: /^Film Test|^Série Test/ }).evaluateAll((l) => l.map((e) => e.getAttribute('aria-label'))))
       const attendu = liste().map((id) => (id.startsWith('vod:') ? `Film Test ${Number(id.split(':').pop()) - 5000}` : `Série Test ${Number(id.replace(/.*s/, '')) - 5000}`))
       assert.deepEqual(titres, attendu, 'CA5 rangee dans l ordre de la liste')
-      // (La serie 2 part desormais de S02E01, en attente : il reste un seul pret.)
+      // (La serie 2 part desormais de S02E01, en attente, et le film 6 a ete relance : il reste un seul pret.)
       assert.equal(await texte(rangee.locator('h2 + span')), '5 · 1 prêt', 'CA5 compteur « N · N prêts »')
       const badges = (await rangee.locator('[data-role="badge-preparation"]').allInnerTexts()).map((t) => t.trim())
-      assert.deepEqual(badges.sort(), ['Prêt', 'En attente', '⟳ 42 %', '✕ Échec', '✕ Échec'].sort(), `CA5 badges de coin : ${badges}`)
+      assert.deepEqual(badges.sort(), ['Prêt', 'En attente', 'En attente', '⟳ 42 %', '✕ Échec'].sort(), `CA5 badges de coin : ${badges}`)
       assert.match(await texte(rangee), /Film · 20\d\d/, 'CA5 la legende (type · annee) reste')
       assert.equal(await rangee.locator('section[aria-label="Reprendre"]').count(), 0)
       // « Reprendre » vient AVANT « Ma liste » quand elle existe (verifie dans ca3 : ordre des sections).
@@ -578,8 +578,12 @@ const SCENARIOS = {
       await lignes().nth(0).locator('[data-role="titre-ma-liste"]').tap()
       await attendre(async () => (await chemin()) === '/film/vod:iptva:5001', { quoi: 'CA5 tap = fiche' })
       // Hors ligne : bandeau sur l'ecran.
+      const t0 = Date.now()
       await page.goto(`${serveur.origine}/a-voir`)
       await lignes().first().waitFor()
+      // L'heure du bandeau est celle de la derniere reception : on attend qu'une ait eu lieu apres le rechargement.
+      await attendre(() => o.requetes((r) => r.chemin === '/api/v1/profil/a_voir' && r.methode === 'GET' && r.t > t0).length >= 1, { quoi: 'une reception' })
+      await pause(400)
       await ctx.setOffline(true)
       await attendre(async () => (await page.locator('[data-role="bandeau-hors-ligne"]').count()) === 1, { delai: 14_000, quoi: 'CA5 bandeau hors ligne' })
       assert.match(await texte(page.locator('[data-role="bandeau-hors-ligne"]')), /^Hors ligne — états du \d\d:\d\d ; vos changements partiront au retour du réseau\.$/, 'CA5 bandeau du modele cible')

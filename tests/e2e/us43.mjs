@@ -146,7 +146,7 @@ const SCENARIOS = {
       assert.equal(await ligneSerie.locator('[data-role="etat-preparation"]').count(), 1, 'une seule ligne d etat pour la serie')
 
       // Etat rafraichi toutes les 10 s pendant que l'ecran est ouvert : on impose des etats cote serveur.
-      const etatFilm = () => lignes().first().locator('[data-role="etat-preparation"]').innerText()
+      const etatFilm = async () => (await lignes().first().locator('[data-role="etat-preparation"]').innerText()).replace(/\s+/g, ' ').trim()
       await serveur.appel('preparation', { contenu: 'vod:iptva:5000', reglage: { etat: 'en_cours', octets: 420, total: 1000, debit_kbps: 2100 } })
       const t0 = Date.now()
       await attendre(async () => /^⟳ En préparation · 42 % · ~\d+ s$/.test(await etatFilm()), { delai: 13_000, quoi: 'etat « en preparation » avec pourcentage et temps restant' })
@@ -351,7 +351,8 @@ const SCENARIOS = {
       await page.locator('[data-role="fiche-film"]').getByRole('button', { name: 'Regarder' }).waitFor()
       await pause(1500)
       assert.equal(sondes('iptva:5004').length + sondes('iptva:5001').length, avant, 'CA5 aucune sonde pendant une lecture')
-      assert.equal(await page.locator('[data-role="fiche-film"] [data-role="disponibilite"]').count(), 0, 'et rien n est affiche')
+      // Lot 10 : un fichier deja pret le dit sans sonder ; rien d'autre n'est affiche pendant une lecture.
+      assert.equal(await page.locator('[data-role="fiche-film"] [data-role="disponibilite"]:not([data-etat="pret"])').count(), 0, 'et rien n est affiche (hors « Prêt » deja connu)')
     })
   },
 }

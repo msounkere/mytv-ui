@@ -41,8 +41,11 @@ Notes :
   (App.tsx passe encore `ouvrir` a « Regarder » de la fiche). A retirer quand ui-8 passera `lire`.
 - Le menu est rendu dans `body` (Portal) : dans une grille virtualisee (`transform`), un menu `fixed` pose
   dans la rangee passait sous la rangee suivante (constate en e2e, CA6).
-- L'hote des toasts est monte par l'Accueil et, a defaut, par `lib/toasts.ts` au premier toast (fiche ouverte
-  par un lien direct). Un seul rend a la fois.
+- L'hote des toasts est monte par la coque (ui-8, `<ToastHote basPx />`) et, a defaut, par `lib/toasts.ts`
+  au premier toast (repli autonome, le seul present sur cette branche). Un seul rend a la fois.
 - « Retirer de Reprendre » est local (table Dexie `reprises_cachees`, version 7) : le contrat n'a pas de route.
-- Le faux serveur ne rend plus `episodes_avance` quand rien n'est choisi (sinon « (réglage du serveur) »
-  serait impossible a afficher) ; a confirmer cote Go (demande C.1).
+- Contrat arbitre : `episodes_avance` vaut 0 tant que rien n'est choisi et `episodes_avance_defaut` (premier
+  niveau de `GET /profil/a_voir`) porte le reglage du serveur ; l'interface affiche alors
+  « Préparer 2 (réglage du serveur) épisodes d’avance ». Les deux faux serveurs le rendent ainsi.
+- Arbitrages appliques : `GrilleAffiches` mesure par `requestAnimationFrame` (D17) ; depuis `/lecture/…`,
+  `lire` / `lireEpisode` naviguent avec `{ replace: true }` (« Retour » revient a la fiche).

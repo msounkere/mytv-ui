@@ -386,14 +386,15 @@ export async function tirerAVoir(): Promise<boolean> {
   // relus dans la transaction d'application) : un geste parti, journal efface,
   // pendant que cette reponse voyageait serait sinon ecrase par elle.
   const { aVoir: avant } = await enAttente()
-  let r: { elements?: AVoirElementApi[]; budget?: unknown }
+  let r: { elements?: AVoirElementApi[]; budget?: unknown; episodes_avance_defaut?: unknown }
   try {
-    r = await json<{ elements?: AVoirElementApi[]; budget?: unknown }>('/profil/a_voir')
+    r = await json<{ elements?: AVoirElementApi[]; budget?: unknown; episodes_avance_defaut?: unknown }>('/profil/a_voir')
   } catch (e) {
     if (e instanceof ErreurApi && (e.statut === 404 || e.statut === 501)) return false
     throw e
   }
-  const change = await appliquerListeServeur(Array.isArray(r.elements) ? r.elements : [], avant, versBudget(r.budget))
+  const defaut = typeof r.episodes_avance_defaut === 'number' ? r.episodes_avance_defaut : undefined
+  const change = await appliquerListeServeur(Array.isArray(r.elements) ? r.elements : [], avant, versBudget(r.budget), defaut)
   if (change) await invaliderAVoir()
   return change
 }

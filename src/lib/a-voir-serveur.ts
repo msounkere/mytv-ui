@@ -71,7 +71,9 @@ export function versPreparation(e: AVoirElementApi): Preparation {
 
 const [budgetListe, poserBudgetListe] = createSignal<Budget | undefined>(undefined)
 const [derniereReception, poserDerniereReception] = createSignal<number | undefined>(undefined)
-export { budgetListe, derniereReception }
+/** `episodes_avance_defaut` (contrat US-44, arbitrage) : le reglage du serveur quand l'element ne choisit rien (`episodes_avance` = 0). */
+const [episodesAvanceDefaut, poserEpisodesAvanceDefaut] = createSignal<number>(2)
+export { budgetListe, derniereReception, episodesAvanceDefaut }
 
 export function versBudget(b: unknown): Budget | undefined {
   if (!b || typeof b !== 'object') return undefined
@@ -127,7 +129,7 @@ const TOASTS_MAX_PAR_RECEPTION = 3
  * serveur a retire sans geste local (film vu, serie finie) et un fichier passe
  * en echec donnent chacun un toast -- jamais une disparition silencieuse.
  */
-export async function appliquerListeServeur(elements: AVoirElementApi[], gardesAvant: ReadonlySet<string>, budget?: Budget): Promise<boolean> {
+export async function appliquerListeServeur(elements: AVoirElementApi[], gardesAvant: ReadonlySet<string>, budget?: Budget, episodesAvanceDefautServeur?: number): Promise<boolean> {
   const recus = new Map<string, AVoirElementApi>()
   for (const e of elements) {
     const cle = cleDeIdAVoir(e.contenu)
@@ -165,7 +167,8 @@ export async function appliquerListeServeur(elements: AVoirElementApi[], gardesA
           cle,
           rang: ordreLocal && local ? local.rang : typeof e.rang === 'number' ? e.rang : i,
           ajouteLe: local?.ajouteLe ?? (Date.parse(e.ajoute) || Date.now()),
-          ...(e.episodes_avance !== undefined ? { episodesAvance: e.episodes_avance } : {}),
+          // `episodes_avance` = 0 : rien de choisi, le serveur applique son reglage.
+          ...(e.episodes_avance ? { episodesAvance: e.episodes_avance } : {}),
           ...(e.depuis ? { depuis: { saison: e.depuis.saison, episode: e.depuis.episode } } : {}),
           preparation,
         }
@@ -180,6 +183,7 @@ export async function appliquerListeServeur(elements: AVoirElementApi[], gardesA
   })
   recalculerPrets(await db.a_voir.toArray())
   if (budget) poserBudgetListe(budget)
+  if (episodesAvanceDefautServeur && episodesAvanceDefautServeur > 0) poserEpisodesAvanceDefaut(episodesAvanceDefautServeur)
   poserDerniereReception(Date.now())
   await annoncerDifferences(disparus, echecs)
   return change

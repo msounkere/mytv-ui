@@ -90,10 +90,20 @@ export default function GrilleAffiches(props: GrilleAffichesProps) {
     const el = boite()
     if (!el) return
     const mesurer = () => poserLargeur(el.clientWidth)
-    const observateur = new ResizeObserver(mesurer)
+    // Mesure differee par requestAnimationFrame (D17) : une largeur posee dans
+    // le rappel meme fait boucler l'observateur sur WebKit (« ResizeObserver
+    // loop », pageerror sur Films/Series). Meme recette que GrilleCartes (ui-8).
+    let d = 0
+    const observateur = new ResizeObserver(() => {
+      cancelAnimationFrame(d)
+      d = requestAnimationFrame(mesurer)
+    })
     observateur.observe(el)
     mesurer()
-    onCleanup(() => observateur.disconnect())
+    onCleanup(() => {
+      cancelAnimationFrame(d)
+      observateur.disconnect()
+    })
   })
 
   // Mesuré dans l'application : la zone de défilement ne réserve pas de
