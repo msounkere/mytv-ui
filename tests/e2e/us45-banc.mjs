@@ -32,8 +32,9 @@ export async function attendre(condition, { delai = 15_000, pas = 100, quoi = 'c
   }
 }
 
+/** Moteurs a jouer : `NAVIGATEURS=firefox,webkit` (script test:e2e:moteurs) ; chromium seul par defaut (test:e2e, CI). */
 export function moteursDemandes() {
-  return (process.env.NAVIGATEURS ?? 'chromium,firefox,webkit').split(',').map((s) => s.trim()).filter(Boolean)
+  return (process.env.NAVIGATEURS ?? 'chromium').split(',').map((s) => s.trim()).filter(Boolean)
 }
 
 export async function lancer(nom) {
