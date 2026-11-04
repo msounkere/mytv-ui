@@ -5,11 +5,11 @@ import { ErreurApi, ErreurReseau, envoyer, json, type LectureApi, type Page, typ
 import { estConnecte, limites, profilActifId, signalerProfilRequis } from './auth'
 import {
   invaliderAVoir, invaliderCategories, invaliderEpingles, invaliderFavoris, invaliderHistorique,
-  invaliderReprises,
+  invaliderRecommandation, invaliderReprises,
 } from './requetes'
 import { serieAssociee } from './series-episodes'
-import { appliquerListeServeur, type AVoirElementApi } from './a-voir-serveur'
-import { CLE_ORDRE } from './a-voir-regles'
+import { appliquerListeServeur, versBudget, type AVoirElementApi } from './a-voir-serveur'
+import { CLE_ORDRE } from './ma-liste-regles'
 import { fusionner, egaux, ecrireEnsemble, lireEnsemble, type Valeurs } from './reglages-fusion'
 import {
   cheminAVoir, cheminContenu, cleDe, clesCandidates, estIdentifiantEpisode, idAVoirDeCle, idServeurDeCle, serieDeCle,
@@ -140,6 +140,9 @@ async function envoyerGroupe(g: Groupe): Promise<boolean> {
   const id = idServeurDeCle(g.cle)
   const chemin = cheminContenu(id)
   if (g.classe === 'favori') {
+    // Lot 10 (US-44 CA6) : les favoris sont reserves aux chaines ; le serveur
+    // refuse un film ou une serie (422). Rien a envoyer pour une autre cle.
+    if (!g.cle.startsWith('live:')) return false
     const present = (await db.favoris.get(g.cle)) !== undefined
     await envoyer(`/profil/favoris/${chemin}`, { methode: present ? 'PUT' : 'DELETE' })
     return true
@@ -279,9 +282,11 @@ async function tirerFavoris(limite: number | undefined): Promise<boolean> {
     decalage = p.suivant
   }
   const resolus = await resoudreCles(ids)
+  // Lot 10 : un film ou une serie encore favori cote serveur (migration non
+  // jouee) est ignore -- il vit desormais dans « Ma liste ».
   const cles = ids.flatMap((id) => {
     const c = resolus.get(id)
-    return c ? [c] : []
+    return c && c.startsWith('live:') ? [c] : []
   })
   const { favoris: gardes } = await enAttente()
   const serveur = new Set(cles)
@@ -381,14 +386,14 @@ export async function tirerAVoir(): Promise<boolean> {
   // relus dans la transaction d'application) : un geste parti, journal efface,
   // pendant que cette reponse voyageait serait sinon ecrase par elle.
   const { aVoir: avant } = await enAttente()
-  let r: { elements?: AVoirElementApi[] }
+  let r: { elements?: AVoirElementApi[]; budget?: unknown }
   try {
-    r = await json<{ elements?: AVoirElementApi[] }>('/profil/a_voir')
+    r = await json<{ elements?: AVoirElementApi[]; budget?: unknown }>('/profil/a_voir')
   } catch (e) {
     if (e instanceof ErreurApi && (e.statut === 404 || e.statut === 501)) return false
     throw e
   }
-  const change = await appliquerListeServeur(Array.isArray(r.elements) ? r.elements : [], avant)
+  const change = await appliquerListeServeur(Array.isArray(r.elements) ? r.elements : [], avant, versBudget(r.budget))
   if (change) await invaliderAVoir()
   return change
 }
@@ -550,6 +555,9 @@ async function executer(): Promise<Resultat> {
     if (h.historique) {
       recus++
       await invaliderHistorique()
+      // « Parce que vous avez regardé… » suit l'historique venu d'ailleurs (A10) :
+      // sans cela la rangee n'apparaissait qu'au second rechargement.
+      await invaliderRecommandation()
     }
     if (h.reprises) {
       recus++

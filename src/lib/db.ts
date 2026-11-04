@@ -2,7 +2,7 @@ import Dexie, { type EntityTable } from 'dexie'
 import { cleDe, estIdentifiantEpisode } from './identifiants'
 import { cleGroupeEntree } from './variantes'
 import type { CategorieApi, ChaineApi, FilmApi, SerieApi, TypeApi } from './api'
-import type { Preparation } from './a-voir-regles'
+import type { Preparation } from './ma-liste-regles'
 
 // 21 791 chaines + 106 973 films ne peuvent pas etre re-telecharges a chaque
 // navigation : le catalogue est importe une fois (export en bloc de l'API, voir
@@ -106,6 +106,18 @@ export interface Reprise {
   serie?: string
 }
 
+/**
+ * « Retirer de Reprendre » (lot 10, US-46 CA3) : la carte d'un film ou d'une
+ * serie est CACHEE de la rangee sans que ses positions soient effacees (Netflix
+ * « Retirer de la rangee »). Une nouvelle position notee la fait reapparaitre.
+ * Local a l'appareil : le contrat n'a pas de route pour cet etat.
+ */
+export interface RepriseCachee {
+  /** Cle de l'ENTREE du catalogue (film ou serie), jamais d'un episode. */
+  cle: string
+  cacheLe: number
+}
+
 export interface Historique {
   cle: string
   ouvertLe: number
@@ -171,6 +183,7 @@ export const db = new Dexie('mytv') as Dexie & {
   journal: EntityTable<LigneJournal, 'n'>
   lectures: EntityTable<LectureMesuree, 'n'>
   a_voir: EntityTable<AVoir, 'cle'>
+  reprises_cachees: EntityTable<RepriseCachee, 'cle'>
 }
 
 db.version(1).stores({
@@ -226,6 +239,12 @@ db.version(5)
 // seule : rien d'existant n'est reindexe.
 db.version(6).stores({
   a_voir: 'cle, rang',
+})
+
+// Version 7 (lot 10, US-46 CA3) : les cartes retirees de « Reprendre ». Table
+// ajoutee seule : rien d'existant n'est reindexe.
+db.version(7).stores({
+  reprises_cachees: 'cle',
 })
 
 /** Minuscules, sans accents : rend la recherche insensible a « é » vs « e ». */
