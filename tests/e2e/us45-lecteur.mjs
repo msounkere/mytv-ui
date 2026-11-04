@@ -67,22 +67,24 @@ try {
   await pause(300)
   v.ok((await page.locator('[role="dialog"][data-role="variantes"]').count()) === 0 && /^\/lecture/.test(await chemin()), 'CA8 Echap ferme Variantes sans quitter (D7)')
   v.ok(!/iptva:|manifestLoadError|127\.0\.0\.1/.test(await page.locator('.couche-lecteur').evaluate((e) => Array.from(e.querySelectorAll('*')).filter((x) => x.children.length === 0 && (x.checkVisibility ? x.checkVisibility({ contentVisibilityAuto: true }) : x.offsetParent !== null)).map((x) => x.textContent).join(' '))), 'CA9 aucun identifiant interne visible dans le lecteur (direct en erreur compris)')
+  // La carte d'erreur de la chaine (404 HLS) arrive apres les tentatives du lecteur : on l'attend.
   const detail = page.locator('[data-role="erreur-detail"]')
-  v.ok((await detail.count()) === 1 && !(await detail.locator('code').isVisible()), 'CA9 le diagnostic brut est replie derriere « Détails techniques »')
+  await detail.first().waitFor({ timeout: 15_000 }).catch(() => {})
+  v.ok((await detail.count()) === 1 && !(await detail.locator('code').isVisible()), `CA9 le diagnostic brut est replie derriere « Détails techniques » (${await detail.count()} carte)`)
 
   // --- 4. Panneau « Lecteur » : un seul reglage Qualité, Auto / Éco, lu par le lecteur (CA8, A2) ----------
   console.log('4. panneau lecteur')
   await page.getByRole('button', { name: /Lecteur : qualité/ }).click()
   const panneau = page.locator('[role="dialog"][aria-label^="Lecteur"]')
   await panneau.waitFor()
-  const options = await panneau.getByRole('menuitemradio').allInnerTexts()
+  const options = await panneau.getByRole('radio').allInnerTexts()
   v.ok(options.length === 2 && /Auto/.test(options[0]) && /Éco/.test(options[1]), `CA8 panneau : Auto / Éco seulement (${JSON.stringify(options.map((o) => o.split('\n')[0]))})`)
-  await panneau.getByRole('menuitemradio', { name: /Éco/ }).click()
+  await panneau.getByRole('radio', { name: /Éco/ }).click()
   await attendre(async () => (await page.evaluate(() => localStorage.getItem('mytv.qualite'))) === 'eco', { quoi: 'qualite memorisee' })
   v.ok(true, 'CA8 le choix du panneau est celui du lecteur (mytv.qualite = eco)')
   await page.getByRole('button', { name: /Lecteur : qualité/ }).click()
   await panneau.waitFor()
-  await panneau.getByRole('menuitemradio', { name: /Auto/ }).click()
+  await panneau.getByRole('radio', { name: /Auto/ }).click()
 
   // --- 5. Colonne « Pistes » seulement avec un choix ; infos d'un episode (CA9) ---------------------------
   console.log('5. pistes et infos episode')
