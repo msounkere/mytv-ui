@@ -143,10 +143,17 @@ console.log('--- navigation : fleches, focus de fiche, retour')
     await page.goto(`${serveur.origine}/recherche?q=film`)
     const onglets = page.getByRole('tab')
     await jusqua(async () => (await onglets.count()) >= 3, 10_000)
-    await onglets.first().focus()
-    await page.keyboard.press('ArrowRight')
-    await attendre(150)
-    v.ok(await page.evaluate(() => document.activeElement?.getAttribute('role') === 'tab' && document.activeElement.getAttribute('aria-selected') === 'true' && !document.activeElement.textContent.startsWith('Tout')), `CA7 → choisit l'onglet suivant (${await actif(page)})`)
+    // La recherche rend ses resultats par vagues : les onglets peuvent etre remontes juste apres
+    // le focus (focus perdu sur body en CI). On refait le geste jusqu'a ce qu'il tienne.
+    const ongletSuivantChoisi = () => page.evaluate(() => document.activeElement?.getAttribute('role') === 'tab' && document.activeElement.getAttribute('aria-selected') === 'true' && !document.activeElement.textContent.startsWith('Tout'))
+    await jusqua(async () => {
+      if (await ongletSuivantChoisi()) return true
+      await onglets.first().focus()
+      await page.keyboard.press('ArrowRight')
+      await attendre(150)
+      return ongletSuivantChoisi()
+    }, 5000)
+    v.ok(await ongletSuivantChoisi(), `CA7 → choisit l'onglet suivant (${await actif(page)})`)
     // Fiche : focus initial sur l'action principale.
     await page.goto(`${serveur.origine}/`)
     await page.getByRole('button', { name: 'Voir les détails' }).first().click()
