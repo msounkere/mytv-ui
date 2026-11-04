@@ -130,9 +130,9 @@ const SCENARIOS = {
       assert.deepEqual(liste(), ['vod:iptva:5000', 'serie:iptva:s5001', 'vod:iptva:5003'], 'ordre d ajout conserve')
 
       // --- Ecran « À voir » (entree du menu principal) -----------------------------------------
-      await rail('À voir').click()
+      await rail('Ma liste').click()
       await attendre(async () => (await lignes().count()) === 3, { quoi: '3 lignes' })
-      assert.equal(await page.evaluate(() => location.pathname), '/a-voir')
+      assert.equal(await page.evaluate(() => location.pathname), '/ma-liste')
       const cles = async () => Promise.all((await lignes().all()).map((l) => l.getAttribute('data-cle')))
       assert.deepEqual(await cles(), ['vod:iptva:5000', 'series:iptva:s5001', 'vod:iptva:5003'])
       const ligneSerie = lignes().nth(1)
@@ -330,7 +330,7 @@ const SCENARIOS = {
       await page.goto(`${serveur.origine}/film/vod:iptva:5002`)
       await page.locator('[data-role="fiche-film"]').getByRole('button', { name: 'Regarder' }).click()
       await attendre(async () => (await chemin()) === '/lecture/vod:iptva:5002', { quoi: 'lecture ouverte' })
-      await rail('À voir').click()
+      await rail('Ma liste').click()
       await page.locator('[data-role="element-a-voir"]').first().waitFor()
       await page.locator('[data-role="element-a-voir"]').first().getByRole('button', { name: 'Regarder' }).waitFor()
       // Les fiches s'ouvrent par le titre de la ligne (pas de rechargement : la lecture continue).
