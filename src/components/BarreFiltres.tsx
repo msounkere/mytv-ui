@@ -64,7 +64,8 @@ export default function BarreFiltres(props: BarreFiltresProps) {
   const bascules = createMemo(() => {
     const b = [
       { cle: 'nouveautes' as const, libelle: 'Nouveautés', icone: 'new_releases' },
-      { cle: 'favoris' as const, libelle: 'Favoris', icone: 'star' },
+      // Lot 10 : les favoris ne concernent plus que les chaines (US-46 CA6) ; la
+      // bascule « Favoris » des grilles Films / Series a disparu.
       { cle: 'enCours' as const, libelle: 'En cours', icone: 'history' },
     ]
     return props.sonLisible

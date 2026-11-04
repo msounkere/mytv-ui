@@ -14,9 +14,6 @@ import {
   type Tri,
 } from '../lib/recherche-client'
 import type { ResultatRecherche } from '../lib/recherche.worker'
-import { useAVoirCles } from './BoutonAVoir'
-import { basculerAVoir } from '../lib/a-voir'
-import { estPret } from '../lib/a-voir-serveur'
 
 // Page de résultats du dossier de conception : filtrable par type et par
 // langue. Mesures relevées au getComputedStyle sur « Lecteur IPTV.dc.html »,
@@ -57,8 +54,6 @@ export default function ResultatsRecherche(props: ResultatsRechercheProps) {
   const [langue, poserLangue] = createSignal<string | null>(null)
   const [tri, poserTri] = createSignal<Tri>('pertinence')
   const [limites, poserLimites] = createSignal<Totaux>({ ...PAS })
-  // US-43 CA1 : « À voir » depuis un resultat de recherche (films et series).
-  const aVoir = useAVoirCles()
 
   // Changer de requête, de langue ou de tri remet la page en haut de pile :
   // garder « afficher 60 de plus » d'une recherche à l'autre n'aurait aucun
@@ -241,13 +236,11 @@ export default function ResultatsRecherche(props: ResultatsRechercheProps) {
                   <div style={{ display: 'grid', 'grid-template-columns': 'repeat(auto-fill, minmax(148px, 1fr))', gap: '16px' }}>
                     <For each={groupes()[t]}>
                       {(r) => (
+                        // Lot 10 : la carte lit Ma liste elle-meme (ui-7) ; un clic = la FICHE.
                         <CarteAffiche
                           entree={versEntree(r)}
                           meta={meta(r)}
-                          aVoir={aVoir()?.has(r.cle) ?? false}
-                          pret={estPret(r.cle)}
                           surOuvrir={() => void ouvrir(r)}
-                          surAVoir={(e) => void basculerAVoir(e.cle)}
                         />
                       )}
                     </For>

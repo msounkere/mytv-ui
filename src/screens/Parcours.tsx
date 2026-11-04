@@ -54,7 +54,8 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
   const [maintenant, poserMaintenant] = createSignal(Date.now())
 
   const colonne = creerColonneCategories()
-  const chaines = creerListeChaines({ categorieActive: colonne.categorieActive, filtre, masquer4K })
+  const favorites = () => !!parametresDirect().favoris
+  const chaines = creerListeChaines({ categorieActive: colonne.categorieActive, filtre, masquer4K, seulementFavorites: favorites })
 
   // Catégorie et mode vivent aussi dans l'URL (US-47 CA7, audit A UX10) : un
   // lien partagé ou un rechargement retombe sur ce qu'on regardait. L'URL fait
@@ -111,6 +112,8 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
 
   function choisirCategorie(id: string) {
     colonne.poserCategorieActive(id)
+    // Choisir une categorie quitte la vue des favorites.
+    poserParametresDirect({ favoris: false })
     poserFiltre('')
     // Choisir une catégorie est le but de l'ouverture : on referme.
     poserPanneau(false)
@@ -121,6 +124,7 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
   }
 
   const titreDirect = () => {
+    if (favorites()) return 'Mes chaînes favorites'
     const f = colonne.ficheActive()
     if (!f) return LIBELLE_ONGLET.live
     if (!f.pays) return f.libelle
@@ -143,7 +147,7 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
   /** Une vue par catégorie ET par mode, comme l'exigent les règles. */
   const cleVue = () => {
     const id = colonne.categorieActive()
-    return id ? `live:${mode()}:${id}` : null
+    return id ? `live:${mode()}:${favorites() ? 'favorites:' : ''}${id}` : null
   }
 
   const [zoneListe, poserZoneListe] = createSignal<HTMLDivElement | null>(null)

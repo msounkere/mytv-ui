@@ -115,11 +115,16 @@ async function cloisonner(identite: string): Promise<void> {
   if (vue === identite) return
   ecrireLocal(CLE_IDENTITE_LOCALE, identite)
   const { db } = await import('./db')
-  await db.transaction('rw', [db.favoris, db.historique, db.reprises, db.journal, db.reglages, db.a_voir], async () => {
+  // `reprises_cachees` (lot 10, ui-7, version 7 de la base) : les series
+  // retirees de « Reprendre » sont aussi un etat de profil.
+  const cachees = (db as unknown as { reprises_cachees?: { clear: () => Promise<void> } }).reprises_cachees
+  const tables = [db.favoris, db.historique, db.reprises, db.journal, db.reglages, db.a_voir, ...(cachees ? [cachees] : [])]
+  await db.transaction('rw', tables as never, async () => {
     await db.favoris.clear()
     await db.a_voir.clear()
     await db.historique.clear()
     await db.reprises.clear()
+    if (cachees) await cachees.clear()
     await db.journal.clear()
     for (const r of await db.reglages.toArray())
       if (/^(synchro\.|epingles\.)/.test(String(r.cle))) await db.reglages.delete(r.cle)

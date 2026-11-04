@@ -279,14 +279,16 @@ const SCENARIOS = {
     await scenario(navigateur, {}, async ({ serveur, ctx, page }) => {
       await seConnecter(page)
       await attendre(catalogueComplet(page, serveur), { quoi: 'import' })
-      await page.goto(`${serveur.origine}/`)
+      // Lot 10 : les favoris ne concernent plus que les CHAINES (US-44 CA6) ; le
+      // geste part du lecteur d'une chaine (bouton « Ajouter aux favoris », touche F).
+      await page.goto(`${serveur.origine}/lecture/live:iptva:100000`)
       const bouton = page.getByRole('button', { name: 'Ajouter aux favoris' }).first()
       await bouton.waitFor()
       await bouton.click()
       const favoris = () => serveur.etat.favoris.get('p1') ?? []
       await attendre(() => favoris().length === 1, { delai: 8000, quoi: 'PUT favori' })
       const id = favoris()[0]
-      assert.match(id, /^iptva:\d+$/, 'le serveur doit recevoir un identifiant fournisseur:numero')
+      assert.equal(id, 'iptva:100000', 'le serveur doit recevoir l identifiant fournisseur:numero de la chaine')
 
       // Une autre machine (autre contexte, memes identifiants) retrouve le favori.
       const ctx2 = await contexte(navigateur, serveur)
@@ -376,11 +378,13 @@ const SCENARIOS = {
     await scenario(navigateur, {}, async ({ serveur, page }) => {
       await seConnecter(page)
       await attendre(catalogueComplet(page, serveur), { quoi: 'import' })
-      // Un film et une serie de meme numero (5001 / s5001) : le type vient du catalogue.
-      await serveur.appel('favoris', { profil: 'p1', ids: ['iptva:5001', 'iptva:s5001'] })
+      // Un film et une serie de meme numero (5001 / s5001) : le type vient du
+      // catalogue. Lot 10 : par Ma liste (les favoris ne sont plus que des chaines).
+      await serveur.appel('a-voir', { profil: 'p1', elements: [{ contenu: 'vod:iptva:5001' }, { contenu: 'serie:iptva:s5001' }] })
       await page.evaluate(() => window.dispatchEvent(new Event('online')))
-      await attendre(async () => (await lireIdb(page, 'favoris'))?.length === 2, { delai: 10_000, quoi: 'favoris du profil 1' })
-      assert.deepEqual((await lireIdb(page, 'favoris')).map((f) => f.cle).sort(), ['series:iptva:s5001', 'vod:iptva:5001'])
+      await attendre(async () => (await lireIdb(page, 'a_voir'))?.length === 2, { delai: 10_000, quoi: 'Ma liste du profil 1' })
+      assert.deepEqual((await lireIdb(page, 'a_voir')).map((f) => f.cle).sort(), ['series:iptva:s5001', 'vod:iptva:5001'])
+      const listeDe = (profil) => (serveur.etat.aVoir.get(profil) ?? []).map((e) => e.contenu)
 
       await page.getByRole('button', { name: 'Réglages' }).click()
       await page.getByLabel('Nom du nouveau profil').fill('Enfants')
@@ -389,17 +393,17 @@ const SCENARIOS = {
       await page.getByTestId('liste-profils').locator('div', { hasText: 'Enfants' }).getByRole('button', { name: 'Utiliser' }).click()
       await attendre(() => requetesVers(serveur, 'PUT', '/api/v1/compte/profil-actif').length >= 1, { quoi: 'PUT profil-actif' })
       // L'etat du profil precedent ne fuit pas dans le nouveau.
-      await attendre(async () => (await lireIdb(page, 'favoris')).length === 0, { delai: 10_000, quoi: 'favoris vides pour le profil 2' })
-      assert.deepEqual(serveur.etat.favoris.get('p1'), ['iptva:5001', 'iptva:s5001'], 'le profil 1 ne doit pas etre touche')
-      assert.ok(!(serveur.etat.favoris.get('p2')?.length), 'rien ne doit avoir ete pousse dans le profil 2')
-      // Retour au profil 1 par le menu du profil : ses favoris reviennent du serveur.
+      await attendre(async () => (await lireIdb(page, 'a_voir')).length === 0, { delai: 10_000, quoi: 'Ma liste vide pour le profil 2' })
+      assert.deepEqual(listeDe('p1'), ['vod:iptva:5001', 'serie:iptva:s5001'], 'le profil 1 ne doit pas etre touche')
+      assert.ok(!listeDe('p2').length, 'rien ne doit avoir ete pousse dans le profil 2')
+      // Retour au profil 1 par le menu du profil : sa liste revient du serveur.
       await page.locator('.entete-bouton-profil').click()
       await page.getByRole('menuitemradio', { name: 'Salon' }).click()
-      await attendre(async () => (await lireIdb(page, 'favoris'))?.length === 2, { delai: 10_000, quoi: 'favoris du profil 1 restaures' })
-      // Suppression du profil 2 (confirmation navigateur acceptee).
-      page.on('dialog', (d) => d.accept())
+      await attendre(async () => (await lireIdb(page, 'a_voir'))?.length === 2, { delai: 10_000, quoi: 'Ma liste du profil 1 restauree' })
+      // Suppression du profil 2 : dialogue de l'application (US-47 CA5), plus de confirm().
       await page.getByRole('button', { name: 'Réglages' }).click()
       await page.getByRole('button', { name: 'Supprimer le profil Enfants' }).click()
+      await page.getByRole('dialog', { name: /Supprimer le profil/ }).getByRole('button', { name: 'Supprimer' }).click()
       await attendre(() => serveur.etat.profils.length === 1, { quoi: 'profil supprime' })
     })
   },

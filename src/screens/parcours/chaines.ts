@@ -2,7 +2,7 @@ import { createMemo } from 'solid-js'
 import type { ProgrammeCourant } from '../../components/PlaqueChaine'
 import { entreesDeCategorie } from '../../lib/catalogue'
 import { programmesEnCours } from '../../lib/chaines-guide'
-import { FRAICHEUR, cles, requeteClefee } from '../../lib/requetes'
+import { FRAICHEUR, cles, requete, requeteClefee } from '../../lib/requetes'
 import { est4K } from '../../lib/modes-direct'
 import { db, normaliser, type EntreeCatalogue } from '../../lib/db'
 import { grouperVariantes, type Groupe } from '../../lib/variantes'
@@ -26,7 +26,15 @@ export function creerListeChaines(opts: {
   filtre: () => string
   /** Option du Direct : cacher les chaines dont le nom porte « 4K ». */
   masquer4K?: () => boolean
+  /** `/direct?favoris=1` : ne garder que les chaines favorites de la categorie (US-46 CA8). */
+  seulementFavorites?: () => boolean
 }) {
+  // Cles des favoris, perimees a chaque geste : la vue des favorites suit l'etoile.
+  const [favoris] = requete(
+    cles.favorisCles,
+    async () => new Set((await db.favoris.toArray()).map((f) => f.cle)),
+    { fraicheur: FRAICHEUR.geste },
+  )
   const [chaines] = requeteClefee(
     (id: string) => cles.categorie('live', id),
     opts.categorieActive,
@@ -60,6 +68,10 @@ export function creerListeChaines(opts: {
     const f = normaliser(opts.filtre().trim())
     let liste = chaines() ?? []
     if (opts.masquer4K?.()) liste = liste.filter((e) => !est4K(e.nom))
+    if (opts.seulementFavorites?.()) {
+      const f = favoris() ?? new Set<string>()
+      liste = liste.filter((e) => f.has(e.cle))
+    }
     return f ? liste.filter((e) => e.recherche.includes(f)) : liste
   })
 

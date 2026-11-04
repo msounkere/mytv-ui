@@ -48,6 +48,8 @@ export type ModeDirect = 'liste' | 'cartes'
 export interface ParametresDirect {
   categorie?: string
   mode?: ModeDirect
+  /** `/direct?favoris=1` : la liste des chaines favorites (« Tout voir » de l'accueil, US-46 CA8). */
+  favoris?: boolean
 }
 
 const [parametresDirect, poserParametresRetenus] = createSignal<ParametresDirect>({})
@@ -55,7 +57,8 @@ export { parametresDirect }
 
 export function cheminDirect(p: ParametresDirect): string {
   const q = new URLSearchParams()
-  if (p.categorie) q.set('categorie', p.categorie)
+  if (p.favoris) q.set('favoris', '1')
+  else if (p.categorie) q.set('categorie', p.categorie)
   if (p.mode && p.mode !== 'liste') q.set('mode', p.mode)
   const s = q.toString()
   return `${CHEMIN_ONGLET.live}${s ? `?${s}` : ''}`
@@ -66,14 +69,18 @@ export function lireParametresDirect(recherche: string): ParametresDirect {
   const q = new URLSearchParams(recherche)
   const categorie = q.get('categorie') ?? undefined
   const mode = q.get('mode')
+  const favoris = q.get('favoris')
   return {
     ...(categorie ? { categorie } : {}),
     ...(mode === 'cartes' || mode === 'liste' ? { mode } : {}),
+    // Explicite dans les deux sens : `?favoris=0` (ou son absence avec une
+    // categorie) quitte la vue des favorites.
+    ...(favoris !== null ? { favoris: favoris === '1' } : categorie ? { favoris: false } : {}),
   }
 }
 
 const memesParametres = (a: ParametresDirect, b: ParametresDirect) =>
-  a.categorie === b.categorie && a.mode === b.mode
+  a.categorie === b.categorie && a.mode === b.mode && !!a.favoris === !!b.favoris
 
 export function poserParametresDirect(p: ParametresDirect): void {
   // Lecture NON suivie : l'appelant est souvent un effet qui ecrit ici, et un
@@ -208,7 +215,7 @@ export function brancherRouteur(chemin: () => string, navigation: Aller, recherc
     // bouton retour) font foi sur ceux retenus.
     if (t === 'live') {
       const p = lireParametresDirect(recherche())
-      if (p.categorie || p.mode) {
+      if (p.categorie || p.mode || p.favoris !== undefined) {
         const actuel = untrack(parametresDirect)
         const suivant = { ...actuel, ...p }
         if (!memesParametres(actuel, suivant)) poserParametresRetenus(suivant)
@@ -223,7 +230,9 @@ export const cleFiche = (): string | undefined => cleDuChemin(lireChemin(), 'ser
 export const cleFicheFilm = (): string | undefined => cleDuChemin(lireChemin(), 'film')
 
 function cheminOnglet(t: TypeContenu): string {
-  return t === 'live' ? cheminDirect(parametresDirect()) : CHEMIN_ONGLET[t]
+  // L'onglet du rail ramene a la categorie et au mode retenus, pas a la vue
+  // des favorites : celle-ci est un detour depuis l'accueil.
+  return t === 'live' ? cheminDirect({ ...parametresDirect(), favoris: false }) : CHEMIN_ONGLET[t]
 }
 
 export function poserEcran(e: EcranSimple): void {
@@ -356,9 +365,12 @@ export function revenirAuLecteur(): void {
  * chaînes essayées au lieu de quitter le lecteur.
  */
 export function changerDeChaine(e: EntreeCatalogue): void {
+  // Depuis l'ecran du lecteur, on REMPLACE ; depuis ailleurs (mini-lecteur),
+  // c'est une nouvelle entree : Retour ramenera a l'ecran d'avant la lecture.
+  const auLecteur = ecran() === 'lecture'
   batch(() => {
     poserSelection(e)
-    aller(cheminLecture(e.cle), { replace: true })
+    aller(cheminLecture(e.cle), { replace: auLecteur })
   })
 }
 
