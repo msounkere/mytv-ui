@@ -13,23 +13,30 @@ test('Firefox : ni HEVC ni EAC3', async () => {
 })
 
 test('Chrome/Edge materiel : hevc, eac3, ac3', async () => {
-  const c = await detecter({ MediaSource: ms(['hvc1', 'ec-3', 'ac-3']), mediaCapabilities: dec({ supported: true, powerEfficient: true }) })
+  const c = await detecter({ MediaSource: ms(['hvc1', 'ec-3', 'ac-3']), mediaCapabilities: dec({ supported: true, smooth: true, powerEfficient: true }) })
   assert.deepEqual(c, ['hevc', 'eac3', 'ac3'])
   assert.equal(formaterCapacites(c), 'hevc,eac3,ac3')
 })
 
-test('hev1 seul suffit ; sans MediaCapabilities l annonce du codec fait foi', async () => {
-  assert.deepEqual(await detecter({ MediaSource: ms(['hev1']) }), ['hevc'])
+// US-45 CA9 (D23) : `cap=hevc` seulement si decodingInfo repond smooth ET powerEfficient ; sinon jamais.
+test('CA9 hev1 annonce sans MediaCapabilities : PAS de hevc (jamais sans la preuve du decodage materiel)', async () => {
+  assert.deepEqual(await detecter({ MediaSource: ms(['hev1']) }), [])
 })
 
-test('HEVC annonce mais decodage 4K ni fluide ni econome : pas de hevc', async () => {
+test('CA9 HEVC annonce mais decodage 4K ni fluide ni econome, ou l un sans l autre : pas de hevc', async () => {
   assert.deepEqual(await detecter({ MediaSource: ms(['hvc1']), mediaCapabilities: dec({ supported: true, smooth: false, powerEfficient: false }) }), [])
-  assert.deepEqual(await detecter({ MediaSource: ms(['hvc1']), mediaCapabilities: dec({ supported: false, smooth: true }) }), [])
+  assert.deepEqual(await detecter({ MediaSource: ms(['hvc1']), mediaCapabilities: dec({ supported: true, smooth: true, powerEfficient: false }) }), [])
+  assert.deepEqual(await detecter({ MediaSource: ms(['hvc1']), mediaCapabilities: dec({ supported: true, smooth: false, powerEfficient: true }) }), [])
+  assert.deepEqual(await detecter({ MediaSource: ms(['hvc1']), mediaCapabilities: dec({ supported: false, smooth: true, powerEfficient: true }) }), [])
 })
 
-test('API qui leve : on ne plante pas', async () => {
+test('CA9 Firefox 157 Linux (codec annonce, decodage logiciel) : pas de hevc', async () => {
+  assert.deepEqual(await detecter({ MediaSource: ms(['hvc1', 'ac-3']), mediaCapabilities: dec({ supported: true, smooth: true, powerEfficient: false }) }), ['ac3'])
+})
+
+test('API qui leve : on ne plante pas, et pas de hevc', async () => {
   const mc = { decodingInfo: async () => { throw new Error('x') } }
-  assert.deepEqual(await detecter({ MediaSource: ms(['hvc1']), mediaCapabilities: mc }), ['hevc'])
+  assert.deepEqual(await detecter({ MediaSource: ms(['hvc1']), mediaCapabilities: mc }), [])
   assert.deepEqual(await detecter({ MediaSource: { isTypeSupported: () => { throw new Error('x') } } }), [])
 })
 

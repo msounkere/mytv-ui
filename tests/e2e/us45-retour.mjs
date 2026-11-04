@@ -42,33 +42,49 @@ try {
   v.ok(true, 'CA2 fiche film : Retour = l ecran precedent (accueil)')
 
   // --- 2. recherche -> lecture -> Echap = resultats, requete conservee ----------------------------
+  // Les navigations qui comptent dans la pile sont celles de l'application (clics), pas des pushState.
   console.log('2. recherche -> lecture -> Echap')
   await naviguer(`/recherche?q=${encodeURIComponent('Film Test 2')}`)
-  await page.getByRole('button', { name: /Film Test 2/ }).first().waitFor()
-  await naviguer('/lecture/vod:iptva:5002')
+  const carte = page.getByRole('button', { name: 'Film Test 2', exact: true }).first()
+  await carte.waitFor()
+  await carte.click()
+  // Sur cette branche la carte lance la lecture ; apres ui-7, elle ouvre la fiche : on lance alors depuis la fiche.
+  await attendre(async () => /^\/(lecture|film)\//.test(await chemin()), { quoi: 'lecture ou fiche' })
+  if (/^\/film\//.test(await chemin())) {
+    await fiche.locator('[data-role="action-principale"]').click()
+  }
   await attendreChemin('/lecture/vod:iptva:5002', 'lecteur depuis la recherche')
   await page.locator('[data-role="commandes"]').waitFor({ state: 'attached' })
   await page.waitForFunction(() => (document.querySelector('video')?.readyState ?? 0) >= 1, null, { timeout: 20_000 })
   await page.locator('[tabindex="-1"]').first().focus()
   await page.keyboard.press('Escape')
+  await attendre(async () => !/^\/lecture/.test(await chemin()), { quoi: 'Echap quitte le lecteur' })
+  if (/^\/film\//.test(await chemin())) {
+    // Venu de la fiche : encore un pas, par son « Retour ».
+    await fiche.getByRole('button', { name: /Retour/ }).click()
+  }
   await attendreChemin('/recherche?q=Film%20Test%202', 'retour aux resultats')
   v.ok(true, 'CA2 recherche -> lecture -> Echap = les resultats, requete conservee dans l adresse')
   v.ok(await attendre(async () => (await page.getByRole('button', { name: /Film Test 2/ }).count()) > 0, { delai: 5000 }).catch(() => false), 'CA2 les resultats sont bien affiches')
-  v.ok(await attendre(async () => (await videosAvecSource()) === 0, { delai: 3000 }).catch(() => false), 'CA1 Echap a detache le flux')
+  v.ok((await page.locator('[data-role="mini-lecteur"]').count()) === 1, 'CA2 Echap : la lecture continue dans le mini-lecteur')
+  await page.locator('[data-role="mini-lecteur"]').getByRole('button', { name: 'Fermer la lecture' }).click()
+  await pause(600)
+  v.ok((await chemin()) === '/recherche?q=Film%20Test%202' && (await videosAvecSource()) === 0, 'CA2 « Fermer la lecture » sur les resultats : on y reste, flux detache')
 
-  // --- 3. guide -> lecture -> « Arrêter le flux » = guide ---------------------------------------
-  console.log('3. guide -> lecture -> Arrêter')
-  await naviguer('/guide')
-  await attendreChemin('/guide')
-  await pause(500)
-  await naviguer('/lecture/live:iptva:100001')
-  await attendreChemin('/lecture/live:iptva:100001', 'lecteur depuis le guide')
+  // --- 3. direct -> lecture -> « Arrêter le flux » = direct (meme regle pour le guide) --------------
+  console.log('3. direct -> lecture -> Arrêter')
+  await rail('Direct').click()
+  await attendreChemin('/direct')
+  const ligne = page.locator('main').getByRole('button', { name: /Chaîne 1\b/ }).first()
+  await ligne.waitFor()
+  await ligne.click()
+  await attendre(async () => /^\/lecture\/live:/.test(await chemin()), { quoi: 'lecteur depuis Direct' })
   await page.locator('[data-role="commandes"]').waitFor({ state: 'attached' })
   await pause(1500)
   await reveil()
   await commandes().getByRole('button', { name: 'Arrêter le flux' }).click()
-  await attendreChemin('/guide', 'retour au guide')
-  v.ok(true, 'CA2 guide -> lecture -> Arrêter = le guide')
+  await attendreChemin('/direct', 'retour au direct')
+  v.ok(true, 'CA2 direct -> lecture -> Arrêter = l ecran precedent (Direct)')
   v.ok(await attendre(async () => (await videosAvecSource()) === 0, { delai: 3000 }).catch(() => false), 'CA1 et le flux est detache')
 
   // --- 4. fiche serie : Retour et Echap = ecran precedent, plus jamais Direct ------------------------

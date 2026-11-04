@@ -16,22 +16,25 @@ import EtiquettePays from '../components/EtiquettePays'
 import Icone from '../components/Icone'
 import ResumeContenu from '../components/ResumeContenu'
 import FaitsContenu from '../components/FaitsContenu'
+import BarreProgression from '../components/BarreProgression'
+import MenuContextuel, { type EntreeMenu } from '../components/MenuContextuel'
 import { cibleDe, dureeLongue, useDetails } from '../lib/details'
 import { audioLisible, separerPrefixe } from '../lib/libelles'
 import { versErreurLecteur, type SaisonApi } from '../lib/api'
 import { ErreurLecteur, LIBELLE_COUCHE } from '../lib/errors'
-import { progressions } from '../lib/preferences'
-import { FRAICHEUR, cles, requete, requeteClefee } from '../lib/requetes'
-import { listeAVoir } from '../lib/a-voir'
+import { associerSerie, noterPosition, oublierReprise } from '../lib/preferences'
+import { FRAICHEUR, cles, invaliderReprises, requete, requeteClefee } from '../lib/requetes'
+import { ajouterAVoir, listeAVoir, modifierOptionsAVoir, retirerAVoir } from '../lib/a-voir'
 import { estBureau, estMobile } from '../lib/gabarit'
-import { BadgePret, BoutonAVoir, LigneDisponibilite, useAVoirCles } from '../components/BoutonAVoir'
+import { BoutonAVoir, useAVoirCles } from '../components/BoutonAVoir'
 import { estPret } from '../lib/a-voir-serveur'
 import { useDisponibilite } from '../lib/disponibilite'
-import { chargerSaisons, lireSaisons } from '../lib/saisons'
-import { prochainAVoir } from '../lib/episodes-suivants'
+import { chargerSaisons } from '../lib/saisons'
 import { lectureEnCours } from '../etat'
-import { profondeurHistorique } from '../lib/sortie-lecteur'
-import type { EntreeCatalogue } from '../lib/db'
+import { actionSerie, etatLecture, partVue, repere, resteLisible, type EpisodeFiche } from '../lib/fiche-regles'
+import { BoutonMenu, LigneSonde, propsChip } from './FicheFilm'
+import { ChipPreparation, PART_VUE, emettreToast } from '../lib/ui7-contrat'
+import { db, type EntreeCatalogue, type Reprise } from '../lib/db'
 
 // Une serie n est pas une entree de plus dans une liste : c est un index. Le
 // relais renvoie les episodes groupes par saison, parfois 268 dans une seule
@@ -47,10 +50,18 @@ import type { EntreeCatalogue } from '../lib/db'
 // (details demandes a l'ouverture de la fiche, US-28) ; synopsis, vignette et date
 // de chaque EPISODE viennent des saisons. Tout champ absent est simplement masque.
 //
-// US-43 : « À voir » sur la serie (un seul element) et sur chaque episode (la
-// serie « a partir de » cet episode, CA1) ; badge « Prêt » sur les episodes que
-// le serveur tient (CA3) ; sonde du prochain episode a regarder, a l'ouverture,
-// hors lecture (CA5).
+// US-43 : « Ma liste » sur la serie (un seul element) et, par le menu de chaque
+// ligne, « Ma liste a partir d'ici » (la serie « a partir de » cet episode, CA1) ;
+// chip « Prêt » sur les episodes que le serveur tient (CA3) ; sonde du prochain
+// episode a regarder, a l'ouverture, UNE fois par fiche, hors lecture (CA5).
+//
+// US-45 CA3/CA4 (modele cible, rapport C §5.3-5.5) : action principale dans
+// l'en-tete (`Lire S01E01` / `Reprendre S01E03 · 23 min` / `Episode suivant
+// S01E04`) avec une barre de progression ; menu « ⋯ » sur CHAQUE ligne (Lire,
+// Marquer comme vu / non vu, Ma liste a partir d'ici / Ne plus partir d'ici) et
+// sur la saison (marquer la saison vue / non vue) ; un seul bouton Ma liste dans
+// l'en-tete, « ✓ Dans ma liste · des S01E03 ▾ » quand elle y est ; aucun
+// identifiant interne visible ; tout tient dans 390 px (`minmax(0,1fr)`).
 
 interface PisteFfprobe {
   codec_name?: string
@@ -109,6 +120,7 @@ interface FicheBrute {
 
 interface Episode {
   cle: string
+  saison: number
   numero: number
   titre: string
   /** Libelle complet transmis au lecteur, reconnaissable dans l historique. */
@@ -136,9 +148,6 @@ const HAUTEUR_LIGNE = 76
 const marge = () => (estBureau() ? 16 : estMobile() ? 12 : 12)
 /** 44 px au doigt (cahier des charges, §6) ; le bureau garde ses 5 px de rembourrage. */
 const hauteurCible = () => (estMobile() ? '44px' : undefined)
-
-/** Meme seuil que `reprisePour` : au-dela, l episode compte comme vu. */
-const SEUIL_VU = 0.95
 
 export default function FicheSerie(props: {
   serie: EntreeCatalogue
@@ -228,13 +237,12 @@ export default function FicheSerie(props: {
     return dispo[0]?.numero ?? null
   })
 
-  const episodes = createMemo<Episode[]>(() => {
+  /** Episodes d'UNE saison, dans la forme d'affichage. */
+  function episodesDe(saison: number): Episode[] {
     const f = fiche()
-    const saison = saisonActive()
-    if (!f?.episodes || saison === null) return []
+    if (!f?.episodes) return []
     const bruts = f.episodes[String(saison)] ?? []
     const nomBrutSerie = f.info?.name ?? props.serie.nom
-
     return bruts
       .map((e, index): Episode | null => {
         if (!e.id) return null
@@ -246,6 +254,7 @@ export default function FicheSerie(props: {
           // (`series:iptva:77123.mkv`). Il n est pas au catalogue ; l historique
           // et les reprises le rangent sous ce nom.
           cle: `series:${e.id}`,
+          saison,
           numero,
           titre: titreLisible(e.title, nomBrutSerie, numero),
           nom: `${titreSerie()} — ${repere(saison, numero)}`,
@@ -259,54 +268,52 @@ export default function FicheSerie(props: {
         }
       })
       .filter((e): e is Episode => e !== null)
-  })
-
-  // Avancement memorise : ce qui a ete regarde se voit sans rouvrir le flux.
-  // Clefe par serie et par saison, pas par liste d'identifiants : 268 cles
-  // concatenees ne font pas une cle de cache lisible. Perime a chaque position
-  // enregistree, donc les pastilles « Vu » suivent la lecture.
-  const [avancement] = requeteClefee(
-    (s: { saison: number; episodes: string[] }) => cles.progressions(props.serie.cle, s.saison),
-    () => {
-      const saison = saisonActive()
-      return saison === null ? undefined : { saison, episodes: episodes().map((e) => e.cle) }
-    },
-    (s) => progressions(s.episodes),
-    { fraicheur: FRAICHEUR.geste },
-  )
-
-  const etatDe = (cle: string): 'vu' | 'encours' | null => {
-    const p = avancement()?.get(cle)
-    if (p === undefined) return null
-    return p >= SEUIL_VU ? 'vu' : p > 0 ? 'encours' : null
   }
 
-  // --- « À voir » (US-43) -------------------------------------------------------
+  const episodes = createMemo<Episode[]>(() => {
+    const saison = saisonActive()
+    return saison === null ? [] : episodesDe(saison)
+  })
+
+  /** TOUS les episodes, saisons dans l'ordre : l'action principale, le prochain a voir et la sonde les lisent. */
+  const tous = createMemo<Episode[]>(() => saisons().flatMap((s) => episodesDe(s.numero)))
+
+  // Positions memorisees de TOUS les episodes, en une lecture ; perimee a chaque
+  // geste (cle sous `reprises`), donc les pastilles « Vu » suivent la lecture.
+  const [reprises] = requeteClefee<{ serie: string; cles: string[] }, Map<string, Reprise>>(
+    (s) => [...cles.reprises, 'fiche-serie', s.serie, s.cles.length],
+    () => (tous().length ? { serie: props.serie.cle, cles: tous().map((e) => e.cle) } : undefined),
+    async (s) => new Map((await db.reprises.bulkGet(s.cles)).filter((r): r is Reprise => !!r).map((r) => [r.cle, r])),
+    { fraicheur: FRAICHEUR.geste, suspendre: false },
+  )
+  const repriseDe = (cle: string) => reprises()?.get(cle)
+  const etatDe = (cle: string) => etatLecture(repriseDe(cle), PART_VUE)
+
+  // --- « Ma liste » (US-43, US-45 CA4) ---------------------------------------------
   const aVoir = useAVoirCles()
   const dansAVoir = () => aVoir()?.has(props.serie.cle) ?? false
-  // Point de depart retenu pour cette serie : la ligne de l'episode qui le porte le dit.
-  const [lignesAVoir] = requete(cles.aVoir, listeAVoir, { fraicheur: FRAICHEUR.geste })
-  const aVoirDepuis = () => lignesAVoir()?.find((l) => l.cle === props.serie.cle)?.depuis
+  // Point de depart retenu pour cette serie, et etat de preparation (chip).
+  const [lignesAVoir] = requete([...cles.aVoir, 'fiche'], listeAVoir, { fraicheur: FRAICHEUR.geste, suspendre: false })
+  const ligneSerie = () => lignesAVoir()?.find((l) => l.cle === props.serie.cle)
+  const aVoirDepuis = () => ligneSerie()?.depuis
+  const preparation = () => {
+    const p = ligneSerie()?.preparation
+    const base = propsChip(p as Record<string, unknown> | undefined)
+    if (!base) return undefined
+    const eps = p?.episodes ?? []
+    const premier = eps[0]
+    if (premier) return { ...base, etat: premier.etat, serie: { saison: premier.saison, episode: premier.episode, suivant: eps[1]?.etat } }
+    return base
+  }
 
-  // Le prochain episode a regarder (premier non vu de la saison affichee) : c'est
-  // lui que la sonde mesure, a l'ouverture de la fiche et hors lecture (CA5).
-  const [saisonsBrutes] = requeteClefee<string, SaisonApi[]>(
-    (id) => cles.saisons(id),
-    () => (fiche() ? props.serie.idServeur : undefined),
-    lireSaisons,
-    { fraicheur: FRAICHEUR.relais, peremption: FRAICHEUR.relais, suspendre: false },
-  )
-  const prochain = createMemo(() => {
-    const s = saisonsBrutes()
-    const saison = saisonActive()
-    if (!s || saison === null) return undefined
-    const avancees = avancement() ?? new Map<string, number>()
-    return prochainAVoir(s.filter((x) => x.numero === saison), props.serie.nom, avancees, SEUIL_VU)
-  })
+  // L'ACTION PRINCIPALE : l'episode a lire (entame, sinon le prochain non vu). C'est
+  // lui que la sonde mesure, a l'ouverture, UNE fois par fiche (pas par onglet : C17).
+  const action = createMemo(() => actionSerie(tous() as EpisodeFiche[], reprises() ?? new Map(), PART_VUE, aVoirDepuis()))
+  const episodeAction = () => tous().find((e) => e.cle === action()?.cle)
   const disponibilite = useDisponibilite(
     () => {
-      const p = prochain()
-      return p ? p.cle.slice('series:'.length) : undefined
+      const a = action()
+      return a && a.motif !== 'revoir' ? a.cle.slice('series:'.length) : undefined
     },
     () => lectureEnCours() === null,
   )
@@ -314,13 +321,11 @@ export default function FicheSerie(props: {
   // Retour et Echap : l'ECRAN PRECEDENT (pile d'historique, US-45 CA2), comme la
   // fiche film ; sans pile (lien direct), le repli de la coque. Constat (B4) : la
   // fiche renvoyait vers l'onglet Parcours retenu, c'est-a-dire Direct.
-  function retour() {
-    if (profondeurHistorique() > 0) history.back()
-    else props.surRetour()
-  }
+  const retour = () => props.surRetour()
+  const [menu, poserMenu] = createSignal<{ x: number; y: number; entrees: EntreeMenu[] } | null>(null)
   onMount(() => {
     const auClavier = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
+      if (e.key !== 'Escape' || menu()) return
       e.preventDefault()
       retour()
     }
@@ -331,8 +336,8 @@ export default function FicheSerie(props: {
   function lire(e: Episode) {
     if (!e.url) return
     // L'épisode d'après alimente le décompte de fin ; absent sur le dernier
-    // de la saison, auquel cas le lecteur n'arme simplement rien.
-    const liste = episodes()
+    // de la saison, auquel cas le lecteur relit les saisons.
+    const liste = episodesDe(e.saison)
     const apres = liste[liste.findIndex((x) => x.cle === e.cle) + 1]
     props.surLire({
       cle: e.cle, nom: e.nom, url: e.url, extension: e.extension,
@@ -343,38 +348,119 @@ export default function FicheSerie(props: {
     })
   }
 
+  // --- Gestes « vu » et « Ma liste », tous annulables par un toast ------------------
+  const dureeDe = (e: Episode) => e.dureeSecondes || repriseDe(e.cle)?.duree || details()?.dureeSecondes || 1
+  // L'invalidation des reprises est regroupee (30 s, pour le lecteur qui note
+  // toutes les 5 s) : un geste explicite, lui, doit se voir tout de suite.
+  const restaurer = async (avant: Map<string, Reprise | undefined>) => {
+    for (const [cle, r] of avant) await (r ? noterPosition(cle, r.position, r.duree) : oublierReprise(cle))
+    await invaliderReprises()
+  }
+  async function marquerVus(liste: Episode[], vu: boolean, message: string) {
+    const avant = new Map(liste.map((e) => [e.cle, repriseDe(e.cle)]))
+    for (const e of liste) {
+      associerSerie(e.cle, props.serie.cle)
+      if (vu) await noterPosition(e.cle, dureeDe(e), dureeDe(e))
+      else await oublierReprise(e.cle)
+    }
+    await invaliderReprises()
+    emettreToast({ message, action: () => void restaurer(avant) })
+  }
+  const marquerVu = (e: Episode) => marquerVus([e], true, `✓ ${repere(e.saison, e.numero)} marqué comme vu`)
+  const marquerNonVu = (e: Episode) => marquerVus([e], false, `${repere(e.saison, e.numero)} marqué comme non vu`)
+  const marquerSaison = (vue: boolean) => {
+    const s = saisonActive()
+    if (s === null) return
+    void marquerVus(episodes(), vue, vue ? `✓ Saison ${s} marquée comme vue` : `Saison ${s} marquée comme non vue`)
+  }
+  const estPointDeDepart = (e: Episode) => dansAVoir() && aVoirDepuis()?.saison === e.saison && aVoirDepuis()?.episode === e.numero
+  async function partirDe(e: Episode) {
+    const avantPresent = dansAVoir()
+    const avantDepuis = aVoirDepuis()
+    await ajouterAVoir(props.serie.cle, { depuis: { saison: e.saison, episode: e.numero } })
+    emettreToast({
+      message: `✓ Ajouté à Ma liste · dès ${repere(e.saison, e.numero)}`,
+      action: () => void (avantPresent ? modifierOptionsAVoir(props.serie.cle, { depuis: avantDepuis }) : retirerAVoir(props.serie.cle)),
+    })
+  }
+  async function nePlusPartirDe() {
+    const avant = aVoirDepuis()
+    await modifierOptionsAVoir(props.serie.cle, { depuis: undefined })
+    emettreToast({ message: 'Point de départ retiré : à partir de l’épisode entamé', action: () => void modifierOptionsAVoir(props.serie.cle, { depuis: avant }) })
+  }
+  async function retirerDeMaListe() {
+    const avant = ligneSerie()
+    await retirerAVoir(props.serie.cle)
+    emettreToast({ message: 'Retiré de Ma liste', action: () => void ajouterAVoir(props.serie.cle, { depuis: avant?.depuis, episodesAvance: avant?.episodesAvance }) })
+  }
+
+  const menuEpisode = (e: Episode): EntreeMenu[] => [
+    { icone: 'play_arrow', libelle: 'Lire', action: () => lire(e) },
+    etatDe(e.cle) === 'vu'
+      ? { icone: 'check_circle', libelle: 'Marquer comme non vu', action: () => void marquerNonVu(e) }
+      : { icone: 'check', libelle: 'Marquer comme vu', action: () => void marquerVu(e) },
+    estPointDeDepart(e)
+      ? { icone: 'close', libelle: 'Ne plus partir d’ici', action: () => void nePlusPartirDe() }
+      : { icone: 'add', libelle: 'Ma liste à partir d’ici', action: () => void partirDe(e) },
+  ]
+  const menuSaison = (): EntreeMenu[] => [
+    { icone: 'check', libelle: 'Marquer la saison comme vue', action: () => marquerSaison(true) },
+    { icone: 'check_circle', libelle: 'Marquer la saison comme non vue', action: () => marquerSaison(false) },
+  ]
+  /** « ✓ Dans ma liste · dès S01E03 ▾ » : changer le point de depart, ou retirer. */
+  const menuMaListe = (): EntreeMenu[] => [
+    ...(aVoirDepuis() ? [{ icone: 'undo', libelle: 'À partir de l’épisode entamé', action: () => void nePlusPartirDe() }] : []),
+    ...episodes().map((e) => ({ icone: 'play_arrow', libelle: `À partir de ${repere(e.saison, e.numero)}`, action: () => void partirDe(e) })),
+    { icone: 'close', libelle: 'Retirer de Ma liste', action: () => void retirerDeMaListe() },
+  ]
+  const ouvrirMenu = (p: { x: number; y: number }, entrees: EntreeMenu[]) => poserMenu({ ...p, entrees })
+
   // Une ligne = le bouton de lecture ET, a cote (jamais dedans : un bouton dans un
-  // bouton n'est ni valide ni accessible), le bouton « À voir à partir d'ici ».
-  const Ligne = (e: Episode) => (
-    <div data-role="episode" style={{ display: 'flex', 'align-items': 'stretch', height: '100%', 'border-bottom': '1px solid var(--line)' }}>
+  // bouton n'est ni valide ni accessible), le menu « ⋯ » de l'episode.
+  const Ligne = (e: Episode) => {
+    const r = () => repriseDe(e.cle)
+    const etat = () => etatDe(e.cle)
+    const pret = () => estPret(e.cle)
+    return (
+    <div data-role="episode" data-cle={e.cle} style={{ display: 'flex', 'align-items': 'stretch', height: '100%', 'min-width': 0, 'border-bottom': '1px solid var(--line)' }}>
     <button
       onClick={() => lire(e)}
+      aria-label={`Lire ${repere(e.saison, e.numero)} · ${e.titre}`}
       title={`${e.titre}${e.dureeSecondes ? ` · ${dureeLisible(e.dureeSecondes)}` : ''}${e.synopsis ? `\n${e.synopsis}` : ''}`}
       style={{
-        display: 'flex', 'align-items': 'center', gap: estMobile() ? '10px' : '12px',
-        flex: 1, 'min-width': 0, height: '100%', padding: estMobile() ? '8px 12px' : '8px 14px', 'text-align': 'left',
+        display: 'flex', 'align-items': 'center', gap: estMobile() ? '8px' : '12px',
+        flex: 1, 'min-width': 0, height: '100%', padding: estMobile() ? '8px 0 8px 12px' : '8px 0 8px 14px', 'text-align': 'left',
         'border-radius': 0,
-        opacity: etatDe(e.cle) === 'vu' ? '0.62' : '1',
+        opacity: etat() === 'vu' ? '0.62' : '1',
       }}
     >
-      <SubstitutLogo nom={e.titre} src={e.vignette} taille={estMobile() ? 48 : 56} />
+      <SubstitutLogo nom={e.titre} src={e.vignette} taille={estMobile() ? 44 : 56} />
 
-      <span class="num tertiaire" style={{ flex: '0 0 auto', width: '34px', 'font-size': '13px' }}>
+      <span class="num tertiaire" style={{ flex: '0 0 auto', width: estMobile() ? '30px' : '34px', 'font-size': '13px' }}>
         {`E${String(e.numero).padStart(2, '0')}`}
       </span>
 
-      <span style={{ flex: 1, 'min-width': 0 }}>
+      <span style={{ flex: 1, 'min-width': 0, display: 'grid', gap: '2px' }}>
         <span class="tronque" style={{ display: 'block', 'font-weight': 'var(--w-strong)' }}>{e.titre}</span>
         <span
-          class="secondaire tronque"
-          style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'font-size': '12px' }}
+          class="secondaire"
+          style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'font-size': '12px', 'min-width': 0 }}
         >
+          <Show when={etat() === 'vu'}>
+            <span data-role="etat-episode" data-etat="vu" style={{ color: 'var(--ok)', 'white-space': 'nowrap' }}>✓ Vu</span>
+          </Show>
+          <Show when={etat() === 'entame'}>
+            <span data-role="etat-episode" data-etat="entame" style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'min-width': 0, flex: 1 }}>
+              <BarreProgression part={partVue(r())} largeur="min(120px, 40%)" />
+              <span class="num" style={{ 'white-space': 'nowrap', color: 'var(--acc-fg)' }}>{resteLisible(r()!.duree - r()!.position)}</span>
+            </span>
+          </Show>
+          <Show when={estPointDeDepart(e)}>
+            <span data-role="point-de-depart" style={{ 'white-space': 'nowrap', color: 'var(--acc-fg)' }}>Point de départ</span>
+          </Show>
           {/* Mobile : la date de diffusion cède la place — 390 px portent le
               titre, l'état et la durée, pas un troisième détail. */}
-          <Show when={e.diffuseLe && !estMobile()}>{(d) => <span class="num">{d()}</span>}</Show>
-          <Show when={etatDe(e.cle) === 'encours'}>
-            <span style={{ color: 'var(--acc-fg)' }}>Repris en cours</span>
-          </Show>
+          <Show when={e.diffuseLe && !estMobile()}>{(d) => <span class="num tronque">{d()}</span>}</Show>
           <Show when={e.codecAudioMuet}>
             {(c) => (
               // Le navigateur n a pas de decodeur EAC3/AC3/DTS : on le dit avant
@@ -383,7 +469,7 @@ export default function FicheSerie(props: {
                 class="num"
                 title="Piste audio non decodee par le navigateur — lisible via la diffusion vers le televiseur"
                 style={{
-                  padding: '0 5px', 'border-radius': 'var(--r-2xs)',
+                  padding: '0 5px', 'border-radius': 'var(--r-2xs)', 'white-space': 'nowrap',
                   color: 'var(--cod)', background: 'var(--cod-bg)',
                   border: '1px solid var(--cod)', 'font-size': '11px',
                 }}
@@ -393,48 +479,33 @@ export default function FicheSerie(props: {
             )}
           </Show>
         </span>
-        <Show when={e.synopsis}>
-          {(r) => (
-            <span data-role="episode-resume" class="tertiaire tronque" style={{ display: 'block', 'font-size': '12px' }}>{r()}</span>
+        <Show when={e.synopsis && !estMobile()}>
+          {(s) => (
+            <span data-role="episode-resume" class="tertiaire tronque" style={{ display: 'block', 'font-size': '12px' }}>{s()}</span>
           )}
         </Show>
       </span>
 
-      <Show when={etatDe(e.cle) === 'vu'}>
-        <span
-          style={{
-            flex: '0 0 auto', padding: '0 6px', 'font-size': '11px',
-            color: 'var(--ok)', border: '1px solid var(--ok)', 'border-radius': 'var(--r-2xs)',
-          }}
-        >
-          Vu
+      {/* Colonne de droite : le chip « Prêt » prime sur la duree au telephone (C15). */}
+      <Show when={pret()}>
+        <span style={{ flex: '0 0 auto' }}><ChipPreparation etat="pret" /></span>
+      </Show>
+      <Show when={!pret() || !estMobile()}>
+        <span class="num secondaire" style={{ flex: '0 0 auto', 'font-size': '13px', 'padding-right': '4px' }}>
+          {dureeLisible(e.dureeSecondes) ?? '—'}
         </span>
       </Show>
-
-      <BadgePret visible={estPret(e.cle)} />
-
-      <span class="num secondaire" style={{ flex: '0 0 auto', 'font-size': '13px' }}>
-        {dureeLisible(e.dureeSecondes) ?? '—'}
-      </span>
     </button>
 
-      {/* Un episode ajoute SA SERIE, « a partir de » lui : jamais un element par episode. */}
-      <Show when={!estMobile()}>
-        <span style={{ flex: '0 0 auto', display: 'flex', 'align-items': 'center', padding: '0 12px 0 4px' }}>
-          <BoutonAVoir
-            cle={props.serie.cle}
-            options={{ depuis: { saison: saisonActive() ?? 0, episode: e.numero } }}
-            present={dansAVoir() && aVoirDepuis()?.saison === saisonActive() && aVoirDepuis()?.episode === e.numero}
-            libelleAjout="À voir à partir d’ici"
-            compact
-          />
-        </span>
-      </Show>
+      <span style={{ flex: '0 0 auto', display: 'flex', 'align-items': 'center', padding: estMobile() ? '0 4px 0 0' : '0 8px 0 2px' }}>
+        <BoutonMenu compact libelle={`Options de l’épisode ${repere(e.saison, e.numero)}`} surOuvrir={(p) => ouvrirMenu(p, menuEpisode(e))} />
+      </span>
     </div>
-  )
+    )
+  }
 
   return (
-    <div style={{ display: 'grid', 'grid-template-rows': 'auto 1fr', height: '100%', 'min-height': 0 }}>
+    <div data-role="fiche-serie" style={{ display: 'grid', 'grid-template-rows': 'auto 1fr', height: '100%', 'min-height': 0 }}>
       <nav
         style={{
           display: 'flex', 'align-items': 'center', gap: '10px',
@@ -503,10 +574,13 @@ export default function FicheSerie(props: {
 
         <Match when={fiche()}>
           {(_f) => (
-            <div style={{ display: 'grid', 'grid-template-rows': 'auto auto 1fr', 'min-height': 0 }}>
+            <div style={{ display: 'grid', 'grid-template-rows': 'auto auto minmax(0, 1fr)', 'min-height': 0, 'min-width': 0 }}>
               <header
+                data-role="entete-serie"
                 style={{
-                  display: 'grid', 'grid-template-columns': 'auto 1fr',
+                  // `minmax(0,1fr)` et non `1fr` : une piste `1fr` prend la largeur
+                  // minimale de son contenu (boutons insecables) et depassait les 390 px (D6).
+                  display: 'grid', 'grid-template-columns': 'auto minmax(0, 1fr)', 'min-width': 0,
                   gap: estMobile() ? '12px' : '16px',
                   padding: estBureau() ? '14px 16px' : `12px ${marge()}px`,
                   'border-bottom': '1px solid var(--line)',
@@ -517,16 +591,20 @@ export default function FicheSerie(props: {
                 <SubstitutLogo nom={titreSerie()} src={jaquette()} taille={estMobile() ? 84 : 120} affiche />
 
                 <div style={{ 'min-width': 0 }}>
-                  <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+                  <div style={{ display: 'flex', 'align-items': 'center', 'flex-wrap': 'wrap', gap: '8px', 'min-width': 0 }}>
                     <EtiquettePays pays={props.serie.pays} />
-                    <h1 class="tronque" title={titreSerie()}>{titreSerie()}</h1>
+                    <h1 class="tronque" title={titreSerie()} style={{ 'min-width': 0 }}>{titreSerie()}</h1>
+                    <Show when={preparation()}>{(p) => <ChipPreparation {...p()} />}</Show>
+                    <Show when={!preparation() && episodeAction() && estPret(episodeAction()!.cle)}>
+                      <ChipPreparation etat="pret" serie={{ saison: episodeAction()!.saison, episode: episodeAction()!.numero }} />
+                    </Show>
                   </div>
 
-                  <p class="secondaire" data-role="meta" style={{ margin: '4px 0 0', 'font-size': '13px' }}>
+                  <p class="secondaire tronque" data-role="meta" style={{ margin: '4px 0 0', 'font-size': '13px' }}>
                     <span class="num">{saisons().length}</span> saison{saisons().length > 1 ? 's' : ''}
                     {' · '}
                     <span class="num">{totalEpisodes()}</span> épisodes
-                    <Show when={details()?.genre}>{(g) => <> · <span class="tronque">{g()}</span></>}</Show>
+                    <Show when={details()?.genre}>{(g) => <> · {g()}</>}</Show>
                     <Show when={details()?.annee ?? (props.serie.annee ? String(props.serie.annee) : undefined)}>
                       {(a) => <> · <span class="num">{a()}</span></>}
                     </Show>
@@ -538,31 +616,67 @@ export default function FicheSerie(props: {
                     </Show>
                   </p>
 
+                  {/* Episode entame : la barre sous le titre, comme sur la fiche film. */}
+                  <Show when={action()?.motif === 'reprendre'}>
+                    <div data-role="reprise-fiche" style={{ display: 'flex', 'align-items': 'center', gap: '10px', 'max-width': '420px', 'margin-top': '8px' }}>
+                      <BarreProgression part={action()!.part ?? 0} />
+                      <span class="num secondaire" style={{ 'font-size': '12px', 'white-space': 'nowrap' }}>{repere(episodeAction()!.saison, episodeAction()!.numero)}</span>
+                    </div>
+                  </Show>
+
                   <ResumeContenu
                     details={details()}
                     erreur={details.error}
                     attendu={cibleDe(props.serie) !== undefined}
                     surReessayer={() => void relancerDetails()}
+                    lignes={estMobile() ? 3 : undefined}
                     style={{ margin: '8px 0 0', 'max-height': '7.2em', overflow: 'auto', 'font-size': '13px', color: 'var(--fg2)' }}
                   />
 
-                  <Show when={prochain()}>
-                    {(p) => (
-                      <div style={{ 'margin-top': '8px' }}>
-                        <LigneDisponibilite
-                          disponibilite={disponibilite()}
-                          cle={props.serie.cle}
-                          options={{ depuis: { saison: p().saison, episode: p().numero } }}
-                          present={dansAVoir()}
-                          prefixe={repere(p().saison, p().numero)}
-                        />
-                      </div>
-                    )}
+                  {/* La sonde : hors liste et tant que rien n'est pret (C10) ; une fois par fiche (C17). */}
+                  <Show when={episodeAction() && !dansAVoir() && !estPret(episodeAction()!.cle)}>
+                    <div style={{ 'margin-top': '8px' }}>
+                      <LigneSonde disponibilite={disponibilite()} prefixe={repere(episodeAction()!.saison, episodeAction()!.numero)} />
+                    </div>
                   </Show>
 
-                  <div style={{ 'margin-top': '8px', display: 'flex', 'flex-wrap': 'wrap', 'align-items': 'center', gap: '8px 16px' }}>
-                    <BoutonAVoir cle={props.serie.cle} present={dansAVoir()} />
-                    <FaitsContenu details={details()} />
+                  <div data-role="actions-fiche" style={{ 'margin-top': '8px', display: 'flex', 'flex-wrap': 'wrap', 'align-items': 'center', gap: '8px' }}>
+                    <Show when={action() && episodeAction()}>
+                      <button
+                        data-role="action-principale"
+                        onClick={() => lire(episodeAction()!)}
+                        style={{
+                          display: 'flex', 'align-items': 'center', gap: '6px', 'max-width': '100%',
+                          height: estMobile() ? '44px' : '36px', padding: '0 14px 0 10px', 'border-radius': 'var(--r-btn-sm)',
+                          'font-weight': 'var(--w-strong)', background: 'var(--acc)', color: '#fff', border: '1px solid transparent', cursor: 'pointer',
+                        }}
+                      >
+                        <Icone nom={action()!.icone} taille={18} plein />
+                        <span class="tronque">{action()!.libelle}</span>
+                      </button>
+                    </Show>
+                    <Show
+                      when={dansAVoir()}
+                      fallback={<BoutonAVoir cle={props.serie.cle} present={false} />}
+                    >
+                      <button
+                        type="button"
+                        data-role="a-voir"
+                        aria-pressed="true"
+                        aria-haspopup="menu"
+                        aria-label={`Dans ma liste${aVoirDepuis() ? ` · dès ${repere(aVoirDepuis()!.saison, aVoirDepuis()!.episode)}` : ''} — changer le point de départ ou retirer`}
+                        onClick={(ev) => { const r = ev.currentTarget.getBoundingClientRect(); ouvrirMenu({ x: Math.max(12, r.left), y: r.bottom + 6 }, menuMaListe()) }}
+                        style={{
+                          display: 'flex', 'align-items': 'center', gap: '6px', 'max-width': '100%',
+                          height: estMobile() ? '44px' : '36px', padding: '0 10px', 'border-radius': 'var(--r-btn-sm)',
+                          'font-weight': 'var(--w-strong)', border: '1px solid var(--acc)', color: 'var(--acc-fg)', cursor: 'pointer',
+                        }}
+                      >
+                        <Icone nom="check" taille={18} plein />
+                        <span class="tronque">Dans ma liste{aVoirDepuis() ? ` · dès ${repere(aVoirDepuis()!.saison, aVoirDepuis()!.episode)}` : ''}</span>
+                        <Icone nom="expand_more" taille={16} />
+                      </button>
+                    </Show>
                     <Show when={details()?.bandeAnnonce}>
                       {(href) => (
                         <a
@@ -582,15 +696,17 @@ export default function FicheSerie(props: {
                       )}
                     </Show>
                   </div>
+                  <FaitsContenu details={details()} />
                 </div>
               </header>
 
+              <div style={{ display: 'flex', 'align-items': 'center', 'min-width': 0, 'border-bottom': '1px solid var(--line)' }}>
               <div
                 role="tablist"
                 aria-label="Saisons"
                 style={{
-                  display: 'flex', gap: '2px', padding: `8px ${marge()}px`,
-                  'overflow-x': 'auto', 'border-bottom': '1px solid var(--line)',
+                  flex: 1, 'min-width': 0, display: 'flex', gap: '2px', padding: `8px ${marge()}px`,
+                  'overflow-x': 'auto',
                   // Onglets défilants : sans cela, vingt saisons étirent la page.
                   'scrollbar-width': estMobile() ? 'none' : undefined,
                   '-webkit-overflow-scrolling': 'touch',
@@ -615,8 +731,13 @@ export default function FicheSerie(props: {
                   )}
                 </For>
               </div>
+                {/* Menu de la saison affichee : marquer la saison vue / non vue (CA4). */}
+                <span style={{ flex: '0 0 auto', padding: `0 ${marge()}px 0 4px` }}>
+                  <BoutonMenu compact libelle={`Options de la saison ${saisonActive() ?? ''}`} surOuvrir={(p) => ouvrirMenu(p, menuSaison())} />
+                </span>
+              </div>
 
-              <section style={{ 'min-height': 0 }}>
+              <section style={{ 'min-height': 0, 'min-width': 0 }}>
                 <Show
                   when={episodes().length > SEUIL_VIRTUEL}
                   fallback={
@@ -642,6 +763,10 @@ export default function FicheSerie(props: {
           )}
         </Match>
       </Switch>
+
+      <Show when={menu()}>
+        {(m) => <MenuContextuel x={m().x} y={m().y} entrees={m().entrees} surFermer={() => poserMenu(null)} />}
+      </Show>
     </div>
   )
 }
@@ -690,10 +815,6 @@ function titreLisible(brut: string | undefined, nomSerie: string, numero: number
   t = t.replace(/^[\s\-–—:]+/, '')
   t = t.replace(/^S\d{1,3}\s*E\d{1,4}\b[\s\-–—:]*/i, '').trim()
   return t.length > 0 ? t : `Episode ${numero}`
-}
-
-function repere(saison: number, episode: number): string {
-  return `S${String(saison).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
 }
 
 /** mm:ss sous l heure, « 1 h 08 » au-dela — aligne grace a `.num`. */

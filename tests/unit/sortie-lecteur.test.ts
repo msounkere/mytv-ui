@@ -23,8 +23,10 @@ test('CA2 pile vide sans fiche possible : l accueil', () => {
   assert.deepEqual(destinationRetour(-1, undefined), { action: 'accueil', chemin: '/' })
 })
 
-test('CA2 l etat de navigation ne navigue plus : la destination « apres lecture » est le chemin courant', () => {
-  // Hors navigateur, le chemin courant est la racine : la valeur importe peu, c'est l'absence de /films, /direct, /series qui compte.
-  for (const sel of [{ type: 'vod' as const }, { type: 'live' as const }, { type: 'series' as const, serie: 'x' }, null, undefined])
-    assert.ok(!['/films', '/direct', '/series'].includes(cheminApresLecture(sel)))
+test('CA2 le repli « apres lecture » de l etat : la fiche, sinon l accueil -- plus jamais une liste', () => {
+  assert.equal(cheminApresLecture({ type: 'vod', cle: 'vod:iptva:5' }), '/film/vod:iptva:5')
+  assert.equal(cheminApresLecture({ type: 'series', cle: 'series:iptva:77.mkv', serie: 'series:iptva:s7' }), '/serie/series:iptva:s7')
+  assert.equal(cheminApresLecture({ type: 'live', cle: 'live:iptva:1' }), '/')
+  assert.equal(cheminApresLecture({ type: 'vod' }), '/')
+  assert.equal(cheminApresLecture(null), '/')
 })

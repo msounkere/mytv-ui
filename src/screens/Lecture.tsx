@@ -13,13 +13,18 @@ import PanneauInfos from '../components/PanneauInfos'
 import MiniLecteur, { MARGE_MINI, hauteurMini } from '../components/MiniLecteur'
 import Notification, { type NotificationLecteur } from '../components/Notification'
 import {
-  BandeauReconnexion, DialogueReprise, ProchainContenu, ProchainEpisode, SEUIL_REPRISE,
+  BandeauReconnexion, ProchainContenu, ProchainEpisode, SEUIL_REPRISE,
 } from '../components/CalquesLecture'
 import { prochainAVoirApres, type AVoirJoint } from '../lib/a-voir'
+import { episodeApres } from '../lib/episodes-suivants'
+import { chargerSaisons } from '../lib/saisons'
+import { idServeurDeCle } from '../lib/identifiants'
+import { donnee } from './lecture/donnee'
+import { finContenu, prochainAcceptable } from './lecture/fin-regles'
+import type { SaisonApi } from '../lib/api'
 import { estBureau, estMobile } from '../lib/gabarit'
-import { cleLecture, ecran, ouvrirDetails, ouvrirFiche, poserEcran, revenirAuLecteur } from '../etat'
+import { ecran, ouvrirDetails, ouvrirFiche, poserEcran, revenirAuLecteur } from '../etat'
 import { db } from '../lib/db'
-import { revenirEnArriere } from '../lib/sortie-lecteur'
 import { attacher, type Attache } from '../lib/lecteur'
 import { planDirect, planVod, urlVod, deplacementParService, bornerPosition, BADGE_MODE, type Plan } from '../lib/flux'
 import { lectureDe, chaineDeLecture } from '../lib/source-lecture'
@@ -31,7 +36,7 @@ import {
   AUCUNE_TENTATIVE, BADGE_DIRECT, DELAI_ATTENTE_LONGUE_MS, LIBELLE_CONVERSION, MESSAGE_4K, enConversion, erreurApresConversions, est4K,
   suiteApresErreur, urlForcee, type EtatTentatives, type ModeDirect, type ModeForce,
 } from '../lib/modes-direct'
-import { noterOuverture, noterPosition, reprisePour, estFavori, basculerFavori } from '../lib/preferences'
+import { noterOuverture, noterPosition, estFavori, basculerFavori } from '../lib/preferences'
 import {
   creerDiffusion, demanderLien, detailsDiffusion, diffusionResoutLeCodec, lienAbsolu, parametresDiffusion, avecPosition,
   preparerDiffusion, reglagesTeleviseur, type Diffusion, type EtatDiffusion,
@@ -39,6 +44,10 @@ import {
 import type { EtatLien } from '../components/DialogueDiffusion'
 import { versErreurLecteur } from '../lib/api'
 import { modePipDisponible, ouvrirPipDocument, basculerPipNatif } from '../lib/pip'
+import { basculerPleinEcran } from './lecture/plein-ecran'
+import { MenuLecteur, type EntreeMenuLecteur } from '../components/CalquesLecture'
+import { basculerAVoir } from '../lib/a-voir'
+import { useAVoirCles } from '../components/BoutonAVoir'
 import type { EntreeCatalogue } from '../lib/db'
 import ColonnePistes from './lecture/ColonnePistes'
 import PiedLecteur from './lecture/PiedLecteur'
@@ -100,6 +109,12 @@ export default function Lecture(props: {
   suivant?: { titre: string; lire: () => void; pret?: boolean }
   /** Film terminé (US-43 CA4) : ouvrir le prochain élément de la liste « À voir » (proposé, jamais lancé seul). */
   surSuivantListe?: (e: EntreeCatalogue) => void
+  /**
+   * « Ma liste » depuis le lecteur (contrat ui-7, US-46 CA6 / C UX28) : geste et
+   * etat fournis par la coque ; a defaut, le lecteur bascule lui-meme la liste.
+   */
+  surMaListe?: () => void
+  dansMaListe?: boolean
   surChanger: (e: EntreeCatalogue) => void
   /** Arrêt du flux : la coque oublie la sélection (le flux est déjà détaché ici). */
   surFermer: () => void
@@ -134,8 +149,14 @@ export default function Lecture(props: {
 
   const [miniReduit, poserMiniReduit] = createSignal(false)
   const [notification, poserNotification] = createSignal<NotificationLecteur | null>(null)
-  /** Film terminé : le prochain élément de la liste « À voir », proposé sans démarrage automatique (US-43 CA4). */
-  const [prochainListe, poserProchainListe] = createSignal<AVoirJoint | null>(null)
+  /**
+   * Fin d'un film ou du dernier episode (US-43 CA4, US-45 CA5) : « Film terminé ✓ » /
+   * « Série terminée ✓ » et le prochain element de Ma liste, propose sans demarrage
+   * automatique -- jamais le contenu que l'on vient de finir.
+   */
+  const [fin, poserFin] = createSignal<{ de: 'film' | 'serie'; prochain?: AVoirJoint } | null>(null)
+  /** Enchainement VOULU (decompte, « Lire maintenant », « Regarder » du calque de fin) : pas de notification « arrêté ». */
+  let enchainementVoulu = false
 
   // --- Ce que le serveur fait du flux --------------------------------------
   const [plan, poserPlan] = createSignal<Plan | null>(null)
@@ -192,12 +213,10 @@ export default function Lecture(props: {
   const horsLecteur = () => ecran() !== 'lecture'
 
   // --- Sortie : une seule regle, la pile d'historique (US-45 CA2) ----------------
-  /** Selection de sortie, capturee hors reactivite (jamais lue apres la deselection). */
-  const selectionSortie = () => {
-    const e = untrack(() => props.entree)
-    return { type: e.type, cle: e.cle, serie: e.serie }
-  }
-  /** Navigation de repli (pile vide) : la fiche du contenu, sinon l'accueil. */
+  // La coque navigue (`surRetour` = quitterLecteur, `surFermer` = arreterLecture :
+  // un pas en arriere dans la pile, sinon la fiche du contenu, sinon l'accueil --
+  // lib/sortie-lecteur.ts) ; depuis le mini-lecteur, elle ne navigue pas.
+  /** Navigation explicite vers une fiche (« Revenir a la serie »). */
   function naviguerVers(chemin: string) {
     const e = untrack(() => props.entree)
     if (chemin.startsWith('/film/')) ouvrirDetails(e)
@@ -206,50 +225,34 @@ export default function Lecture(props: {
       void db.catalogue.get(serie).then((s) => (s ? ouvrirFiche(s) : poserEcran('accueil')))
     } else poserEcran('accueil')
   }
-  /** Retour : l'ecran precedent, la lecture continue dans le mini-lecteur. */
+  /** Retour (fleche, Echap) : l'ecran precedent, la lecture continue dans le mini-lecteur. */
   function revenir() {
-    revenirEnArriere(selectionSortie(), naviguerVers)
+    props.surRetour()
   }
   /**
-   * Arret (croix, « Fermer la lecture », « Retour » du panneau d'erreur, Echap,
-   * fin de lecture) : le flux est DETACHE tout de suite (l'effet de source lit
-   * `arret()`), puis l'ecran precedent ; la coque n'oublie la selection qu'une
-   * fois l'ecran quitte -- sinon son effet relirait `/lecture/<cle>` encore
-   * affiche et reselectionnerait le contenu qu'on vient d'arreter (constate :
-   * remontage du lecteur, flux rouvert). Depuis le mini-lecteur (deja hors de
-   * l'ecran), aucune navigation : le mini-lecteur ne navigue jamais.
+   * Arret (croix, « Fermer la lecture », « Retour » du panneau d'erreur, fin de
+   * lecture) : la position de sortie est notee AVANT le detachement (qui remet le
+   * media a zero), le flux est DETACHE tout de suite (l'effet de source lit
+   * `arret()`), puis la coque oublie la selection et revient a l'ecran precedent
+   * (depuis le mini-lecteur elle reste ou elle est). `vers` : une fiche explicite
+   * (« Revenir a la serie ») -- la coque n'est prevenue qu'une fois l'ecran quitte,
+   * pour qu'elle ne navigue pas une seconde fois.
    */
   const [arret, poserArret] = createSignal(false)
-  /** Position de sortie, a noter AVANT le detachement (qui remet le media a zero). */
   let noterSortie: (() => void) | undefined
-  let cleArretee: string | undefined
-  let reculs = 0
   let fermetureDemandee = false
-  function arreter() {
+  function arreter(vers?: string) {
     if (untrack(arret)) return
-    cleArretee = untrack(() => props.entree.cle)
     noterSortie?.()
     poserArret(true)
-    if (!untrack(horsLecteur)) revenir()
+    if (vers && !untrack(horsLecteur)) return naviguerVers(vers)
+    fermetureDemandee = true
+    props.surFermer()
   }
   createEffect(() => {
-    if (!arret()) return
-    if (horsLecteur()) {
-      // L'ecran a change dans le graphe reactif ; le routeur n'ecrit l'URL qu'a
-      // la fin de sa transition (une microtache plus tard). La coque, en
-      // oubliant la selection, relit le chemin courant : on la previent apres.
-      if (fermetureDemandee) return
-      fermetureDemandee = true
-      setTimeout(() => props.surFermer(), 0)
-      return
-    }
-    // Retombe sur un AUTRE /lecture (enchainement, zapping pousses) : encore un pas.
-    const cle = cleLecture()
-    if (cle && cle !== cleArretee && reculs < 5) {
-      reculs += 1
-      cleArretee = cle
-      history.back()
-    }
+    if (!arret() || fermetureDemandee || !horsLecteur()) return
+    fermetureDemandee = true
+    props.surFermer()
   })
 
   // Les favoris ramènent 154 000 entrées à la dizaine réellement regardée.
@@ -340,10 +343,31 @@ export default function Lecture(props: {
           ...props.suivant,
           lire: () => {
             terminer(props.entree.cle)
+            enchainementVoulu = true
             props.suivant!.lire()
           },
         }
       : undefined
+
+  // --- L'episode lu et le suivant, tels que les saisons les decrivent (CA5, CA9) ----
+  // Le decompte nomme l'episode (repere, titre, vignette) et le panneau Infos
+  // donne titre, numero et resume : tout vient des saisons, deja en cache depuis
+  // la fiche (lib/saisons), sans rien redemander au service qui pousse le flux.
+  const saisonsSerie = donnee(
+    () => (props.entree.type === 'series' ? props.entree.serie : undefined),
+    (serie) => (serie ? chargerSaisons(idServeurDeCle(serie)).catch(() => [] as SaisonApi[]) : Promise.resolve([] as SaisonApi[])),
+    [] as SaisonApi[],
+  )
+  const infosEpisode = (cle: string | undefined) => {
+    if (!cle) return undefined
+    for (const sa of saisonsSerie())
+      for (const e of sa.episodes)
+        if (`series:${e.id}` === cle)
+          return { saison: sa.numero, numero: e.numero, repere: `S${String(sa.numero).padStart(2, '0')}E${String(e.numero).padStart(2, '0')}`, titre: e.titre, synopsis: e.synopsis, image: e.image }
+    return undefined
+  }
+  const episodeCourant = createMemo(() => infosEpisode(props.entree.cle))
+  const episodeSuivant = createMemo(() => (props.suivant ? infosEpisode(episodeApres(saisonsSerie(), '', props.entree.cle)?.cle) : undefined))
 
   const calques = creerCalques({
     cle: () => props.entree.cle,
@@ -351,10 +375,11 @@ export default function Lecture(props: {
     decisionEnAttente: () =>
       enPause() || chargement() || !!erreur() ||
       !!panne.reconnexion() || etatDiffusion() === 'diffusion',
+    enPause,
     suivant: suivantEnchaine,
     duree,
     position,
-    surQuitterEcran: arreter,
+    surQuitterEcran: revenir,
   })
 
   const zapping = creerZapping({
@@ -421,6 +446,13 @@ export default function Lecture(props: {
 
   const urlAffichee = () => urlMasquee(plan()?.url ?? lectureEntree(props.entree))
 
+  /** Position memorisee a rouvrir, ou rien si le contenu est VU (seuil commun) ou inconnu. */
+  async function positionSauvegardee(cle: string): Promise<number | undefined> {
+    const r = await db.reprises.get(cle)
+    if (!r || !(r.duree > 0) || r.position / r.duree >= PART_VUE) return undefined
+    return r.position
+  }
+
   // Un seul effet pilote la source : changer d'entrée détache proprement le
   // flux précédent avant d'en ouvrir un autre.
   let precedente: EntreeCatalogue | undefined
@@ -466,12 +498,14 @@ export default function Lecture(props: {
     const abandon = new AbortController()
 
     if (precedente && precedente.cle !== entree.cle) {
-      // Zapper ne notifie rien ; passer d'un film à une chaîne, si : le flux
-      // précédent a bel et bien été fermé pour laisser la place.
-      if (!(precedente.type === 'live' && entree.type === 'live'))
+      // Zapper ne notifie rien ; un enchainement VOULU (decompte, « Lire maintenant »,
+      // « Regarder » du calque de fin) non plus (B12) ; passer d'un film à une chaîne,
+      // si : le flux précédent a bel et bien été fermé pour laisser la place.
+      if (!(precedente.type === 'live' && entree.type === 'live') && !enchainementVoulu)
         notifier(`« ${precedente.nom} » arrêté — l’abonnement n’autorise qu’un flux à la fois`, 'limite')
       if (precedente.type === 'live') zapping.poserDerniereChaine(precedente)
     }
+    enchainementVoulu = false
     const premierPassage = !precedente || precedente.cle !== entree.cle
     if (premierPassage) {
       panne.remettreAZero()
@@ -482,7 +516,7 @@ export default function Lecture(props: {
       forcage = null
       etatEco = ETAT_ECO_INITIAL
       poserPropositionEco(false)
-      poserProchainListe(null)
+      poserFin(null)
       // Un contenu rouvert repart avec sa memorisation normale.
       if (cleTerminee === entree.cle) cleTerminee = undefined
       if (entree.type === 'live' && est4K(entree.nom)) notifier(MESSAGE_4K, 'limite')
@@ -526,16 +560,16 @@ export default function Lecture(props: {
           p = { ...p, url: urlDirect(lectureEntree(entree), cap) }
         }
         else {
-          // La reprise est proposee, jamais imposee (sous une minute, rouvrir au
-          // debut ne coute rien) — et seulement a la PREMIERE ouverture : une
-          // reouverture automatique repart du point atteint, sans question. On
-          // ouvre directement au point sauvegarde plutot que d'ouvrir a 0 puis
-          // rouvrir : chaque ouverture est un ffmpeg et une place chez le fournisseur.
-          const sauvegardee = premierPassage ? await reprisePour(entree.cle) : undefined
+          // La question « Reprendre ou recommencer ? » s'est posee SUR LA FICHE
+          // (US-45 CA3) : ici on ouvre directement au point sauvegarde -- a la
+          // PREMIERE ouverture seulement, une reouverture automatique repart du
+          // point atteint. Un contenu VU (part >= seuil commun) repart du debut :
+          // « Regarder a nouveau » n'efface pas le ✓, il ne lit simplement pas la
+          // position de fin. Sous une minute, rouvrir au debut ne coute rien.
+          const sauvegardee = premierPassage ? await positionSauvegardee(entree.cle) : undefined
           if (annule) return
           const depart = departDeLecture({ premierPassage, pointAtteint, sauvegardee, seuil: SEUIL_REPRISE })
           pointAtteint = depart.depart
-          if (depart.proposer !== null) calques.poserReprise(depart.proposer)
           poserVerification(true)
           try {
             p = await planVod({ lecture, capacites: cap, decalage: pointAtteint, signal: abandon.signal })
@@ -596,7 +630,14 @@ export default function Lecture(props: {
       poserVolume(video.volume)
       poserDureeBrute(Number.isFinite(video.duration) ? video.duration : 0)
     }
-    const auTemps = () => poserPositionBrute(video.currentTime)
+    const auTemps = () => {
+      poserPositionBrute(video.currentTime)
+      // Le point atteint suit la LECTURE (US-45 CA8, B3) : changer de qualite
+      // rouvre au point ou l'on en est, plus au dernier saut demande. Pas apres
+      // un detachement (`load()` remet le media a zero et le signale) : la
+      // source vide dit que ce zero n'est pas une position.
+      if (!direct() && video.currentSrc && Number.isFinite(video.currentTime)) pointAtteint = decalage() + video.currentTime
+    }
     const auxImages = () => {
       // Le tampon restant d'une lecture coupee peut encore afficher des images
       // pendant le decompte : ce n'est pas une reprise, la relance part a l'heure.
@@ -633,13 +674,16 @@ export default function Lecture(props: {
       // de suite, pour que la fiche et « Continuer a regarder » s'accordent avant
       // meme que l'episode suivant demarre.
       terminer(props.entree.cle)
-      // Un episode enchaine (decompte annulable) ; un film propose le prochain
-      // element de la liste, sans rien lancer.
+      // Un episode enchaine (decompte annulable, ou calque persistant apres un
+      // refus) ; un film -- ou le DERNIER episode d'une serie -- propose le
+      // prochain element de Ma liste, sans rien lancer, et jamais la serie que
+      // l'on vient de finir (on cherche apres la SERIE, pas apres l'episode : B11).
       if (props.suivant) calques.reboursAlaFin()
       else {
-        const cle = props.entree.cle
-        void prochainAVoirApres(cle).then((j) => {
-          if (j && props.entree.cle === cle) poserProchainListe(j)
+        const entree = { cle: props.entree.cle, type: props.entree.type, serie: props.entree.serie }
+        const f = finContenu(entree)
+        void prochainAVoirApres(f.chercherApres).then((j) => {
+          if (props.entree.cle === entree.cle) poserFin({ de: f.de, prochain: prochainAcceptable(j?.entree, entree) ? j : undefined })
         })
       }
     }
@@ -822,9 +866,10 @@ export default function Lecture(props: {
         poserEnPip(await basculerPipNatif(video))
       }
     } catch (e) {
-      poserErreur(
-        new ErreurLecteur('relais', "L'image dans l'image n'a pas pu s'ouvrir.", 'Réessayer.', String(e)),
-      )
+      // Un refus du navigateur n'est pas une panne de lecture (B7) : rien ne se
+      // rouvre, la lecture continue, on le dit discretement.
+      noter('pip:refus', { detail: String(e).slice(0, 120) })
+      notifier('Image dans l’image indisponible sur ce navigateur', 'limite')
     }
   }
 
@@ -895,10 +940,65 @@ export default function Lecture(props: {
     demanderPosition(position() + secondes)
   }
 
+  /** Plein ecran du cadre, ou de la video sur WebKit iPhone (US-45 CA7, D4/B8). */
   function pleinEcran() {
-    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
-    else void cadre.requestFullscreen?.().catch(() => {})
+    const api = basculerPleinEcran(cadre, video)
+    if (api === 'aucune') notifier('Plein écran indisponible sur ce navigateur', 'limite')
   }
+
+  // --- Telephone et tablette (US-45 CA6) : barre compacte, menu « ⋯ », gestes ------
+  /** Hors bureau : seules les commandes essentielles dans la barre, le reste dans « ⋯ ». */
+  const compact = () => !estBureau()
+  const [menuOuvert, poserMenuOuvert] = createSignal(false)
+  /** Telephone couche : la video prend toute la hauteur disponible. */
+  const [paysage, poserPaysage] = createSignal(typeof matchMedia === 'function' && matchMedia('(orientation: landscape)').matches)
+  onMount(() => {
+    if (typeof matchMedia !== 'function') return
+    const mq = matchMedia('(orientation: landscape)')
+    const f = () => poserPaysage(mq.matches)
+    mq.addEventListener('change', f)
+    onCleanup(() => mq.removeEventListener('change', f))
+  })
+  const immersif = () => compact() && paysage()
+  /** La colonne de droite n'existe que si elle sert : zapping en direct, pistes quand il y a un CHOIX (CA9, B UX10). */
+  const avecColonne = () => !immersif() && (direct() || pistes.pistesAudio().length > 1 || pistes.pistesTexte().length > 0)
+  // « Ma liste » depuis le lecteur : la coque (contrat surMaListe), sinon la liste locale.
+  const clesMaListe = useAVoirCles()
+  const cleMaListe = () => (props.entree.type === 'series' ? props.entree.serie : props.entree.type === 'vod' ? props.entree.cle : undefined)
+  const dansMaListe = () => props.dansMaListe ?? (cleMaListe() ? clesMaListe()?.has(cleMaListe()!) ?? false : false)
+  function basculerMaListe() {
+    if (props.surMaListe) return props.surMaListe()
+    const cle = cleMaListe()
+    if (!cle) return
+    void basculerAVoir(cle).then((present) => notifier(present ? 'Ajouté à Ma liste · le serveur le prépare d’avance' : 'Retiré de Ma liste'))
+  }
+  /** Un tap sur l'image (hors bureau) montre ou cache les commandes ; un clic (bureau) met en pause. */
+  let dernierTap = 0
+  let coteDernierTap = ''
+  let tapSimple: ReturnType<typeof setTimeout> | undefined
+  function surSurface(e: MouseEvent) {
+    if (menuOuvert()) return poserMenuOuvert(false)
+    if (!compact()) return basculerLecture()
+    const r = cadre.getBoundingClientRect()
+    const cote = e.clientX < r.left + r.width / 3 ? 'gauche' : e.clientX > r.right - r.width / 3 ? 'droite' : 'centre'
+    const maintenant = Date.now()
+    if (maintenant - dernierTap < 320 && cote === coteDernierTap && cote !== 'centre' && !direct()) {
+      // Double-tap lateral : ±10 s (YouTube, Netflix) ; le tap simple en attente est annule.
+      clearTimeout(tapSimple)
+      tapSimple = undefined
+      dernierTap = 0
+      deplacer(cote === 'gauche' ? -10 : 10)
+      return
+    }
+    dernierTap = maintenant
+    coteDernierTap = cote
+    clearTimeout(tapSimple)
+    tapSimple = setTimeout(() => {
+      tapSimple = undefined
+      calques.basculerCommandes()
+    }, 320)
+  }
+  onCleanup(() => clearTimeout(tapSimple))
 
   function ouvrirMiniGuide() {
     // S'informer et zapper ne se superposent pas : l'un ferme l'autre.
@@ -917,22 +1017,27 @@ export default function Lecture(props: {
     direct,
     calqueOuvert: () =>
       calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert() ||
-      calques.rebours() !== null || prochainListe() !== null,
+      calques.rebours() !== null || calques.finEpisode() || fin() !== null ||
+      variantesLecteur.ouvert() || menuOuvert(),
     reveiller: calques.reveiller,
     // Échap : ferme le calque ouvert — le décompte d'épisode suivant compris (US-43
     // CA4 : Échap l'annule) ; sinon quitte l'écran (la lecture continue).
     fermerCalque: () => {
-      if (prochainListe() !== null) poserProchainListe(null)
-      else if (calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert() || calques.rebours() !== null) calques.fermerCalque()
-      // Echap sans calque : sortie du lecteur, flux detache (CA1), ecran precedent (CA2).
-      else arreter()
+      // Echap ferme d'abord TOUT calque ouvert (menu, variantes, diffusion, infos,
+      // mini-guide, decompte, fin) avant de quitter (US-45 CA8, D7/B13).
+      if (menuOuvert()) poserMenuOuvert(false)
+      else if (variantesLecteur.ouvert()) variantesLecteur.poserOuvert(false)
+      else if (fin() !== null) poserFin(null)
+      else if (calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert() || calques.rebours() !== null || calques.finEpisode()) calques.fermerCalque()
+      // Echap sans calque : quitter l'ecran (la lecture continue dans le mini-lecteur), ecran precedent (CA2).
+      else revenir()
     },
     zapper: zapping.zapper,
     deplacer,
     basculerLecture,
     basculerMuet: () => (video.muted = !video.muted),
     basculerDiffusion: () => calques.poserDiffusionOuverte((v) => !v),
-    basculerFavori: marquerFavori,
+    basculerPleinEcran: pleinEcran,
     revenirDerniereChaine: zapping.revenirDerniereChaine,
     basculerMiniGuide: ouvrirMiniGuide,
     basculerInfos: ouvrirInfos,
@@ -949,6 +1054,30 @@ export default function Lecture(props: {
           { icone: 'replay_10', libelle: 'Reculer de 10 secondes', titre: 'Reculer de 10 s (←)', surAction: () => deplacer(-10) },
           { icone: 'forward_10', libelle: 'Avancer de 10 secondes', titre: 'Avancer de 10 s (→)', surAction: () => deplacer(10) },
         ]
+
+  /** Le menu « ⋯ » hors bureau : ce que la barre compacte ne porte pas (CA6, D2/E2). */
+  const entreesMenu = (): EntreeMenuLecteur[] => [
+    { icone: 'cast', libelle: 'Diffuser vers un téléviseur', actif: etatDiffusion() === 'diffusion', action: () => calques.poserDiffusionOuverte(true) },
+    ...(!direct() && (pistes.pistesAudio().length > 1 || pistes.pistesTexte().length > 0)
+      ? [{ icone: 'subtitles', libelle: 'Pistes et sous-titres', action: () => calques.poserInfosOuvertes(true) }]
+      : []),
+    ...(direct()
+      ? [
+          { icone: 'tv_guide', libelle: 'Mini-guide', actif: calques.miniGuideOuvert(), action: ouvrirMiniGuide },
+          { icone: 'hd', libelle: 'Variantes de la chaîne', actif: variantesLecteur.ouvert(), action: () => variantesLecteur.poserOuvert(true) },
+        ]
+      : []),
+    { icone: 'speed', libelle: `Qualité : ${LIBELLE_QUALITE_MODE[qualite()]}`, detail: qualite() === 'eco' ? 'repasser en Auto' : 'passer en Éco (débit réduit)', actif: qualite() === 'eco', action: basculerQualite },
+    { icone: 'info_panel', libelle: direct() ? 'Informations sur le programme' : 'Informations', actif: calques.infosOuvertes(), action: ouvrirInfos },
+    ...(modePipDisponible() !== 'indisponible' ? [{ icone: 'picture_in_picture_alt', libelle: 'Image dans l’image', actif: enPip(), action: () => void basculerPip() }] : []),
+    ...(cleMaListe() ? [{ icone: dansMaListe() ? 'check' : 'add', libelle: dansMaListe() ? 'Retirer de Ma liste' : 'Ma liste', actif: dansMaListe(), action: basculerMaListe }] : []),
+    { icone: 'close', libelle: 'Arrêter le flux', detail: 'libère la connexion', action: () => arreter() },
+  ]
+
+  const boutonsDroiteCompacts = (): BoutonControle[] => [
+    { icone: 'more_horiz', libelle: 'Plus d’options', titre: 'Diffuser, pistes, qualité, infos, Ma liste, arrêter', actif: menuOuvert(), surAction: () => poserMenuOuvert((v) => !v) },
+    { icone: 'fullscreen', libelle: 'Plein écran', titre: 'Plein écran (F)', surAction: pleinEcran },
+  ]
 
   const boutonsDroite = (): BoutonControle[] => [
     ...(direct()
@@ -1008,8 +1137,8 @@ export default function Lecture(props: {
       masquerMobile: true,
       surAction: () => void basculerPip(),
     },
-    { icone: 'close', libelle: 'Arrêter le flux', titre: 'Arrêter le flux et libérer la connexion (retour à l’écran précédent)', surAction: arreter },
-    { icone: 'fullscreen', libelle: 'Plein écran', titre: 'Plein écran', surAction: pleinEcran },
+    { icone: 'close', libelle: 'Arrêter le flux', titre: 'Arrêter le flux et libérer la connexion (retour à l’écran précédent)', surAction: () => arreter() },
+    { icone: 'fullscreen', libelle: 'Plein écran', titre: 'Plein écran (F)', surAction: pleinEcran },
   ]
 
   // Ce que le flux EST, et ce qu'on lui fait : le conteneur annoncé par le
@@ -1030,13 +1159,12 @@ export default function Lecture(props: {
 
   const actionsErreur = (): ActionErreur[] => {
     const actions: ActionErreur[] = []
-    // Les MP4 en EAC3 sont illisibles en navigateur mais décodés par les
-    // téléviseurs : la sortie est dans le message, pas trois clics plus loin.
-    if (erreur()!.couche === 'codec' && diffusionSupportee())
-      actions.push({ libelle: 'Diffuser vers le téléviseur', principale: true, surAction: () => void diffuser() })
+    // « Réessayer » d'abord, toujours (arbitrage lot 10) ; les MP4 en EAC3 sont
+    // illisibles en navigateur mais décodés par les téléviseurs : la sortie est
+    // dans le message, juste à côté.
     actions.push({
       libelle: 'Réessayer',
-      principale: actions.length === 0,
+      principale: erreur()!.couche !== 'codec' || !diffusionSupportee(),
       surAction: () => {
         // Geste de l'utilisateur : le compte des conversions repart de zéro.
         etatTentatives = AUCUNE_TENTATIVE
@@ -1046,7 +1174,9 @@ export default function Lecture(props: {
         panne.relancer()
       },
     })
-    actions.push({ libelle: 'Retour', surAction: arreter })
+    if (erreur()!.couche === 'codec' && diffusionSupportee())
+      actions.push({ libelle: 'Diffuser vers le téléviseur', principale: true, surAction: () => void diffuser() })
+    actions.push({ libelle: 'Retour', surAction: () => arreter() })
     return actions
   }
 
@@ -1080,8 +1210,10 @@ export default function Lecture(props: {
         // virtualisée de la zone du bas ne monte aucune ligne.
         display: 'grid',
         ...(estBureau()
-          ? { 'grid-template-columns': 'minmax(0,1fr) 340px' }
-          : { 'grid-template-columns': 'minmax(0,1fr)', 'grid-template-rows': 'auto minmax(0,1fr)' }),
+          ? { 'grid-template-columns': avecColonne() ? 'minmax(0,1fr) 340px' : 'minmax(0,1fr)' }
+          : immersif()
+            ? { 'grid-template-columns': 'minmax(0,1fr)', 'grid-template-rows': 'minmax(0,1fr)' }
+            : { 'grid-template-columns': 'minmax(0,1fr)', 'grid-template-rows': avecColonne() ? 'auto minmax(0,1fr)' : 'auto' }),
         height: '100%', 'min-height': 0, 'min-width': 0, outline: 'none',
         animation: 'fadein 200ms var(--ease)',
       }}
@@ -1089,19 +1221,19 @@ export default function Lecture(props: {
       <div
         style={{
           display: 'grid', 'min-height': 0, 'min-width': 0,
-          'grid-template-rows': estBureau() ? 'minmax(0,1fr) auto' : 'auto auto',
+          'grid-template-rows': estBureau() || immersif() ? 'minmax(0,1fr) auto' : 'auto auto',
         }}
       >
         <div
           ref={cadre}
-          onMouseMove={calques.reveiller}
-          onDblClick={pleinEcran}
+          onMouseMove={compact() ? undefined : calques.reveiller}
+          onDblClick={compact() ? undefined : pleinEcran}
           style={{
             position: 'relative', 'min-height': 0, overflow: 'hidden', background: 'var(--video)',
             // Empilé, la vidéo n'a plus de hauteur imposée par la grille : le
-            // 16:9 la lui donne, plafonné pour qu'un téléphone couché garde
-            // sa liste de chaînes à l'écran.
-            ...(estBureau() ? {} : { 'aspect-ratio': '16 / 9', 'max-height': '56dvh', width: '100%' }),
+            // 16:9 la lui donne, plafonné pour qu'un téléphone droit garde sa
+            // liste à l'écran. Couché, ou sans colonne, elle prend toute la hauteur (CA6).
+            ...(estBureau() || immersif() ? {} : { 'aspect-ratio': '16 / 9', 'max-height': '56dvh', width: '100%' }),
             cursor: calques.commandesVisibles() ? undefined : 'none',
           }}
         >
@@ -1113,6 +1245,9 @@ export default function Lecture(props: {
 
           {/* Identité du contenu tant qu'aucune image n'est arrivée : un carré
               noir ne dit pas si le flux est en route ou perdu. */}
+          {/* Identité du contenu tant qu'aucune image n'est arrivée : un carré
+              noir ne dit pas si le flux est en route ou perdu. L'adresse, elle,
+              est reservee au panneau technique (CA9). */}
           <Show when={!imageDisponible()}>
             <div
               aria-hidden="true"
@@ -1124,11 +1259,15 @@ export default function Lecture(props: {
               }}
             >
               <SubstitutLogo nom={props.entree.nom} src={props.entree.icone} taille={84} />
-              <span style={{ 'font-family': 'var(--moov-font-mono)', 'font-size': '11px', color: '#56697f' }}>
-                {urlAffichee()}
-              </span>
             </div>
           </Show>
+
+          {/* Surface de gestes (CA6) : tap = commandes, double-tap lateral = ±10 s ; bureau : clic = pause. */}
+          <div
+            data-role="surface"
+            onClick={surSurface}
+            style={{ position: 'absolute', inset: 0, 'z-index': 1 }}
+          />
 
           <div
             data-role="commandes"
@@ -1157,8 +1296,9 @@ export default function Lecture(props: {
                 aria-label="Retour"
                 onClick={revenir}
                 style={{
-                  display: 'inline-flex', 'align-items': 'center', gap: '4px',
+                  display: 'inline-flex', 'align-items': 'center', 'justify-content': 'center', gap: '4px',
                   padding: '4px 8px', 'margin-right': '4px', border: '0', 'border-radius': '6px',
+                  'min-width': compact() ? '44px' : undefined, 'min-height': compact() ? '44px' : undefined,
                   background: 'transparent', color: ENCRE, cursor: 'pointer', 'font-size': '13px',
                 }}
               >
@@ -1178,8 +1318,26 @@ export default function Lecture(props: {
               </Show>
             </div>
 
+            {/* Gros bouton central lecture/pause, hors bureau (CA6). */}
+            <Show when={compact() && !erreur() && !chargement()}>
+              <button
+                type="button"
+                data-role="lecture-centrale"
+                aria-label={enPause() ? 'Lecture' : 'Pause'}
+                onClick={basculerLecture}
+                style={{
+                  position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
+                  width: '64px', height: '64px', 'border-radius': '50%', 'z-index': 2,
+                  background: 'rgba(20,20,20,.72)', border: '1px solid rgba(255,255,255,.35)', color: ENCRE,
+                  display: 'grid', 'place-items': 'center',
+                }}
+              >
+                <Icone nom={enPause() ? 'play_arrow' : 'pause'} taille={36} plein />
+              </button>
+            </Show>
             <ControlesLecteur
               mode={direct() ? 'live' : 'vod'}
+              compact={compact()}
               enPause={enPause()}
               muet={muet()}
               volume={volume()}
@@ -1191,7 +1349,7 @@ export default function Lecture(props: {
                   : '← → 10 s · Espace pause · M muet · F favori · I infos'
               }
               gauche={boutonsGauche()}
-              droite={boutonsDroite()}
+              droite={compact() ? boutonsDroiteCompacts() : boutonsDroite()}
               surLecture={basculerLecture}
               surMuet={() => (video.muted = !video.muted)}
               surVolume={(v) => {
@@ -1242,57 +1400,58 @@ export default function Lecture(props: {
             />
           </Show>
 
-          <Show when={calques.reprise() !== null && !erreur()}>
-            <DialogueReprise
-              titre={props.entree.nom}
-              position={calques.reprise()!}
-              surReprendre={() => {
-                allerA(calques.reprise()!)
-                calques.poserReprise(null)
-                void video.play().catch(() => {})
-              }}
-              surRecommencer={() => {
-                allerA(0)
-                calques.poserReprise(null)
-                void video.play().catch(() => {})
-              }}
-            />
-          </Show>
-
-          <Show when={calques.rebours() !== null && suivantEnchaine()}>
+          <Show when={(calques.rebours() !== null || calques.finEpisode()) && suivantEnchaine()}>
             {(s) => (
               <ProchainEpisode
                 titre={s().titre}
-                restant={calques.rebours()!}
+                repere={episodeSuivant()?.repere}
+                titreEpisode={episodeSuivant()?.titre}
+                vignette={episodeSuivant()?.image}
+                restant={calques.rebours()}
                 pret={s().pret}
                 surLire={() => {
                   // Lu AVANT d'arreter le decompte : l'arret ferme ce `Show`, et
                   // son accesseur ne vaut plus rien ensuite (lecture perimee).
                   const suivant = s()
                   calques.arreterRebours()
+                  calques.poserFinEpisode(false)
                   suivant.lire()
                 }}
                 surAnnuler={calques.annulerRebours}
+                surRevenir={() => {
+                  const serie = untrack(() => props.entree.serie)
+                  arreter(serie ? `/serie/${serie}` : undefined)
+                }}
               />
             )}
           </Show>
 
-          <Show when={prochainListe()}>
-            {(j) => (
+          <Show when={fin()}>
+            {(f) => (
               <ProchainContenu
-                titre={j().entree.nom}
-                type={j().entree.type}
-                pret={j().element.preparation?.etat === 'pret'}
+                fin={f().de}
+                prochain={f().prochain ? { titre: f().prochain!.entree.nom, type: f().prochain!.entree.type, pret: f().prochain!.element.preparation?.etat === 'pret' } : undefined}
                 surRegarder={() => {
                   // Lu avant de fermer le calque (voir « Lire maintenant »).
-                  const entree = j().entree
+                  const entree = f().prochain!.entree
                   noter('enchainement:suivant', { de: props.entree.cle, vers: entree.cle, auto: false, liste: true })
-                  poserProchainListe(null)
+                  enchainementVoulu = true
+                  poserFin(null)
                   props.surSuivantListe?.(entree)
                 }}
-                surFermer={() => poserProchainListe(null)}
+                surRevoir={() => {
+                  poserFin(null)
+                  cleTerminee = undefined
+                  allerA(0)
+                  void video.play().catch(() => {})
+                }}
+                surFermer={() => arreter()}
               />
             )}
+          </Show>
+
+          <Show when={menuOuvert()}>
+            <MenuLecteur entrees={entreesMenu()} surFermer={() => poserMenuOuvert(false)} />
           </Show>
 
           <Show when={direct() && variantesLecteur.ouvert() && variantesLecteur.choix()}>
@@ -1353,12 +1512,14 @@ export default function Lecture(props: {
           <Show when={calques.infosOuvertes()}>
             <PanneauInfos
               entree={props.entree}
+              episode={episodeCourant()}
               categorie={zapping.nomCategorie()}
               enCours={zapping.enCours()}
               ensuite={zapping.ensuite()}
               flux={plan()}
-              favori={favori()}
-              surFavori={marquerFavori}
+              adresse={urlAffichee()}
+              favori={direct() ? favori() : undefined}
+              surFavori={direct() ? marquerFavori : undefined}
               surGuide={direct() ? () => poserEcran('guide') : undefined}
               surFermer={() => calques.poserInfosOuvertes(false)}
             />
@@ -1388,18 +1549,22 @@ export default function Lecture(props: {
           </Show>
         </div>
 
-        <PiedLecteur
-          entree={props.entree}
-          direct={direct()}
-          enCours={zapping.enCours()}
-          ensuite={zapping.ensuite()}
-          position={position()}
-          duree={duree()}
-          favori={favori()}
-          surFavori={marquerFavori}
-        />
+        <Show when={!immersif()}>
+          <PiedLecteur
+            entree={props.entree}
+            direct={direct()}
+            enCours={zapping.enCours()}
+            ensuite={zapping.ensuite()}
+            position={position()}
+            duree={duree()}
+            favori={favori()}
+            surFavori={marquerFavori}
+            maListe={cleMaListe() ? { present: dansMaListe(), basculer: basculerMaListe } : undefined}
+          />
+        </Show>
       </div>
 
+      <Show when={avecColonne()}>
       <aside
         style={{
           display: 'grid', 'grid-template-rows': direct() ? 'auto minmax(0,1fr)' : 'minmax(0,1fr)',
@@ -1430,6 +1595,7 @@ export default function Lecture(props: {
           />
         </Show>
       </aside>
+      </Show>
 
       {/* La coque masque le lecteur par `visibility` : un portail est le seul
           moyen pour le mini-lecteur et les notifications de rester visibles
@@ -1446,7 +1612,7 @@ export default function Lecture(props: {
             surOuvrir={revenirAuLecteur}
             surMuet={() => (video.muted = !video.muted)}
             surReduire={() => poserMiniReduit((v) => !v)}
-            surFermer={arreter}
+            surFermer={() => arreter()}
           />
         </Portal>
       </Show>

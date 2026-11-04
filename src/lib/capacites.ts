@@ -5,8 +5,10 @@
 // Absence = navigateur suppose incapable de tout sauf h264 + aac.
 //
 // Detection : MediaSource.isTypeSupported (le codec existe) ET, pour l'HEVC 4K,
-// MediaCapabilities.decodingInfo (le decodage est plausible : `supported` et
-// fluide ou econome). Memorisee dans localStorage (avec repli memoire).
+// MediaCapabilities.decodingInfo qui repond `supported`, `smooth` ET
+// `powerEfficient` -- sans cette reponse, JAMAIS d'HEVC (US-45 CA9, D23 :
+// Firefox annoncait `cap=hevc` sur un codec qu'il ne decode pas en materiel, et
+// le serveur lui aurait servi un MKV HEVC tel quel). Memorisee dans localStorage.
 
 import { noter } from './diagnostic'
 
@@ -40,18 +42,19 @@ function supporte(env: EnvCapacites, type: string): boolean {
 
 export async function detecter(env: EnvCapacites): Promise<Capacites> {
   const sortie: Capacite[] = []
-  // HEVC : le codec doit etre annonce, puis le decodage 4K juge plausible. Sans
-  // MediaCapabilities, l'annonce du codec fait foi ; si elle echoue, on n'annonce pas.
-  let hevc = HEVC.some((t) => supporte(env, t))
-  if (hevc && env.mediaCapabilities?.decodingInfo) {
+  // HEVC : le codec doit etre annonce ET MediaCapabilities doit juger le decodage
+  // 4K fluide et econome (materiel). Sans MediaCapabilities, ou si elle echoue,
+  // on n'annonce pas : un HEVC decode en logiciel saccade, mieux vaut un remux.
+  let hevc = false
+  if (HEVC.some((t) => supporte(env, t)) && env.mediaCapabilities?.decodingInfo) {
     try {
       const info = await env.mediaCapabilities.decodingInfo({
         type: 'media-source',
         video: { contentType: HEVC[0], width: 3840, height: 2160, bitrate: 25_000_000, framerate: 25 },
       })
-      hevc = info.supported === true && (info.smooth === true || info.powerEfficient === true)
+      hevc = info.supported === true && info.smooth === true && info.powerEfficient === true
     } catch {
-      /* API presente mais en echec : on garde l'annonce du codec */
+      hevc = false
     }
   }
   if (hevc) sortie.push('hevc')

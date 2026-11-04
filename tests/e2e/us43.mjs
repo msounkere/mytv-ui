@@ -111,9 +111,12 @@ const SCENARIOS = {
 
       // --- Fiche serie : un episode ajoute SA SERIE « a partir de » lui -----------------
       await page.goto(`${serveur.origine}/serie/series:iptva:s5001`)
+      // US-45 CA4 : « Ma liste a partir d'ici » vit dans le menu « ⋯ » de la ligne (tous gabarits).
       const episode2 = page.locator('[data-role="episode"]').nth(1)
       await episode2.getByText('Épisode 2', { exact: true }).waitFor()
-      await episode2.locator('[data-role="a-voir"]').click()
+      await episode2.locator('[data-role="menu-fiche"]').click()
+      await page.locator('[role="menu"]').getByRole('menuitem', { name: 'Ma liste à partir d’ici' }).focus()
+      await page.keyboard.press('Enter')
       await attendre(() => element('serie:iptva:s5001')?.depuis?.episode === 2, { quoi: 'PUT serie avec depuis = S01E02' })
       assert.deepEqual(element('serie:iptva:s5001').depuis, { saison: 1, episode: 2 })
       assert.ok(!liste().some((x) => x.includes('.mkv')), 'jamais un episode comme element de la liste')
@@ -219,10 +222,11 @@ const SCENARIOS = {
 
       // Fiche : badge « Prêt » quand le serveur l'indique.
       await page.goto(`${serveur.origine}/film/vod:iptva:5001`)
-      await page.locator('[data-role="fiche-film"] [data-role="badge-pret"]').waitFor()
+      // US-45 CA3 : sur la fiche, « Prêt » est le chip d'etat commun (data-role chip-preparation).
+      await page.locator('[data-role="fiche-film"] [data-role="chip-preparation"][data-etat="pret"]').waitFor()
       await page.goto(`${serveur.origine}/film/vod:iptva:5003`)
       await page.locator('[data-role="fiche-film"]').getByRole('button', { name: 'Regarder' }).waitFor()
-      assert.equal(await page.locator('[data-role="fiche-film"] [data-role="badge-pret"]').count(), 0, 'pas de badge sans fichier pret')
+      assert.equal(await page.locator('[data-role="fiche-film"] [data-role="chip-preparation"][data-etat="pret"]').count(), 0, 'pas de chip pret sans fichier pret')
 
       // Lecture d'un contenu pret : lecteur habituel, adresse normale, le serveur choisit la source.
       await page.goto(`${serveur.origine}/`)
@@ -302,11 +306,13 @@ const SCENARIOS = {
       await page.goto(`${serveur.origine}/film/vod:iptva:5001`)
       const ligne = page.locator('[data-role="fiche-film"] [data-role="disponibilite"]')
       await ligne.waitFor()
-      assert.equal((await ligne.innerText()).trim().replace(/\s+/g, ' '), "Lent (2,7 Mbit/s pour 4,4 nécessaires) : préparer d'avance ? À voir")
+      // US-45 CA3 : la sonde n'a plus son propre bouton (un seul « + Ma liste » par fiche, C11) ;
+      // une fois dans Ma liste, la ligne de sonde cede la place au chip d'etat.
+      assert.equal((await ligne.innerText()).trim().replace(/\s+/g, ' '), "Lent (2,7 Mbit/s pour 4,4 nécessaires) : préparer d'avance ?")
       assert.equal(sondes('iptva:5001').length, 1, 'CA5 une sonde a l ouverture de la fiche')
-      await ligne.locator('[data-role="a-voir"]').click()
-      await attendre(() => liste().includes('vod:iptva:5001'), { quoi: 'ajoute depuis la sonde' })
-      await attendre(async () => (await ligne.locator('[data-role="a-voir"]').count()) === 0, { quoi: 'le bouton de la sonde disparait une fois ajoute' })
+      await page.locator('[data-role="fiche-film"] [data-role="a-voir"]').click()
+      await attendre(() => liste().includes('vod:iptva:5001'), { quoi: 'ajoute depuis la fiche' })
+      await attendre(async () => (await ligne.count()) === 0, { quoi: 'la ligne de sonde disparait une fois ajoute' })
 
       // Film immediat.
       await page.goto(`${serveur.origine}/film/vod:iptva:5002`)
@@ -314,10 +320,10 @@ const SCENARIOS = {
       assert.equal((await ligne.innerText()).trim(), 'Disponible immédiatement')
       assert.equal(await ligne.getAttribute('data-etat'), 'immediat')
 
-      // Fichier prepare : « Prêt » (le faux serveur repond pret pour un fichier qu'il tient).
+      // Fichier prepare : le chip « ● Prêt » (US-45 CA3 : plus de sonde pour un fichier tenu, C10).
       await page.goto(`${serveur.origine}/film/vod:iptva:5004`)
-      await ligne.waitFor()
-      assert.equal((await ligne.innerText()).trim(), 'Prêt')
+      await page.locator('[data-role="fiche-film"] [data-role="chip-preparation"][data-etat="pret"]').waitFor()
+      assert.equal(await ligne.count(), 0)
 
       // Episode : la fiche serie sonde le prochain episode a regarder (S01E01).
       await page.goto(`${serveur.origine}/serie/series:iptva:s5001`)

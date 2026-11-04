@@ -3,9 +3,9 @@ import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } fr
 import type { RouteSectionProps } from '@solidjs/router'
 import { profilActif, session } from './lib/auth'
 import {
-  LIBELLE_ONGLET, arreterLecture, quitterLecteur, barreDeployee, brancherRouteur, changerDeChaine, cleFiche,
+  LIBELLE_ONGLET, arreterLecture, quitterLecteur, barreDeployee, brancherRouteur, changerDeChaine, cleArretee, cleFiche,
   cleFicheFilm, cleLecture, ecran, episodeSuivant, filmOuvert, ouvrirDetails, poserFilmOuvert, lireEpisode, oublierContenuOuvert, onglet, ouvrir,
-  ouvrirRecherche, poserEcran, poserOnglet, poserSelection, poserSerieOuverte, revenirAuLecteur,
+  ouvrirRecherche, poserEcran, poserOnglet, poserSelection, poserSerieOuverte, revenirAuLecteur, revenirEnArriere,
   selection, serieOuverte, urlEpisode,
 } from './etat'
 import { db } from './lib/db'
@@ -84,7 +84,7 @@ function EcranFiche() {
         <FicheSerie
           serie={s()}
           surLire={lireEpisode}
-          surRetour={() => poserEcran('parcours')}
+          surRetour={() => revenirEnArriere('/')}
         />
       )}
     </Show>
@@ -101,7 +101,7 @@ function EcranFicheFilm() {
           surLire={ouvrir}
           // On revient la OU l'on etait (l'accueil, le plus souvent) ; sans historique
           // (lien direct, rechargement), la liste des films.
-          surRetour={() => (window.history.length > 1 ? window.history.back() : poserEcran('parcours'))}
+          surRetour={() => revenirEnArriere('/')}
         />
       )}
     </Show>
@@ -167,6 +167,9 @@ function Coque(props: RouteSectionProps) {
   createEffect(() => {
     const cle = cleLecture()
     if (!cle || selection()?.cle === cle) return
+    // STUB ui-6 (contrat ui-8) : un contenu qu'on vient d'ARRETER n'est pas relu
+    // pendant que l'URL /lecture/<cle> est encore la (le retour d'historique suit).
+    if (cle === cleArretee()) return
     void db.catalogue.get(cle).then((e) => {
       if (cleLecture() !== cle) return
       if (e) poserSelection(e)
@@ -265,7 +268,7 @@ function Coque(props: RouteSectionProps) {
           afficherRecherche
           surRechercher={ouvrirRecherche}
           surRetourLecteur={revenirAuLecteur}
-          surQuitterLecteur={() => poserEcran('parcours')}
+          surQuitterLecteur={quitterLecteur}
           auLecteur={enLecture()}
           surReglages={() => naviguer('/reglages')}
           profil={profil()}

@@ -87,7 +87,8 @@ export async function ouvrirSession({ navigateur, moteur, gabarit = 'bureau', sc
   ctx.setDefaultTimeout(30_000)
   const page = await ctx.newPage()
   const erreurs = []
-  page.on('pageerror', (e) => erreurs.push(e.message))
+  // « ResizeObserver loop » (WebKit, D17) vient des grilles de la coque (perimetre ui-8, US-47 CA6) : hors sujet ici.
+  page.on('pageerror', (e) => { if (!/ResizeObserver loop/.test(e.message)) erreurs.push(e.message) })
   let plante = false
   page.on('crash', () => { plante = true })
   await page.addInitScript(() => { window.__session = 0; window.addEventListener('mytv:session-expiree', () => (window.__session += 1)) })

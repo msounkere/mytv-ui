@@ -18,6 +18,8 @@ export default function PiedLecteur(props: {
   duree: number
   favori: boolean
   surFavori: () => void
+  /** VOD : « + Ma liste » / « ✓ Dans ma liste » (US-45, C 5.3) ; les favoris ne concernent plus que les chaines. */
+  maListe?: { present: boolean; basculer: () => void }
 }) {
   return (
     <div
@@ -65,23 +67,47 @@ export default function PiedLecteur(props: {
         )}
       </Show>
 
-      <button
-        onClick={props.surFavori}
-        title={props.favori ? 'Retirer des favoris (F)' : 'Ajouter aux favoris (F)'}
-        aria-label={props.favori ? 'Retirer des favoris' : 'Ajouter aux favoris'}
-        aria-pressed={props.favori}
-        style={{
-          flex: '0 0 auto', display: 'flex', 'align-items': 'center', gap: '6px',
-          height: estMobile() ? '44px' : '34px', 'min-width': estMobile() ? '44px' : undefined,
-          'justify-content': 'center',
-          padding: estMobile() ? '0 10px' : '0 12px 0 10px',
-          border: '1px solid var(--line2)', 'border-radius': 'var(--r-btn-md)',
-          'font-size': '13px', color: props.favori ? 'var(--acc-fg)' : undefined,
-        }}
-      >
-        <Icone nom={props.favori ? 'star' : 'star_border'} taille={18} plein={props.favori} />
-        <Show when={!estMobile()}>{props.favori ? 'Favori' : 'Ajouter aux favoris'}</Show>
-      </button>
+      <Show when={props.direct}>
+        <button
+          onClick={props.surFavori}
+          title={props.favori ? 'Retirer des favorites' : 'Chaîne favorite'}
+          aria-label={props.favori ? 'Retirer des favorites' : 'Chaîne favorite'}
+          aria-pressed={props.favori}
+          style={{
+            flex: '0 0 auto', display: 'flex', 'align-items': 'center', gap: '6px',
+            height: estMobile() ? '44px' : '34px', 'min-width': estMobile() ? '44px' : undefined,
+            'justify-content': 'center',
+            padding: estMobile() ? '0 10px' : '0 12px 0 10px',
+            border: '1px solid var(--line2)', 'border-radius': 'var(--r-btn-md)',
+            'font-size': '13px', color: props.favori ? 'var(--acc-fg)' : undefined,
+          }}
+        >
+          <Icone nom={props.favori ? 'star' : 'star_border'} taille={18} plein={props.favori} />
+          <Show when={!estMobile()}>{props.favori ? 'Favorite' : 'Chaîne favorite'}</Show>
+        </button>
+      </Show>
+      <Show when={!props.direct && props.maListe}>
+        {(m) => (
+          <button
+            type="button"
+            data-role="a-voir"
+            onClick={() => m().basculer()}
+            title={m().present ? 'Retirer de Ma liste' : 'Préparé d’avance sur le serveur pour une lecture sans coupure'}
+            aria-label={m().present ? 'Retirer de Ma liste' : 'Ajouter à Ma liste'}
+            aria-pressed={m().present}
+            style={{
+              flex: '0 0 auto', display: 'flex', 'align-items': 'center', gap: '6px',
+              height: estMobile() ? '44px' : '34px', 'min-width': estMobile() ? '44px' : undefined, 'justify-content': 'center',
+              padding: estMobile() ? '0 10px' : '0 12px 0 10px',
+              border: `1px solid ${m().present ? 'var(--acc)' : 'var(--line2)'}`, 'border-radius': 'var(--r-btn-md)',
+              'font-size': '13px', color: m().present ? 'var(--acc-fg)' : undefined,
+            }}
+          >
+            <Icone nom={m().present ? 'check' : 'add'} taille={18} plein={m().present} />
+            <Show when={!estMobile()}>{m().present ? 'Dans ma liste' : 'Ma liste'}</Show>
+          </button>
+        )}
+      </Show>
     </div>
   )
 }

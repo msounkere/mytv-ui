@@ -16,7 +16,7 @@ for (const moteur of moteursDemandes()) {
       await pause(700)
       v.ok(await videosAvecSource() === 0, `CA1 ${nom} : aucune <video> avec source dans le document`)
       v.ok(s.erreurs.length === 0, `CA1 ${nom} : pageerror = 0 (${s.erreurs.join(' | ') || 'aucune'})`)
-      const r = await idb('reprises', cle)
+      const r = await attendre(async () => { const x = await idb('reprises', cle); return x && x.position > 0.5 && x.position < x.duree ? x : false }, { delai: 5000 }).catch(() => idb('reprises', cle))
       v.ok(r && r.position > 0.5 && r.position < r.duree, `CA1 ${nom} : position de sortie dans reprises (${JSON.stringify(r)})`)
       v.ok(await attendre(() => putsHistorique(cle.replace(/^vod:/, '')).length >= 1, { delai: 4000 }).catch(() => false), `CA1 ${nom} : PUT /profil/historique immediat (keepalive)`)
       v.ok(!(await etatCouche()).presente, `CA1 ${nom} : la couche du lecteur est demontee`)
@@ -72,12 +72,18 @@ for (const moteur of moteursDemandes()) {
     v.ok(s.erreurs.length === 0, `CA1 erreur-retour : pageerror = 0 (${s.erreurs.join(' | ') || 'aucune'})`)
     await page.unroute('**/api/v1/vod/iptva:5003*')
 
-    // --- 4. Échap : sortie du lecteur, flux detache -------------------------------------------------
-    console.log(`[${moteur}] 4. echap`)
+    // --- 4. Échap : quitte l'ecran (ecran precedent), la lecture continue dans le mini-lecteur ;
+    //        « Fermer la lecture » detache alors sans naviguer (arbitrage lot 10 : Echap = Retour).
+    console.log(`[${moteur}] 4. echap puis fermer`)
     await semer('vod:iptva:5004')
     await page.locator('[tabindex="-1"]').first().focus()
     await page.keyboard.press('Escape')
-    await apresArret('echap', 'vod:iptva:5004')
+    await attendre(async () => !/^\/lecture/.test(await chemin()), { quoi: 'Echap quitte l ecran' })
+    v.ok((await page.locator('[data-role="mini-lecteur"]').count()) === 1 && (await etatCouche()).presente, 'CA2 Echap : ecran precedent, la lecture continue dans le mini-lecteur')
+    const ou = await chemin()
+    await page.locator('[data-role="mini-lecteur"]').getByRole('button', { name: 'Fermer la lecture' }).click()
+    await apresArret('echap-fermer', 'vod:iptva:5004')
+    v.ok((await chemin()) === ou, `CA2 « Fermer la lecture » ne navigue pas (${ou})`)
 
     // --- 5. Pause : la position part tout de suite ----------------------------------------------------
     console.log(`[${moteur}] 5. pause`)

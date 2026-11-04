@@ -6,6 +6,8 @@ import { epg, type EnCours } from '../../lib/epg'
 import { idServeurDe } from '../../lib/source-lecture'
 import { donneePartagee, cles } from '../../lib/requetes'
 import { db, type EntreeCatalogue } from '../../lib/db'
+import { grouperVariantes } from '../../lib/variantes'
+import { indiceGroupeActif, ouvrirGroupe } from './groupes-stub'
 import { donnee } from './donnee'
 
 // Tout ce qui dépend des chaînes VOISINES de celle qu'on regarde : la colonne
@@ -111,13 +113,15 @@ export function creerZapping(opts: {
 
   // Le dossier est explicite : ↑ ↓ parcourent la LISTE D'ORIGINE, pas la
   // colonne filtrée. Filtrer sert à retrouver une chaîne, pas à restreindre le
-  // zapping à trois entrées sans s'en apercevoir.
+  // zapping à trois entrées sans s'en apercevoir. Et ils parcourent les GROUPES
+  // de variantes, comme la liste Direct (US-47 CA2, A UX15) : « TF1 », « TF1 HD »
+  // et « TF1 4K » sont une seule chaine, ouverte dans sa variante recommandee.
   function zapper(pas: number) {
-    const l = voisines()
-    if (l.length === 0) return
-    const i = l.findIndex((v) => v.cle === opts.entree().cle)
+    const groupes = grouperVariantes(voisines())
+    if (groupes.length === 0) return
+    const i = indiceGroupeActif(groupes, opts.entree().cle)
     if (i < 0) return
-    opts.surChanger(l[(i + pas + l.length) % l.length]!)
+    void ouvrirGroupe(groupes[(i + pas + groupes.length) % groupes.length]!, opts.surChanger)
   }
 
   function revenirDerniereChaine() {

@@ -1,6 +1,7 @@
 import { createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import { DUREE_BANDEAU } from '../../components/BandeauChaine'
 import { AVANT_FIN_EPISODE, REBOURS_EPISODE } from '../../components/CalquesLecture'
+import { avancerDecompte, calqueFinEpisode } from './fin-regles'
 
 // Les calques qui se posent sur l'image sans jamais la couper, et la règle qui
 // retient les commandes à l'écran. Un seul fichier parce que c'est une seule
@@ -18,6 +19,8 @@ export function creerCalques(opts: {
   cle: () => string
   /** Ce que le lecteur attend d'une décision, hors calques. */
   decisionEnAttente: () => boolean
+  /** Media en pause : le decompte s'arrete avec lui (US-45 CA5, B10). */
+  enPause: () => boolean
   suivant: () => { titre: string; lire: () => void } | undefined
   duree: () => number
   position: () => number
@@ -32,6 +35,8 @@ export function creerCalques(opts: {
   const [reprise, poserReprise] = createSignal<number | null>(null)
   const [rebours, poserRebours] = createSignal<number | null>(null)
   const [reboursRefuse, poserReboursRefuse] = createSignal('')
+  /** Vraie fin apres un decompte refuse : calque persistant, sans decompte (US-45 CA5, C6). */
+  const [finEpisode, poserFinEpisode] = createSignal(false)
 
   // --- Masquage automatique des commandes --------------------------------
   // Tout ce qui attend une décision retient les commandes à l'écran : une
@@ -39,7 +44,7 @@ export function creerCalques(opts: {
   const masquageAutorise = () =>
     !opts.decisionEnAttente() && !diffusionOuverte() &&
     !infosOuvertes() && !miniGuideOuvert() && reprise() === null &&
-    rebours() === null
+    rebours() === null && !finEpisode()
 
   let minuteurMasquage: ReturnType<typeof setTimeout> | undefined
   function reveiller() {
@@ -58,6 +63,14 @@ export function creerCalques(opts: {
   })
 
   onMount(reveiller)
+
+  /** Tap sur l'image (telephone, tablette) : montre ou cache les commandes (CA6, D19). */
+  function basculerCommandes() {
+    if (commandesVisibles()) {
+      clearTimeout(minuteurMasquage)
+      poserCommandesVisibles(false)
+    } else reveiller()
+  }
 
   // --- Bandeau de changement de chaîne -----------------------------------
   createEffect(() => {
@@ -79,8 +92,12 @@ export function creerCalques(opts: {
     if (minuteurRebours) return
     poserRebours(REBOURS_EPISODE)
     minuteurRebours = setInterval(() => {
+      // En pause, le decompte attend : l'utilisateur a suspendu, rien ne doit
+      // demarrer dans son dos (constat B10 : « dans 8 s » apres 2 s de pause).
       const r = rebours()
-      if (r !== null && r > 1) return poserRebours(r - 1)
+      if (r === null) return arreterRebours()
+      const t = avancerDecompte(r, opts.enPause())
+      if (!t.lancer) return poserRebours(t.restant)
       arreterRebours()
       opts.suivant()?.lire()
     }, 1000)
@@ -91,10 +108,15 @@ export function creerCalques(opts: {
     arreterRebours()
   }
 
-  /** Vraie fin de l'episode (US-43 CA4) : le decompte demarre s'il n'a pas deja tourne ni ete refuse. */
+  /**
+   * Vraie fin de l'episode (US-43 CA4) : le decompte demarre s'il n'a pas deja
+   * tourne ; s'il a ete REFUSE, le calque reste affiche sans decompte -- « Episode
+   * suivant · [Lire] [Revenir a la serie] » -- plutot qu'une image figee (C6).
+   */
   function reboursAlaFin() {
-    if (!opts.suivant() || reboursRefuse() === opts.cle()) return
-    demarrerRebours()
+    const c = calqueFinEpisode({ suivant: !!opts.suivant(), refuse: reboursRefuse() === opts.cle() })
+    if (c === 'persistant') poserFinEpisode(true)
+    else if (c === 'decompte') demarrerRebours()
   }
 
   // Le décompte démarre à 15 s de la fin, une seule fois, et jamais si
@@ -117,6 +139,7 @@ export function creerCalques(opts: {
     if (infosOuvertes()) return poserInfosOuvertes(false)
     if (miniGuideOuvert()) return poserMiniGuideOuvert(false)
     if (rebours() !== null) return annulerRebours()
+    if (finEpisode()) return poserFinEpisode(false)
     // Quitter le lecteur ne coupe jamais la lecture : le mini-lecteur prend le
     // relais, et lui seul porte le bouton qui libère la connexion.
     opts.surQuitterEcran()
@@ -126,19 +149,21 @@ export function creerCalques(opts: {
   function nouveauContenu(direct: boolean) {
     arreterRebours()
     poserReboursRefuse('')
+    poserFinEpisode(false)
     poserMiniGuideOuvert(false)
     poserInfosOuvertes(false)
     if (direct) poserBandeau((n) => n + 1)
   }
 
   return {
-    commandesVisibles, reveiller,
+    commandesVisibles, reveiller, basculerCommandes,
     bandeau,
     miniGuideOuvert, poserMiniGuideOuvert,
     infosOuvertes, poserInfosOuvertes,
     diffusionOuverte, poserDiffusionOuverte,
     reprise, poserReprise,
     rebours, arreterRebours, annulerRebours, reboursAlaFin,
+    finEpisode, poserFinEpisode,
     fermerCalque, nouveauContenu,
   }
 }

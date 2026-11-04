@@ -1,18 +1,22 @@
 import { For, Show, onMount } from 'solid-js'
 import Icone from './Icone'
-import { qualite, poserQualite, lectureEnCours, type ClefQualite } from '../etat'
+import { lectureEnCours } from '../etat'
+import { LIBELLE_QUALITE_MODE, choisirQualite, qualite, type ModeQualite } from '../lib/qualite'
+import { noter } from '../lib/diagnostic'
 import { enLocal, formaterDebit, mesurerDebit, sonde } from '../sonde-debit'
 
 // Tout ce que la barre supérieure portait en permanence — mode distant, débit,
 // qualité, codec — vit ici. Le dossier de conception le déplace parce que ces
 // quatre valeurs ne servent qu'au moment où l'on arbitre une qualité, et que le
 // reste du temps elles occupaient la place de ce qu'on regarde.
+//
+// UN SEUL reglage « Qualité » (US-45 CA8, A2/B UX) : Auto / Éco, celui que le
+// lecteur lit (lib/qualite, memorise par appareil). Les 1080p/720p/480p d'avant
+// n'agissaient sur rien.
 
-const QUALITES: Array<{ cle: ClefQualite; libelle: string; debit: string; besoin: number }> = [
-  { cle: 'auto', libelle: 'Auto (recommandé)', debit: '≤ 720p', besoin: 0 },
-  { cle: '1080', libelle: '1080p', debit: '~8 Mbit/s', besoin: 8 },
-  { cle: '720', libelle: '720p', debit: '~4 Mbit/s', besoin: 4 },
-  { cle: '480', libelle: '480p', debit: '~2 Mbit/s', besoin: 2 },
+const QUALITES: Array<{ cle: ModeQualite; libelle: string; debit: string; besoin: number }> = [
+  { cle: 'auto', libelle: `${LIBELLE_QUALITE_MODE.auto} (recommandé)`, debit: 'flux tel quel', besoin: 4 },
+  { cle: 'eco', libelle: `${LIBELLE_QUALITE_MODE.eco} — débit réduit`, debit: '480p · ~1,2 Mbit/s', besoin: 1.2 },
 ]
 
 export default function PanneauLecteur(props: {
@@ -48,11 +52,10 @@ export default function PanneauLecteur(props: {
         ? 'Mesure du débit en cours sur la liaison qui sert cette page.'
         : 'Débit non mesuré : impossible de recommander une qualité pour l’instant.'
     }
-    const tenable = QUALITES.filter((q) => q.besoin > 0 && m.debit >= q.besoin * 1.5)[0]
     const lieu = enLocal() ? 'Réseau local' : 'Liaison distante'
-    return tenable === undefined
-      ? `${lieu} mesurée à ${formaterDebit(m.debit)} : trop juste même pour du 480p, les coupures sont à prévoir.`
-      : `${lieu} mesurée à ${formaterDebit(m.debit)} : ${tenable.libelle} tient confortablement, au-delà un seul flux peut saturer la liaison.`
+    if (m.debit >= QUALITES[0]!.besoin * 1.5) return `${lieu} mesurée à ${formaterDebit(m.debit)} : la qualité Auto tient confortablement.`
+    if (m.debit >= QUALITES[1]!.besoin * 1.5) return `${lieu} mesurée à ${formaterDebit(m.debit)} : trop juste pour un flux HD, la qualité Éco (480p) évitera les coupures.`
+    return `${lieu} mesurée à ${formaterDebit(m.debit)} : trop juste même en Éco, les coupures sont à prévoir.`
   }
 
   const lignes = (): Array<[string, string]> => {
@@ -79,7 +82,8 @@ export default function PanneauLecteur(props: {
             role="menuitemradio"
             aria-checked={qualite() === q.cle}
             onClick={() => {
-              poserQualite(q.cle)
+              choisirQualite(q.cle)
+              noter('eco:choix', { qualite: q.cle, origine: 'panneau' })
               props.surFermer()
             }}
           >

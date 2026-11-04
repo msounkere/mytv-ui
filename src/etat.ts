@@ -104,6 +104,27 @@ export type Aller = (href: string, options?: { replace?: boolean }) => void
 let lireChemin: () => string = () => '/'
 let aller: Aller = () => {}
 
+// --- STUB ui-6 (contrat ui-8, US-47 CA7 / US-45 CA2) : REMPLACE par la version ui-8 a la fusion ---
+// Retour unique : on compte les navigations POUSSEES par l'application ; tant qu'il
+// y en a, history.back() reste dans l'application ; sinon, remplacement vers `repli`.
+let profondeur = 0
+let retourAttendu = false
+if (typeof window !== 'undefined')
+  window.addEventListener('popstate', () => {
+    if (retourAttendu) retourAttendu = false
+    else profondeur = Math.max(0, profondeur - 1)
+  })
+
+export function revenirEnArriere(repli: string): void {
+  if (profondeur > 0) {
+    profondeur -= 1
+    retourAttendu = true
+    window.history.back()
+  } else aller(repli, { replace: true })
+}
+
+export const profondeurHistorique = (): number => profondeur
+
 // L'onglet suit l'URL, mais SURVIT aux écrans qui n'en portent pas : Parcours
 // reste monté sous l'Accueil et le Guide, et le remettre sur Direct à chaque
 // détour relancerait exactement les requêtes que cette préservation évite.
@@ -113,7 +134,11 @@ export const onglet = ongletRetenu
 
 export function brancherRouteur(chemin: () => string, navigation: Aller): void {
   lireChemin = chemin
-  aller = navigation
+  aller = (href, options) => {
+    // STUB ui-6 (contrat ui-8) : une navigation poussee approfondit la pile.
+    if (!options?.replace && href !== lireChemin()) profondeur += 1
+    navigation(href, options)
+  }
   // `createComputed` et non `createEffect` : l'onglet doit être à jour AVANT
   // que Parcours ne se rende, faute de quoi il se peint une fois sur l'onglet
   // précédent — et sa grille repartirait du mauvais catalogue.
@@ -270,16 +295,29 @@ export function changerDeChaine(e: EntreeCatalogue): void {
  * à sa liste (voir lib/sortie-lecteur).
  */
 export function quitterLecteur(): void {
-  aller(cheminApresLecture(selection()))
+  // STUB ui-6 (contrat ui-8) : ne fait rien hors de l'ecran du lecteur.
+  if (ecran() !== 'lecture') return
+  revenirEnArriere(cheminApresLecture(selection()))
 }
 
-/** Arrêt explicite : c'est le seul geste qui libère la connexion du relais. */
+/** STUB ui-6 (contrat ui-8) : cle du dernier contenu ARRETE, que la coque ne doit pas relire. */
+const [cleArretee, poserCleArretee] = createSignal<string | undefined>(undefined)
+export { cleArretee }
+
+/**
+ * Arrêt explicite : c'est le seul geste qui libère la connexion du relais.
+ * STUB ui-6 (contrat ui-8) : depuis le lecteur, retour a l'ecran precedent ;
+ * depuis ailleurs (mini-lecteur), on reste ou l'on est.
+ */
 export function arreterLecture(): void {
-  const sortie = cheminApresLecture(selection())
+  const s = selection()
+  const auLecteur = ecran() === 'lecture'
+  const sortie = cheminApresLecture(s)
   batch(() => {
+    poserCleArretee(s?.cle)
     poserSelection(null)
-    aller(sortie)
   })
+  if (auLecteur) revenirEnArriere(sortie)
 }
 
 /**
