@@ -230,10 +230,20 @@ export default function Guide(props: {
   onMount(() => {
     if (!mesure) return
     const el = mesure
-    const observateur = new ResizeObserver(() => poserLargeur(el.clientWidth))
+    // Mesure différée par `requestAnimationFrame` : écrire la largeur dans le
+    // rappel repositionne la règle pendant la même disposition, boucle que
+    // WebKit remonte en `pageerror` (audit D17).
+    let demande = 0
+    const observateur = new ResizeObserver(() => {
+      cancelAnimationFrame(demande)
+      demande = requestAnimationFrame(() => poserLargeur(el.clientWidth))
+    })
     observateur.observe(el)
     poserLargeur(el.clientWidth)
-    onCleanup(() => observateur.disconnect())
+    onCleanup(() => {
+      cancelAnimationFrame(demande)
+      observateur.disconnect()
+    })
   })
 
   /** Cible tactile de 44 px sur mobile (cahier des charges, §6). */

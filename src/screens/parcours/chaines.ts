@@ -6,6 +6,7 @@ import { FRAICHEUR, cles, requeteClefee } from '../../lib/requetes'
 import { est4K } from '../../lib/modes-direct'
 import { db, normaliser, type EntreeCatalogue } from '../../lib/db'
 import { grouperVariantes, type Groupe } from '../../lib/variantes'
+import { trierChaines } from '../../lib/direct-tri'
 
 // Les chaînes d'une catégorie et ce qui y passe en ce moment : deux lectures
 // qui n'ont de sens qu'ensemble, et qui sont faites EN UNE requête indexée pour
@@ -30,8 +31,8 @@ export function creerListeChaines(opts: {
     (id: string) => cles.categorie('live', id),
     opts.categorieActive,
     async (id) => {
-      const liste = await entreesDeCategorie('live', id)
-      return liste.sort((a, b) => a.nom.localeCompare(b.nom, 'fr'))
+      // Ordre du bouquet (numero du fournisseur), sinon nom naturel (A UX13).
+      return trierChaines(await entreesDeCategorie('live', id))
     },
   )
 

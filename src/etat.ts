@@ -1,4 +1,4 @@
-import { batch, createComputed, createSignal } from 'solid-js'
+import { batch, createComputed, createSignal, untrack } from 'solid-js'
 import type { EntreeCatalogue, TypeContenu } from './lib/db'
 import { idServeurDeCle } from './lib/identifiants'
 import { associerSerie } from './lib/preferences'
@@ -72,12 +72,18 @@ export function lireParametresDirect(recherche: string): ParametresDirect {
   }
 }
 
+const memesParametres = (a: ParametresDirect, b: ParametresDirect) =>
+  a.categorie === b.categorie && a.mode === b.mode
+
 export function poserParametresDirect(p: ParametresDirect): void {
-  const suivant = { ...parametresDirect(), ...p }
-  poserParametresRetenus(suivant)
-  if (tete(lireChemin()) !== 'direct') return
+  // Lecture NON suivie : l'appelant est souvent un effet qui ecrit ici, et un
+  // nouvel objet a chaque ecriture le relancerait sans fin.
+  const actuel = untrack(parametresDirect)
+  const suivant = { ...actuel, ...p }
+  if (!memesParametres(actuel, suivant)) poserParametresRetenus(suivant)
+  if (untrack(() => tete(lireChemin())) !== 'direct') return
   const cible = cheminDirect(suivant)
-  if (cible !== lireChemin() + lireRecherche()) aller(cible, { replace: true })
+  if (cible !== untrack(() => lireChemin() + lireRecherche())) aller(cible, { replace: true })
 }
 
 const ONGLET_DU_CHEMIN: Record<string, TypeContenu | undefined> = {
@@ -202,7 +208,11 @@ export function brancherRouteur(chemin: () => string, navigation: Aller, recherc
     // bouton retour) font foi sur ceux retenus.
     if (t === 'live') {
       const p = lireParametresDirect(recherche())
-      if (p.categorie || p.mode) poserParametresRetenus((r) => ({ ...r, ...p }))
+      if (p.categorie || p.mode) {
+        const actuel = untrack(parametresDirect)
+        const suivant = { ...actuel, ...p }
+        if (!memesParametres(actuel, suivant)) poserParametresRetenus(suivant)
+      }
     }
   })
 }

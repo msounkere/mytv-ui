@@ -1,9 +1,11 @@
-import { Show } from 'solid-js'
+import { Show, createResource } from 'solid-js'
 import SubstitutLogo from './SubstitutLogo'
 import EtiquettePays from './EtiquettePays'
 import { ENCRE, ENCRE2 } from './ControlesLecteur'
 import { estMobile } from '../lib/gabarit'
-import type { EntreeCatalogue } from '../lib/db'
+import { db, type EntreeCatalogue } from '../lib/db'
+import { LIBELLE_QUALITE, qualiteDe } from '../lib/variantes'
+import { libelleVariante } from '../lib/direct-tri'
 
 // Après un zap, l'image met une seconde ou deux à dire sur quoi on est tombé.
 // Ce bandeau le dit tout de suite, puis s'efface — il ne reste jamais assez
@@ -19,6 +21,14 @@ export default function BandeauChaine(props: {
   /** Tranche horaire du programme, « 20:00 – 21:00 ». */
   horaire?: string
 }) {
+  // Lot 10 (US-47 CA2, A UX15) : la liste ouvre « Chaîne 0 HD » quand on
+  // choisit « Chaîne 0 » : le bandeau le dit (« Variante HD · choisie pour
+  // votre liaison »), mais seulement quand il y a vraiment plusieurs variantes.
+  const [nombreVariantes] = createResource(
+    () => props.entree.groupe,
+    (groupe) => db.catalogue.where('groupe').equals(groupe).count().catch(() => 1),
+  )
+  const variante = () => libelleVariante(LIBELLE_QUALITE[qualiteDe(props.entree.nom)], nombreVariantes() ?? 1)
   return (
     <div
       data-role="bandeau-chaine"
@@ -46,6 +56,11 @@ export default function BandeauChaine(props: {
           </Show>
           {props.programme ?? 'Aucun programme au guide pour cette chaîne'}
         </span>
+        <Show when={variante()}>
+          {(v) => (
+            <span class="tronque" data-role="variante-jouee" style={{ 'font-size': '11px', color: ENCRE2 }}>{v()}</span>
+          )}
+        </Show>
       </div>
     </div>
   )

@@ -152,7 +152,8 @@ function Entree(props: {
       <span class="rail-icone">
         <Icone nom={props.icone} taille={22} plein={props.actif} />
         <Show when={props.enLecture}>
-          <span class="rail-point" title="Lecture en cours" />
+          {/* Hors du nom accessible : « Lecture en cours » ne doit pas précéder « Direct ». */}
+          <span class="rail-point" title="Lecture en cours" aria-hidden="true" />
         </Show>
       </span>
       <span class="rail-libelle">{props.libelle}</span>

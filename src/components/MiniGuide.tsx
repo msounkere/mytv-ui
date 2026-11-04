@@ -1,11 +1,14 @@
-import { For, Show } from 'solid-js'
+import { For, Show, createMemo } from 'solid-js'
 import SubstitutLogo from './SubstitutLogo'
 import EtiquettePays from './EtiquettePays'
 import Icone from './Icone'
+import { BadgesVariantes } from './LigneChaine'
 import { ENCRE, ENCRE2, ENCRE3 } from './ControlesLecteur'
 import { estBureau, estMobile } from '../lib/gabarit'
 import type { Programme } from '../lib/epg'
 import type { EntreeCatalogue } from '../lib/db'
+import { grouperVariantes, qualitesDuGroupe, type Groupe } from '../lib/variantes'
+import { ouvrirGroupe } from '../screens/parcours/ouverture'
 
 // Zapper à l'aveugle fait perdre la chaîne qu'on regardait. Le mini-guide
 // montre ce qui passe autour, sans quitter le flux ni ouvrir le guide complet.
@@ -35,6 +38,22 @@ export interface MiniGuideProps {
 }
 
 export default function MiniGuide(props: MiniGuideProps) {
+  // Lot 10 (US-47 CA2, A UX15) : UNE ligne par chaîne, variantes regroupées
+  // comme dans la liste du Direct ; choisir une ligne ouvre la variante
+  // recommandée. Le programme d'un groupe est celui de sa première variante
+  // qui en a un.
+  const groupes = createMemo(() => grouperVariantes(props.elements))
+  const premier = <T,>(g: Groupe<EntreeCatalogue>, f: (e: EntreeCatalogue) => T | undefined): T | undefined => {
+    for (const v of g.variantes) {
+      const r = f(v)
+      if (r) return r
+    }
+    return undefined
+  }
+  function choisir(g: Groupe<EntreeCatalogue>) {
+    if (g.variantes.some((v) => v.cle === props.cleActive)) return props.surFermer()
+    void ouvrirGroupe(g, props.surChoisir)
+  }
   return (
     <div
       role="dialog"
@@ -79,13 +98,15 @@ export default function MiniGuide(props: MiniGuideProps) {
       </div>
 
       <div style={{ overflow: 'auto' }}>
-        <For each={props.elements}>
-          {(v) => {
-            const actif = () => v.cle === props.cleActive
-            const p = () => props.programme(v)
+        <For each={groupes()}>
+          {(g) => {
+            const v = g.representant
+            const actif = () => g.variantes.some((x) => x.cle === props.cleActive)
+            const p = () => premier(g, props.programme)
             return (
               <button
-                onClick={() => props.surChoisir(v)}
+                onClick={() => choisir(g)}
+                data-role="entree-mini-guide"
                 aria-current={actif() ? 'true' : undefined}
                 style={{
                   display: 'grid', 'grid-template-columns': '28px 46px minmax(0,1fr)',
@@ -105,10 +126,11 @@ export default function MiniGuide(props: MiniGuideProps) {
                   <span style={{ display: 'flex', gap: '8px', 'min-width': 0 }}>
                     <span
                       class="tronque"
-                      style={{ flex: '0 0 auto', 'max-width': '40%', 'font-weight': 'var(--w-strong)' }}
+                      style={{ flex: '0 1 auto', 'min-width': 0, 'max-width': '40%', 'font-weight': 'var(--w-strong)' }}
                     >
-                      {v.nom}
+                      {g.nom}
                     </span>
+                    <BadgesVariantes qualites={qualitesDuGroupe(g)} compact nom={g.nom} />
                     <span class="tronque" style={{ color: ENCRE2 }}>
                       {p()?.titre ?? 'Aucun programme'}
                     </span>
@@ -139,7 +161,7 @@ export default function MiniGuide(props: MiniGuideProps) {
                         </>
                       )}
                     </Show>
-                    <Show when={props.ensuite(v)}>
+                    <Show when={premier(g, props.ensuite)}>
                       {(n) => <span class="tronque">Ensuite : {n().titre}</span>}
                     </Show>
                   </span>

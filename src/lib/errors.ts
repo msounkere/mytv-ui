@@ -2,6 +2,11 @@
 // identify a specific codec, container, or network cause ». Toute erreur de cette
 // interface nomme donc sa couche et porte une action proposee.
 
+import {
+  ACTION_FLUX_ILLISIBLE, ACTION_GUIDE_INDISPONIBLE, CONTEXTE_GUIDE, MESSAGE_FLUX_ILLISIBLE, MESSAGE_GUIDE_INDISPONIBLE,
+  estContexteDirect,
+} from './messages-guide'
+
 export type Couche = 'reseau' | 'auth' | 'limite' | 'codec' | 'relais' | 'donnees' | 'fournisseur'
 
 export class ErreurLecteur extends Error {
@@ -199,11 +204,18 @@ export function erreurDeStatut(statut: number, infos: InfosStatut = {}): ErreurL
   // Place du fournisseur prise : message propre a chaque cause (le code prime sur le statut).
   if (infos.code && CODES_OCCUPATION.includes(infos.code) && STATUTS_PLACE_PRISE.includes(statut))
     return erreurOccupation(infos.code, detail, lireRetryAfter(infos.retryAfter, infos.maintenantMs))
+  // Le guide n'est pas un contenu : ses echecs ont leurs propres mots (US-47 CA6, D13).
+  if (infos.contexte === CONTEXTE_GUIDE && statut !== 401)
+    return new ErreurLecteur('relais', MESSAGE_GUIDE_INDISPONIBLE, ACTION_GUIDE_INDISPONIBLE, detail, lireRetryAfter(infos.retryAfter, infos.maintenantMs))
   switch (true) {
     case statut === 401:
       return new ErreurLecteur('auth', 'La session a expiré.', 'Se reconnecter, puis relancer la lecture.', detail)
     case statut === 403:
       return new ErreurLecteur('relais', 'Le serveur a refusé l’accès à ce flux.', 'Réessayer ; si cela persiste, se reconnecter.', detail)
+    // Un manifeste ou un segment du DIRECT qui manque : la chaine est bien au
+    // catalogue, c'est le relais ou le fournisseur qui ne la sert pas (A UX17).
+    case statut === 404 && estContexteDirect(infos.contexte):
+      return new ErreurLecteur('relais', MESSAGE_FLUX_ILLISIBLE, ACTION_FLUX_ILLISIBLE, detail)
     case statut === 404:
       return new ErreurLecteur(
         'donnees', 'Ce contenu n’existe plus au catalogue.', 'Actualiser le catalogue, ou choisir un autre contenu.', detail,
@@ -302,4 +314,34 @@ export function erreurDeMedia(code: number | undefined, message?: string): Erreu
     default:
       return new ErreurLecteur('relais', 'Lecture impossible.', 'Reessayer.', message)
   }
+}
+
+// --- Stockage local (IndexedDB) ----------------------------------------------
+
+const NOMS_STOCKAGE = new Set([
+  'DatabaseClosedError', 'InvalidStateError', 'QuotaExceededError', 'OpenFailedError', 'UnknownError',
+  'MissingAPIError', 'VersionError', 'InvalidAccessError', 'NotFoundError',
+])
+const TEXTE_STOCKAGE = /indexeddb|database|mutation operation|quota|storage/i
+
+/** Une erreur de base locale (navigation privee, stockage bloque, quota) ? */
+export function estErreurStockage(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false
+  const nom = String((e as { name?: unknown }).name ?? '')
+  const message = String((e as { message?: unknown }).message ?? '')
+  const interne = (e as { inner?: unknown }).inner
+  return NOMS_STOCKAGE.has(nom) || TEXTE_STOCKAGE.test(message) || (interne !== undefined && estErreurStockage(interne))
+}
+
+export const MESSAGE_STOCKAGE_BLOQUE =
+  'Ce navigateur bloque le stockage local (navigation privée ou données de site refusées) : le catalogue ne peut pas être enregistré sur cet appareil.'
+export const ACTION_STOCKAGE_BLOQUE = 'Quitter la navigation privée ou autoriser les données de site, puis réessayer.'
+
+/**
+ * Phrase humaine pour une base locale indisponible (US-47 CA4, audit D14) :
+ * jamais « DatabaseClosedError: InvalidStateError A mutation operation… ».
+ */
+export function erreurStockageLocal(e: unknown): ErreurLecteur {
+  const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+  return new ErreurLecteur('donnees', MESSAGE_STOCKAGE_BLOQUE, ACTION_STOCKAGE_BLOQUE, detail)
 }

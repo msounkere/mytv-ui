@@ -2,6 +2,7 @@ import { Show, createSignal } from 'solid-js'
 import PlaqueChaine, { avancement, plageHoraire, type ProgrammeCourant } from './PlaqueChaine'
 import { plaque, plaqueTexte } from './couleurs'
 import type { EntreeCatalogue } from '../lib/db'
+import { estMobile } from '../lib/gabarit'
 
 // Carte 16:9 d'une chaîne en direct. Servie par deux écrans : la rangée « En
 // direct maintenant » de l'accueil et le mode « Cartes » de Direct.
@@ -36,6 +37,7 @@ export default function CarteDirect(props: CarteDirectProps) {
       onFocus={() => poserSurvol(true)}
       onBlur={() => poserSurvol(false)}
       title={props.entree.nom}
+      data-role="carte-direct"
       style={{
         display: 'flex',
         'flex-direction': 'column',
@@ -115,8 +117,10 @@ export default function CarteDirect(props: CarteDirectProps) {
           width: '100%',
         }}
       >
-        <div style={{ display: 'flex', 'align-items': 'baseline', gap: '8px', 'min-width': '0' }}>
-          <span class="tronque" style={{ 'font-weight': 'var(--w-strong)', flex: '1' }}>
+        {/* Telephone : une carte de 177 px ne loge pas le nom ET l'horaire
+            sur une ligne (« Chaîn… », audit A bug 11) : l'horaire passe dessous. */}
+        <div style={{ display: 'flex', 'flex-direction': estMobile() ? 'column' : 'row', 'align-items': estMobile() ? 'stretch' : 'baseline', gap: estMobile() ? '0' : '8px', 'min-width': '0' }}>
+          <span class="tronque" data-role="nom-chaine" style={{ 'font-weight': 'var(--w-strong)', flex: '1', 'min-width': '0' }}>
             {props.entree.nom}
           </span>
           <Show when={props.programme}>

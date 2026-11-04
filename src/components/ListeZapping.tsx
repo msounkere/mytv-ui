@@ -1,13 +1,23 @@
-import { Show, createEffect } from 'solid-js'
+import { Show, createEffect, createMemo } from 'solid-js'
 import ListeVirtuelle from './ListeVirtuelle'
 import SubstitutLogo from './SubstitutLogo'
 import EtiquettePays from './EtiquettePays'
 import Icone from './Icone'
+import { BadgesVariantes } from './LigneChaine'
 import { estMobile } from '../lib/gabarit'
 import type { EntreeCatalogue } from '../lib/db'
+import { grouperVariantes, qualitesDuGroupe, type Groupe } from '../lib/variantes'
+import { indiceGroupeActif } from '../lib/direct-tri'
+import { ouvrirGroupe } from '../screens/parcours/ouverture'
 
 /** Hauteur de ligne de la maquette ; sert aussi au recentrage du défilement. */
 export const HAUTEUR_LIGNE = 48
+
+// Lot 10 (US-47 CA2, audit A UX15) : la colonne de zapping regroupe les
+// variantes comme la liste du Direct — UNE entrée par chaîne (« Chaîne 0 ·
+// 4K · HD »), et choisir une entrée ouvre la variante recommandée pour la
+// liaison, exactement comme depuis la liste. La chaîne jouée est l'entrée dont
+// l'une des variantes est en lecture.
 
 export interface ListeZappingProps {
   titre: string
@@ -23,11 +33,14 @@ export interface ListeZappingProps {
 export default function ListeZapping(props: ListeZappingProps) {
   let zone!: HTMLDivElement
 
+  const groupes = createMemo(() => grouperVariantes(props.elements))
+  const indiceActif = createMemo(() => indiceGroupeActif(groupes(), props.cleActive))
+
   // Zapper au clavier doit ramener la chaîne jouée sous les yeux. La zone de
   // défilement appartient à ListeVirtuelle : on la pilote depuis le DOM plutôt
   // que d'ajouter une API à une primitive partagée et testée.
   createEffect(() => {
-    const index = props.elements.findIndex((e) => e.cle === props.cleActive)
+    const index = indiceActif()
     if (index < 0) return
     const scroller = zone.firstElementChild as HTMLElement | null
     if (!scroller) return
@@ -38,13 +51,28 @@ export default function ListeZapping(props: ListeZappingProps) {
       scroller.scrollTop = bas - scroller.clientHeight
   })
 
+  /** La variante jouée du groupe, sinon celle qu'on recommande. */
+  function choisir(g: Groupe<EntreeCatalogue>) {
+    const jouee = g.variantes.find((v) => v.cle === props.cleActive)
+    if (jouee) return
+    void ouvrirGroupe(g, props.surChoisir)
+  }
+
+  const sousTitreDe = (g: Groupe<EntreeCatalogue>) => {
+    for (const v of g.variantes) {
+      const t = props.sousTitre?.(v)
+      if (t) return t
+    }
+    return undefined
+  }
+
   return (
     <>
       <div style={{ display: 'grid', gap: '10px', padding: '14px 14px 10px' }}>
         <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
           <h2 class="tronque" style={{ flex: 1, 'font-size': '13px' }}>{props.titre}</h2>
-          <span class="num tertiaire" style={{ 'font-size': '11px' }}>
-            {props.elements.length.toLocaleString('fr-FR')}
+          <span class="num tertiaire" data-role="zapping-compte" style={{ 'font-size': '11px' }}>
+            {groupes().length.toLocaleString('fr-FR')}
           </span>
         </div>
         <div style={{ position: 'relative', display: 'grid' }}>
@@ -66,7 +94,7 @@ export default function ListeZapping(props: ListeZappingProps) {
 
       <div ref={zone} style={{ 'min-height': 0 }}>
         <ListeVirtuelle
-          elements={props.elements}
+          elements={groupes()}
           hauteurLigne={HAUTEUR_LIGNE}
           marge={6}
           vide={
@@ -74,12 +102,14 @@ export default function ListeZapping(props: ListeZappingProps) {
               Aucune entrée ne correspond à ce filtre.
             </p>
           }
-          ligne={(v) => {
-            const actif = () => v.cle === props.cleActive
+          ligne={(g) => {
+            const actif = () => g.variantes.some((v) => v.cle === props.cleActive)
+            const v = () => g.representant
             return (
               <button
-                onClick={() => props.surChoisir(v)}
-                title={v.nom}
+                onClick={() => choisir(g)}
+                title={g.nom}
+                data-role="entree-zapping"
                 aria-current={actif() ? 'true' : undefined}
                 style={{
                   display: 'flex', 'align-items': 'center', gap: '10px',
@@ -90,13 +120,16 @@ export default function ListeZapping(props: ListeZappingProps) {
                   color: actif() ? 'var(--acc-fg)' : undefined,
                 }}
               >
-                <EtiquettePays pays={v.pays} />
-                <SubstitutLogo nom={v.nom} src={v.icone} taille={32} />
+                <EtiquettePays pays={v().pays} />
+                <SubstitutLogo nom={v().nom} src={v().icone} taille={32} />
                 <span style={{ flex: 1, 'min-width': 0, display: 'grid' }}>
-                  <span class="tronque" style={{ 'font-size': '13px', 'font-weight': 'var(--w-strong)' }}>
-                    {v.nom}
+                  <span style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'min-width': 0 }}>
+                    <span class="tronque" style={{ 'font-size': '13px', 'font-weight': 'var(--w-strong)', flex: '0 1 auto', 'min-width': 0 }}>
+                      {g.nom}
+                    </span>
+                    <BadgesVariantes qualites={qualitesDuGroupe(g)} compact nom={g.nom} />
                   </span>
-                  <Show when={props.sousTitre?.(v)}>
+                  <Show when={sousTitreDe(g)}>
                     {(s) => (
                       <span class="tronque tertiaire" style={{ 'font-size': '11px' }}>{s()}</span>
                     )}

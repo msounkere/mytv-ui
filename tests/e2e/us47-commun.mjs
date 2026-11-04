@@ -189,3 +189,26 @@ export const ciblesPetites = (page, mini = 44, racine = 'body') => page.evaluate
 
 /** Debordement horizontal du document ou d'un element. */
 export const deborde = (page, sel = 'html') => page.evaluate((s) => { const e = document.querySelector(s); return e ? e.scrollWidth > e.clientWidth + 1 : false }, sel)
+
+/**
+ * Sert le direct par interception (playlist HLS + segments TS factices de
+ * media.mjs), comme l'audit A : le faux serveur n'a pas de HLS, et sans flux le
+ * lecteur n'affiche que son erreur. Aucun vrai flux.
+ */
+export async function servirDirect(b) {
+  const { segmentTs } = await import('./media.mjs')
+  const playlist = (chaine) => ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-TARGETDURATION:2', '#EXT-X-MEDIA-SEQUENCE:0',
+    ...Array.from({ length: 6 }, (_, i) => `#EXTINF:2.000,\n/api/v1/live/${chaine}/seg/jeton${i}`), '#EXT-X-ENDLIST'].join('\n') + '\n'
+  const demandes = []
+  await b.ctx.route(/\/api\/v1\/live\//, (route) => {
+    const u = new URL(route.request().url())
+    demandes.push(u.pathname)
+    let m = /^\/api\/v1\/live\/([^/]+)\.m3u8$/.exec(u.pathname)
+    if (m) return route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: playlist(m[1]) })
+    m = /^\/api\/v1\/live\/([^/]+)\/seg\/jeton(\d+)$/.exec(u.pathname)
+    if (m) return route.fulfill({ status: 200, contentType: 'video/mp2t', body: segmentTs(Number(m[2]), 2) })
+    if (/\/fin$/.test(u.pathname)) return route.fulfill({ status: 204 })
+    return route.continue()
+  })
+  return demandes
+}

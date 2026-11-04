@@ -4,7 +4,7 @@ import {
   ErreurApi, ErreurReseau, appeler,
   type CategorieApi, type ChaineApi, type FilmApi, type ManifesteCatalogue, type SerieApi,
 } from './api'
-import { ErreurLecteur } from './errors'
+import { ErreurLecteur, erreurStockageLocal, estErreurStockage } from './errors'
 import { cleDe } from './identifiants'
 import { separerPrefixe } from './libelles'
 import { lireNdjson } from './ndjson'
@@ -367,6 +367,8 @@ self.onmessage = async (e: MessageEvent<VersWorker>) => {
 
 function versErreur(err: unknown): ErreurLecteur {
   if (err instanceof ErreurLecteur) return err
+  // Base locale bloquee (navigation privee) : une phrase, pas l'exception (D14).
+  if (estErreurStockage(err)) return erreurStockageLocal(err)
   if (err instanceof ErreurReseau)
     return new ErreurLecteur('reseau', 'Le service est injoignable.', "Réessayer l'import.", err.message)
   if (err instanceof ErreurApi) {
