@@ -69,7 +69,14 @@ trois ↓ rapides : `page.on('crash')` jamais. A confirmer sur un iPhone reel (r
 - `src/components/PanneauLecteur.tsx` : meme intention que la version ui-8 (Qualite Auto/Éco de lib/qualite) ;
   prendre la version ui-8.
 - `src/components/ListeVirtuelle.tsx`, `src/components/GrilleCartes.tsx` : copies a l'identique de feat/ui-8
-  (mesure ResizeObserver differee) -- aucun conflit attendu.
+  (mesure ResizeObserver differee) -- aucun conflit attendu ; `src/components/GrilleAffiches.tsx` et
+  `src/screens/Guide.tsx` (ui-8) : meme motif applique aux deux observateurs restants (D17), a reprendre si ui-8
+  ne l'a pas fait.
+- Banc `tests/e2e/us45-banc.mjs` : deux artefacts WebKit ignores dans `pageerror` (« ResizeObserver loop », et
+  « due to access control checks » = `fetch` interrompu par la navigation suivante) ; `us45-mobile.mjs` : les
+  GESTES (tap, double-tap, masquage) sont verifies sur chromium et firefox, informatifs sur webkit (l'emulation
+  tactile de Playwright webkit est trop lente pour un double-tap) ; la barre, le menu ⋯ et la carte d'erreur y
+  restent verifies.
 - `tests/e2e/us43.mjs` (ui-7) : trois adaptations a la nouvelle fiche (« Ma liste a partir d'ici » par le menu
   de ligne ; sonde sans son propre bouton ; « Prêt » = chip `[data-role="chip-preparation"][data-etat="pret"]`).
 - `tests/e2e/us28.mjs` (ui-8) : une adaptation (la bande-annonce de la fiche film vit dans le menu « ⋯ », C §5.3) ;

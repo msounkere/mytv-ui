@@ -230,10 +230,18 @@ export default function Guide(props: {
   onMount(() => {
     if (!mesure) return
     const el = mesure
-    const observateur = new ResizeObserver(() => poserLargeur(el.clientWidth))
+    // Mesure différée d'une image (D17 : boucle ResizeObserver sur WebKit).
+    let demande = 0
+    const observateur = new ResizeObserver(() => {
+      cancelAnimationFrame(demande)
+      demande = requestAnimationFrame(() => poserLargeur(el.clientWidth))
+    })
     observateur.observe(el)
     poserLargeur(el.clientWidth)
-    onCleanup(() => observateur.disconnect())
+    onCleanup(() => {
+      cancelAnimationFrame(demande)
+      observateur.disconnect()
+    })
   })
 
   /** Cible tactile de 44 px sur mobile (cahier des charges, §6). */

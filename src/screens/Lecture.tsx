@@ -1310,7 +1310,9 @@ export default function Lecture(props: {
           <div
             data-role="surface"
             onClick={surSurface}
-            style={{ position: 'absolute', inset: 0, 'z-index': 1 }}
+            // Sans z-index : au-dessus de la video (qui la precede), sous tous les
+            // calques et commandes (qui la suivent dans le document).
+            style={{ position: 'absolute', inset: 0 }}
           />
 
           <div

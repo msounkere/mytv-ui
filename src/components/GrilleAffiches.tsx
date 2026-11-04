@@ -74,10 +74,20 @@ export default function GrilleAffiches(props: GrilleAffichesProps) {
     const el = boite()
     if (!el) return
     const mesurer = () => poserLargeur(el.clientWidth)
-    const observateur = new ResizeObserver(mesurer)
+    // Mesure différée d'une image : écrire le signal DANS le rappel re-pose la
+    // grille pendant la même disposition, boucle que WebKit remonte en
+    // « ResizeObserver loop completed with undelivered notifications » (D17).
+    let demande = 0
+    const observateur = new ResizeObserver(() => {
+      cancelAnimationFrame(demande)
+      demande = requestAnimationFrame(mesurer)
+    })
     observateur.observe(el)
     mesurer()
-    onCleanup(() => observateur.disconnect())
+    onCleanup(() => {
+      cancelAnimationFrame(demande)
+      observateur.disconnect()
+    })
   })
 
   // Mesuré dans l'application : la zone de défilement ne réserve pas de

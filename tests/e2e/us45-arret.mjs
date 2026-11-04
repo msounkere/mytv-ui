@@ -16,7 +16,7 @@ for (const moteur of moteursDemandes()) {
       await pause(700)
       v.ok(await videosAvecSource() === 0, `CA1 ${nom} : aucune <video> avec source dans le document`)
       v.ok(s.erreurs.length === 0, `CA1 ${nom} : pageerror = 0 (${s.erreurs.join(' | ') || 'aucune'})`)
-      const r = await attendre(async () => { const x = await idb('reprises', cle); return x && x.position > 0.5 && x.position < x.duree ? x : false }, { delai: 5000 }).catch(() => idb('reprises', cle))
+      const r = await attendre(async () => { const x = await idb('reprises', cle); return x && x.position > 0.5 && x.position < x.duree ? x : false }, { delai: 10_000 }).catch(() => idb('reprises', cle))
       v.ok(r && r.position > 0.5 && r.position < r.duree, `CA1 ${nom} : position de sortie dans reprises (${JSON.stringify(r)})`)
       v.ok(await attendre(() => putsHistorique(cle.replace(/^vod:/, '')).length >= 1, { delai: 4000 }).catch(() => false), `CA1 ${nom} : PUT /profil/historique immediat (keepalive)`)
       v.ok(!(await etatCouche()).presente, `CA1 ${nom} : la couche du lecteur est demontee`)

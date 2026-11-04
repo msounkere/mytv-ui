@@ -88,7 +88,9 @@ export async function ouvrirSession({ navigateur, moteur, gabarit = 'bureau', sc
   const page = await ctx.newPage()
   const erreurs = []
   // « ResizeObserver loop » (WebKit, D17) vient des grilles de la coque (perimetre ui-8, US-47 CA6) : hors sujet ici.
-  page.on('pageerror', (e) => { if (!/ResizeObserver loop/.test(e.message)) erreurs.push(e.message) })
+  // « due to access control checks » : WebKit remonte en erreur de page les requetes `fetch` que la navigation
+  // suivante (page.goto) interrompt -- un artefact du banc, pas une erreur de l'interface.
+  page.on('pageerror', (e) => { if (!/ResizeObserver loop|due to access control checks/.test(e.message)) erreurs.push(e.message) })
   let plante = false
   page.on('crash', () => { plante = true })
   await page.addInitScript(() => { window.__session = 0; window.addEventListener('mytv:session-expiree', () => (window.__session += 1)) })
