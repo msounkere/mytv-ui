@@ -17,7 +17,7 @@ les parcours multi-moteurs, defaut : les trois). Banc commun des parcours US-45 
 | CA6 | Telephone/tablette : barre qui tient dans la largeur (lecture, −10/+10, muet, plein ecran, ⋯ : Diffuser, Pistes, Qualite, Infos, PiP, Ma liste, Arreter), carte d'erreur AU-DESSUS des commandes (390×844, 844×390), tap = commandes + bouton central, double-tap lateral = ±10 s, paysage = toute la hauteur | `tests/e2e/us45-mobile.mjs` (3 moteurs × 390×844 et 844×390 : boites des commandes dans la largeur, cibles 44 px, menu ⋯ dans la zone video, tap/tap, double-tap +10 s, hauteur en paysage, « Retour » de l'erreur sous le doigt et operant) | vert |
 | CA7 | Plein ecran iPhone par `video.webkitEnterFullscreen()`, F = plein ecran, M muet, I infos, Espace active le bouton focalise ; favori retire du lecteur VOD | `tests/unit/plein-ecran.test.ts` (4 tests sur `choisirApiPleinEcran`) ; `tests/e2e/us45-plein-ecran.mjs` (3 moteurs ; doublure iPhone : `webkitEnterFullscreen` appele, puis `webkitExitFullscreen` ; standard : `fullscreenElement` ; F/M/I ; Espace sur « Couper le son ») | vert |
 | CA8 | Auto/Éco reprend au point atteint (`timeupdate`) ; panneau « Lecteur » : UN reglage Qualite Auto/Éco (lib/qualite) ; PiP refuse = message discret, pas d'erreur ni de reouverture ; Echap ferme d'abord tout calque (menu, Variantes, Diffuser, Infos, Mini-guide, decompte, fin) | `tests/e2e/us45-lecteur.mjs` (1-4) | vert |
-| CA9 | WebKit : plantage au zapping apres echec HLS rejoue ; Firefox `cap=hevc` seulement si `smooth && powerEfficient` ; colonne « Pistes » seulement avec un choix ; identifiants internes et « HTTP 404 — manifestLoadError » hors des textes visibles (replies dans « Détails techniques » / panneau Infos) ; Infos d'un episode : numero, titre, resume | `tests/unit/capacites.test.ts` « CA9 » (4 tests) ; `tests/e2e/us45-webkit.mjs` (webkit : 404 HLS puis ↓, « Chaîne suivante », liste, 3 zaps rapides : `page.on('crash')` jamais) ; `tests/e2e/us45-lecteur.mjs` (5) ; `us45-retour.mjs` (fiche serie sans `iptva:s…`) | voir § WebKit |
+| CA9 | WebKit : plantage au zapping apres echec HLS reproduit, cause isolee et corrigee (§ WebKit) ; Firefox `cap=hevc` seulement si `smooth && powerEfficient` ; colonne « Pistes » seulement avec un choix ; identifiants internes et « HTTP 404 — manifestLoadError » hors des textes visibles (replies dans « Détails techniques » / panneau Infos) ; Infos d'un episode : numero, titre, resume | `tests/unit/capacites.test.ts` « CA9 » (4 tests) ; `tests/e2e/us45-webkit.mjs` (webkit : Accueil, Direct, 404 HLS puis ↓, « Chaîne suivante », liste, 3 zaps rapides : `page.on('crash')` jamais) ; `tests/e2e/us45-lecteur.mjs` (5) ; `us45-retour.mjs` (fiche serie sans `iptva:s…`) | vert |
 | CA10 | e2e 3 moteurs pour CA1, CA6, CA7 ; unitaires ; `tsc`, `npm run build` ; ce document | `npm run check`, `npm run test:unit`, `npm run build`, `npm run test:dist`, `npm run test:e2e` | voir rapport |
 
 ## Mutations rapportees
@@ -29,18 +29,25 @@ les parcours multi-moteurs, defaut : les trois). Banc commun des parcours US-45 
 - **CA5** — `src/screens/lecture/fin-regles.ts` : `avancerDecompte` sans la garde `enPause` : `fin-regles.test.ts`
   « en pause, le decompte est SUSPENDU » rouge, `us45-fin.mjs` « decompte suspendu (10 -> 8 s) » rouge ; retour -> vert.
 
-## WebKit (CA9, D16)
+## WebKit (CA9, D16) — plantage reproduit, cause isolee, corrige
 
 Reproduit sous Playwright webkit 27.2 (`tests/e2e/us45-webkit.mjs`, base D/crash-webkit.mjs) : apres un passage
-par l'Accueil puis le Direct, lecture d'une chaine dont le HLS echoue (404), puis ↓ : « Target crashed ». Isole par
-experiences (scratchpad wk2-wk7, resumees dans le rapport) : aucune operation sur la video seule ne plante
-(`remove()`, `removeAttribute('src')+load()`, reaffectation de `src`, element neuf, `remote.cancelWatchAvailability`,
-rVFC) ; le remontage du lecteur par l'URL ne plante pas ; le zapping depuis une page NEUVE ne plante pas ; il plante
-depuis une page qui a rendu l'Accueil et le Direct. Deux parades posees quand meme dans le lecteur (defensives,
-sans effet sur les autres moteurs) : changement de chaine DIFFERE a la tache suivante avec focus rendu
-(`changer()` dans Lecture.tsx), et element `<video>` RECREE a chaque changement de chaine en HLS natif
-(`generation`). Etat final : voir le rapport (hypothese restante : boucle ResizeObserver des grilles de la coque,
-D17, corrigee par ui-8 en US-47 CA6).
+par l'Accueil puis le Direct (ecrans preserves rendus), lecture d'une chaine dont le HLS echoue (404), puis ↓ :
+« Target crashed », 4/4 essais. Isole par experiences (scratchpad wk2-wk8) :
+- aucune operation sur la video seule ne plante (`remove()`, `removeAttribute('src')` + `load()`, reaffectation
+  de `src`, element neuf charge a cote, `remote.cancelWatchAvailability`, `requestVideoFrameCallback` puis
+  retrait) ; le remontage du lecteur par l'URL ne plante pas ; le zapping depuis une page NEUVE (sans Accueil ni
+  Direct rendus) ne plante pas ; les parades posees dans le lecteur (changement de chaine differe a la tache
+  suivante avec focus rendu, element `<video>` RECREE a chaque changement de chaine en HLS natif) ne suffisent pas ;
+- **avec tous les `ResizeObserver` de la page differes par `requestAnimationFrame` (script d'injection), le meme
+  parcours ne plante plus** : la cause est la boucle « ResizeObserver loop completed with undelivered
+  notifications » des grilles de la coque (D17 : `ListeVirtuelle`, `GrilleCartes`), que le re-rendu du lecteur
+  au zapping declenche, et que WebKit transforme en plantage de page.
+Correction : `ListeVirtuelle.tsx` et `GrilleCartes.tsx` repris A L'IDENTIQUE de la branche ui-8 (US-47 CA6, deja
+faite : mesure differee par rAF), `ControlesLecteur.tsx` idem (ui-6). Les deux parades du lecteur restent (sans
+effet sur les autres moteurs, elles rendent le zapping plus sur sur un vrai iPhone). Le test
+`us45-webkit.mjs` rejoue le parcours Accueil -> Direct -> chaine en echec -> ↓, « Chaîne suivante », liste,
+trois ↓ rapides : `page.on('crash')` jamais. A confirmer sur un iPhone reel (recette).
 
 ## Notes de fusion (coordinateur)
 
@@ -61,6 +68,8 @@ D17, corrigee par ui-8 en US-47 CA6).
   supprimer le stub.
 - `src/components/PanneauLecteur.tsx` : meme intention que la version ui-8 (Qualite Auto/Éco de lib/qualite) ;
   prendre la version ui-8.
+- `src/components/ListeVirtuelle.tsx`, `src/components/GrilleCartes.tsx` : copies a l'identique de feat/ui-8
+  (mesure ResizeObserver differee) -- aucun conflit attendu.
 - `tests/e2e/us43.mjs` (ui-7) : trois adaptations a la nouvelle fiche (« Ma liste a partir d'ici » par le menu
   de ligne ; sonde sans son propre bouton ; « Prêt » = chip `[data-role="chip-preparation"][data-etat="pret"]`).
 - `package.json` : ajout des parcours US-45 a `test:e2e` ; `tests/e2e/harnais/principal.tsx` : prop `surRetour`.
