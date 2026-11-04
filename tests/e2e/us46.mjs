@@ -644,8 +644,9 @@ const SCENARIOS = {
       await page.goto(`${serveur.origine}/film/vod:iptva:5001`)
       const ligne = page.locator('[data-role="fiche-film"] [data-role="disponibilite"]')
       await ligne.waitFor()
-      assert.equal(await texte(ligne), 'Risque de coupures — préparer d’avance ? 2,7 Mbit/s mesurés pour 4,4 nécessaires Ma liste', 'CA7 phrase humaine, debit en detail, « + Ma liste »')
-      assert.equal(await ligne.locator('[data-role="ma-liste"]').getAttribute('aria-label'), 'Ajouter à Ma liste')
+      // US-45 CA3 (C11) : la ligne de sonde n'a pas son propre bouton, la fiche n'a qu'un seul « + Ma liste ».
+      assert.equal(await texte(ligne), 'Risque de coupures — préparer d’avance ? 2,7 Mbit/s mesurés pour 4,4 nécessaires', 'CA7 phrase humaine, debit en detail')
+      assert.equal(await page.locator('[data-role="fiche-film"] [data-role="ma-liste"]').count(), 1, 'CA7 un seul « + Ma liste » sur la fiche')
       assert.ok(!/^Lent/.test(await texte(ligne)))
       await naviguer(page, '/film/vod:iptva:5002')
       await attendre(async () => (await ligne.getAttribute('data-etat')) === 'immediat', { quoi: 'fiche du film 2' })
