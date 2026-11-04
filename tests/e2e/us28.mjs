@@ -175,7 +175,11 @@ const SCENARIOS = {
       assert.match(t, /Réalisateur\s+Denis Lefevre/, 'realisateur')
       assert.match(t, /Avec\s+Alice Martin, Bruno Durand/, 'casting')
       assert.match(t, /Pays\s+France/)
-      assert.equal(await fiche.locator('a[data-role="bande-annonce"]').getAttribute('href'), 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')
+      // US-45 CA3 (modele cible C §5.3) : la bande-annonce vit dans le menu « ⋯ » de la fiche film.
+      await fiche.locator('[data-role="menu-fiche"]').click()
+      await page.locator('[role="menu"]').getByRole('menuitem', { name: 'Bande-annonce' }).waitFor()
+      await page.keyboard.press('Escape')
+      await page.locator('[role="menu"]').waitFor({ state: 'detached' })
       assert.equal(appelsDetails(serveur).filter((r) => r.chemin.endsWith('iptva:5003')).length, 1)
       // Regarder ouvre le lecteur.
       await fiche.getByRole('button', { name: 'Regarder' }).click()

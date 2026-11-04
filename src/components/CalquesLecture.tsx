@@ -1,4 +1,4 @@
-import { Show } from 'solid-js'
+import { For, Show, onMount } from 'solid-js'
 import Icone from './Icone'
 import { ENCRE, ENCRE2, mmss } from './ControlesLecteur'
 import { estBureau, estMobile } from '../lib/gabarit'
@@ -25,6 +25,17 @@ const calque = {
  */
 const borne = () =>
   estBureau() ? {} : ({ 'max-height': 'calc(100% - 16px)', overflow: 'auto' } as const)
+
+/**
+ * Calque de FIN (épisode suivant, film terminé) : au bureau, un îlot en bas à
+ * droite ; sur téléphone et tablette, ANCRÉ EN BAS DE LA ZONE VIDÉO, pleine
+ * largeur, jamais plus haut que la zone -- il débordait par le haut du cadre de
+ * 219 px (B17, C13) ; il passe au-dessus de la barre de commandes (z-index).
+ */
+const positionFin = () =>
+  estBureau()
+    ? ({ right: '16px', bottom: '120px', width: 'min(340px, calc(100% - 32px))' } as const)
+    : ({ left: '8px', right: '8px', bottom: '8px', 'max-height': 'calc(100% - 16px)', overflow: 'auto', 'z-index': 5 } as const)
 
 /**
  * Reprise proposée, jamais imposée : le dossier fixe le seuil à 60 s, en
@@ -135,39 +146,133 @@ export const REBOURS_EPISODE = 10
 /** Secondes restantes à partir desquelles le décompte démarre. */
 export const AVANT_FIN_EPISODE = 15
 
+/**
+ * Épisode suivant (US-43 CA4, US-45 CA5) : pendant le décompte, « Épisode suivant
+ * dans 10 s · ● Prêt — démarre sans attente » + « Lire maintenant / Annuler » ;
+ * après une annulation, à la vraie fin, le MÊME calque reste, sans décompte :
+ * « Épisode suivant · [Lire] [Revenir à la série] » (jamais une image figée).
+ * Il nomme l'épisode (repère, titre) avec sa vignette (B UX15).
+ */
 export function ProchainEpisode(props: {
+  /** Libelle complet (« Serie — S01E02 »), repli quand la fiche n'a pas donne le titre. */
   titre: string
-  restant: number
+  /** Repere « S01E02 » et titre de l'episode, quand les saisons les donnent. */
+  repere?: string
+  titreEpisode?: string
+  vignette?: string
+  /** Secondes restantes ; `null` = calque persistant sans decompte. */
+  restant: number | null
   /** Le serveur tient deja l'episode suivant sur son disque (US-43 CA4) : on le dit. */
   pret?: boolean
   surLire: () => void
   surAnnuler: () => void
+  surRevenir?: () => void
 }) {
   return (
     <div
       role="dialog"
       aria-label="Épisode suivant"
       data-role="prochain-episode"
+      data-decompte={props.restant === null ? 'non' : 'oui'}
       style={{
         ...calque,
-        ...borne(),
-        right: estBureau() ? '16px' : '8px', bottom: estBureau() ? '120px' : '84px',
-        display: 'flex', 'flex-direction': 'column', gap: '10px',
-        padding: '16px', width: 'min(320px, calc(100% - 32px))',
+        ...positionFin(),
+        display: 'flex', 'flex-direction': 'column', gap: '8px',
+        padding: estMobile() ? '10px 12px' : '16px',
         background: VERRE,
       }}
     >
       <span class="num" style={{ 'font-size': '12px', 'font-weight': 'var(--w-strong)', color: 'var(--acc-fg)' }}>
-        Épisode suivant dans {props.restant} s
+        {props.restant === null ? 'Épisode suivant' : `Épisode suivant dans ${props.restant} s`}
         <Show when={props.pret}>
-          <span data-role="suivant-pret" style={{ color: 'var(--ok)' }}> · prêt (préparé d’avance)</span>
+          <span data-role="suivant-pret" style={{ color: 'var(--ok)' }}> · ● Prêt — démarre sans attente</span>
         </Show>
       </span>
-      <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.titre}</span>
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <BoutonCalque principal icone="play_arrow" surAction={props.surLire}>Lire maintenant</BoutonCalque>
-        <BoutonCalque surAction={props.surAnnuler}>Annuler</BoutonCalque>
+      <div style={{ display: 'flex', 'align-items': 'center', gap: '10px', 'min-width': 0 }}>
+        <Show when={props.vignette}>
+          {(v) => <img src={v()} alt="" decoding="async" style={{ width: '64px', height: '36px', 'object-fit': 'cover', 'border-radius': 'var(--r-2xs)', flex: '0 0 auto', background: 'var(--video)' }} />}
+        </Show>
+        <span style={{ display: 'grid', 'min-width': 0 }}>
+          <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>
+            {props.repere ? `${props.repere}${props.titreEpisode ? ` · ${props.titreEpisode}` : ''}` : props.titre}
+          </span>
+          <Show when={props.repere}>
+            <span class="tronque" style={{ 'font-size': '12px', color: ENCRE2 }}>{props.titre}</span>
+          </Show>
+        </span>
       </div>
+      <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap' }}>
+        <BoutonCalque principal icone="play_arrow" surAction={props.surLire}>
+          {props.restant === null ? 'Lire' : 'Lire maintenant'}
+        </BoutonCalque>
+        <Show when={props.restant !== null} fallback={<BoutonCalque surAction={props.surRevenir ?? props.surAnnuler}>Revenir à la série</BoutonCalque>}>
+          <BoutonCalque surAction={props.surAnnuler}>Annuler</BoutonCalque>
+        </Show>
+      </div>
+    </div>
+  )
+}
+
+export interface EntreeMenuLecteur {
+  icone: string
+  libelle: string
+  /** Precision en dessous (« passer en Éco (débit réduit) »). */
+  detail?: string
+  actif?: boolean
+  action: () => void
+}
+
+/**
+ * Menu « ⋯ » du lecteur hors bureau (US-45 CA6) : Diffuser, Pistes, Qualité, Infos,
+ * Image dans l'image, Ma liste, Arrêter -- ce que la barre compacte ne porte pas.
+ * Un calque DANS le cadre (il reste visible en plein écran), fermé par Échap, par
+ * un tap sur l'image ou par le choix d'une entrée ; flèches ↑↓ au clavier.
+ */
+export function MenuLecteur(props: { entrees: EntreeMenuLecteur[]; surFermer: () => void }) {
+  let racine!: HTMLDivElement
+  onMount(() => (racine.querySelector('button') as HTMLButtonElement | null)?.focus())
+  const auClavier = (e: KeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    e.preventDefault()
+    const boutons = Array.from(racine.querySelectorAll('button'))
+    const i = boutons.indexOf(document.activeElement as HTMLButtonElement)
+    const n = boutons.length
+    boutons[((i < 0 ? 0 : i) + (e.key === 'ArrowDown' ? 1 : n - 1)) % n]?.focus()
+  }
+  return (
+    <div
+      ref={racine}
+      role="menu"
+      aria-label="Plus d’options"
+      data-role="menu-lecteur"
+      onKeyDown={auClavier}
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        ...calque,
+        left: '8px', right: '8px', bottom: '8px', 'max-height': 'calc(100% - 16px)', overflow: 'auto', 'z-index': 6,
+        display: 'grid', padding: '6px', background: 'rgba(20,20,20,.94)',
+      }}
+    >
+      <For each={props.entrees}>
+        {(e) => (
+          <button
+            type="button"
+            role="menuitem"
+            aria-pressed={e.actif}
+            onClick={() => { props.surFermer(); e.action() }}
+            style={{
+              display: 'flex', 'align-items': 'center', gap: '12px', height: estMobile() ? '44px' : '40px', padding: '0 10px',
+              'border-radius': 'var(--r-xs)', 'text-align': 'left', color: e.actif ? 'var(--acc-fg)' : ENCRE, 'font-size': '14px',
+            }}
+          >
+            <Icone nom={e.icone} taille={20} plein={e.actif} />
+            <span style={{ display: 'grid', 'min-width': 0 }}>
+              <span class="tronque">{e.libelle}</span>
+              <Show when={e.detail}>{(d) => <span class="tronque" style={{ 'font-size': '12px', color: ENCRE2 }}>{d()}</span>}</Show>
+            </span>
+          </button>
+        )}
+      </For>
     </div>
   )
 }
@@ -200,42 +305,58 @@ function BoutonCalque(props: {
 }
 
 /**
- * Film termine (US-43 CA4) : le prochain element de la liste « À voir » est
- * PROPOSE, jamais lance tout seul -- un film n'est pas un episode, rien ne dit
- * qu'on enchaine.
+ * Fin d'un film ou du DERNIER episode d'une serie (US-43 CA4, US-45 CA5) : « Film
+ * terminé ✓ » / « Série terminée ✓ », puis « Prochain dans Ma liste · ● Prêt »
+ * -- PROPOSE, jamais lance tout seul, et jamais le contenu que l'on vient de
+ * finir. Sans prochain : « Regarder à nouveau » et « Fermer » (plus d'impasse, B UX6).
  */
 export function ProchainContenu(props: {
-  titre: string
-  type: 'vod' | 'series' | 'live'
-  pret?: boolean
+  /** Ce qui vient de finir. */
+  fin: 'film' | 'serie'
+  /** Le prochain element de Ma liste, s'il y en a un. */
+  prochain?: { titre: string; type: 'vod' | 'series' | 'live'; pret?: boolean }
   surRegarder: () => void
+  surRevoir: () => void
   surFermer: () => void
 }) {
+  const titreFin = () => (props.fin === 'serie' ? 'Série terminée ✓' : 'Film terminé ✓')
   return (
     <div
       role="dialog"
-      aria-label="Film terminé"
+      aria-label={titreFin()}
       data-role="prochain-contenu"
+      data-fin={props.fin}
       style={{
         ...calque,
-        ...borne(),
-        right: estBureau() ? '16px' : '8px', bottom: estBureau() ? '120px' : '84px',
-        display: 'flex', 'flex-direction': 'column', gap: '10px',
-        padding: '16px', width: 'min(340px, calc(100% - 32px))',
+        ...positionFin(),
+        display: 'flex', 'flex-direction': 'column', gap: '8px',
+        padding: estMobile() ? '10px 12px' : '16px',
         background: VERRE,
       }}
     >
       <span style={{ 'font-size': '12px', 'font-weight': 'var(--w-strong)', color: 'var(--acc-fg)' }}>
-        Film terminé · suivant dans votre liste « À voir »
-        <Show when={props.pret}>
-          <span data-role="suivant-pret" style={{ color: 'var(--ok)' }}> · prêt</span>
+        {titreFin()}
+        <Show when={props.prochain}>
+          {' · '}Prochain dans Ma liste
+          <Show when={props.prochain?.pret}>
+            <span data-role="suivant-pret" style={{ color: 'var(--ok)' }}> · ● Prêt</span>
+          </Show>
         </Show>
       </span>
-      <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.titre}</span>
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <BoutonCalque principal icone="play_arrow" surAction={props.surRegarder}>
-          {props.type === 'series' ? 'Ouvrir la série' : 'Regarder'}
-        </BoutonCalque>
+      <Show when={props.prochain}>
+        {(p) => <span data-role="prochain-titre" class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{p().titre}</span>}
+      </Show>
+      <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap' }}>
+        <Show
+          when={props.prochain}
+          fallback={<BoutonCalque principal icone="refresh" surAction={props.surRevoir}>Regarder à nouveau</BoutonCalque>}
+        >
+          {(p) => (
+            <BoutonCalque principal icone="play_arrow" surAction={props.surRegarder}>
+              {p().type === 'series' ? 'Ouvrir la série' : 'Regarder'}
+            </BoutonCalque>
+          )}
+        </Show>
         <BoutonCalque surAction={props.surFermer}>Fermer</BoutonCalque>
       </div>
     </div>

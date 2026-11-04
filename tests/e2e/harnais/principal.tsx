@@ -87,6 +87,7 @@ render(
             }
             surChanger={(n) => poserEntree(n)}
             surFermer={() => poserEntree(null)}
+            surRetour={() => {}}
           />
         </div>
       </Show>

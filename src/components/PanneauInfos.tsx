@@ -23,13 +23,18 @@ const ENCRE_DIRECT = '#ff99a4'
 
 export default function PanneauInfos(props: {
   entree: EntreeCatalogue
+  /** Episode de serie : repere, titre et resume viennent des saisons (US-45 CA9). */
+  episode?: { repere: string; titre: string; synopsis?: string; image?: string }
   categorie?: string
   enCours?: Programme
   ensuite?: Programme
   /** Traitement que le serveur applique au flux ouvert. */
   flux?: Plan | null
-  favori: boolean
-  surFavori: () => void
+  /** Adresse masquee du flux : reservee a ce panneau technique (US-45 CA9). */
+  adresse?: string
+  /** Favori de CHAINE seulement (les favoris ne concernent plus les films et series). */
+  favori?: boolean
+  surFavori?: () => void
   /** Ouvre le guide des programmes — sans arrêter le flux, le mini-lecteur
       prend le relais. */
   surGuide?: () => void
@@ -47,7 +52,7 @@ export default function PanneauInfos(props: {
   return (
     <div
       role="dialog"
-      aria-label={props.entree.type === 'live' ? 'Informations sur la chaîne' : 'Informations sur le film'}
+      aria-label={props.entree.type === 'live' ? 'Informations sur la chaîne' : props.episode ? 'Informations sur l’épisode' : 'Informations sur le film'}
       style={{
         position: 'absolute', right: 0, top: 0, bottom: 0,
         width: `${LARGEUR_INFOS}px`, 'max-width': '100%',
@@ -81,6 +86,18 @@ export default function PanneauInfos(props: {
           <Icone nom="close" taille={18} />
         </button>
       </div>
+
+      <Show when={props.episode}>
+        {(ep) => (
+          <div data-role="infos-episode" style={{ display: 'flex', 'flex-direction': 'column', gap: '8px', 'font-size': '14px', 'line-height': '20px' }}>
+            <span class="num" style={{ 'font-size': '12px', color: ENCRE2 }}>{ep().repere}</span>
+            <span style={{ 'font-size': '16px', 'font-weight': 'var(--w-strong)' }}>{ep().titre}</span>
+            <Show when={ep().synopsis} fallback={<span style={{ color: ENCRE2 }}>Pas de résumé pour cet épisode.</span>}>
+              {(r) => <p style={{ margin: 0, 'white-space': 'pre-line' }}>{r()}</p>}
+            </Show>
+          </div>
+        )}
+      </Show>
 
       <Show when={cibleDe(props.entree)}>
         <div data-role="infos-film" style={{ display: 'flex', 'flex-direction': 'column', gap: '8px', 'font-size': '14px', 'line-height': '20px' }}>
@@ -148,7 +165,7 @@ export default function PanneauInfos(props: {
       </div>
       </Show>
 
-      <Show when={props.flux}>{(p) => <BlocFlux plan={p()} />}</Show>
+      <Show when={props.flux}>{(p) => <BlocFlux plan={p()} adresse={props.adresse} />}</Show>
 
       <Show when={props.ensuite}>
         {(p) => (
@@ -173,9 +190,13 @@ export default function PanneauInfos(props: {
             <BoutonPanneau icone="tv_guide" surAction={ouvrir()}>Ouvrir le guide</BoutonPanneau>
           )}
         </Show>
-        <BoutonPanneau icone="star" plein={props.favori} surAction={props.surFavori}>
-          {props.favori ? 'Retirer des favoris' : 'Ajouter aux favoris'}
-        </BoutonPanneau>
+        <Show when={props.surFavori}>
+          {(f) => (
+            <BoutonPanneau icone="star" plein={props.favori} surAction={f()}>
+              {props.favori ? 'Retirer des favorites' : 'Chaîne favorite'}
+            </BoutonPanneau>
+          )}
+        </Show>
       </div>
     </div>
   )
@@ -187,7 +208,7 @@ export default function PanneauInfos(props: {
  * cas, la réponse est « rien du tout ». Un direct n'a pas de mode : le serveur
  * relaie la playlist et les segments tels quels.
  */
-function BlocFlux(props: { plan: Plan }) {
+function BlocFlux(props: { plan: Plan; adresse?: string }) {
   const mode = () => props.plan.mode
 
   return (
@@ -216,6 +237,9 @@ function BlocFlux(props: { plan: Plan }) {
       >
         {mode() ? LIBELLE_MODE[mode()!] : 'Relais tel quel par le serveur'}
       </span>
+      <Show when={props.adresse}>
+        {(a) => <span class="num" style={{ 'font-family': 'var(--moov-font-mono)', 'font-size': '11px', color: ENCRE2, 'overflow-wrap': 'anywhere' }}>{a()}</span>}
+      </Show>
     </div>
   )
 }

@@ -183,12 +183,11 @@ try {
   const gets101 = () => banc.api((r) => r.chemin === '/api/v1/vod/iptva:101' && r.methode === 'GET')
   v.ok(await jusqua(() => gets101().length >= 1, 10_000), 'lecture ouverte')
   v.ok(/[?&]t=70/.test(gets101()[0]?.requete ?? ''), `ouverte DIRECTEMENT au point sauvegarde (${gets101()[0]?.requete})`)
+  // US-45 CA3 : la question « Reprendre / Recommencer » se pose SUR LA FICHE, plus jamais dans le lecteur.
   const dialogue = page.locator('[data-role="reprise"]')
-  v.ok(await jusqua(async () => (await dialogue.count()) > 0, 5000, 100), 'le dialogue « Reprendre / Depuis le debut » est propose')
-  await dialogue.getByRole('button', { name: /Reprendre/ }).click()
   await attendre(1500)
-  v.ok(gets101().length === 1, `« Reprendre » ne rouvre rien : on y est deja (${gets101().length} GET)`)
-  v.ok((await dialogue.count()) === 0, 'dialogue ferme')
+  v.ok((await dialogue.count()) === 0, 'CA3 aucun dialogue « Reprendre / Depuis le debut » dans le lecteur')
+  v.ok(gets101().length === 1, `une seule ouverture, directement au point sauvegarde (${gets101().length} GET)`)
   // Une coupure (le navigateur prend la fin du corps pour la fin du film) : reprise sans dialogue.
   await page.evaluate(() => document.querySelector('video').dispatchEvent(new Event('ended')))
   v.ok(await jusqua(() => gets101().length >= 2, 15_000), 'reprise automatique apres la coupure')

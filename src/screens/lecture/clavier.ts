@@ -18,7 +18,8 @@ export interface ActionsClavier {
   basculerLecture: () => void
   basculerMuet: () => void
   basculerDiffusion: () => void
-  basculerFavori: () => void
+  /** F = plein ecran (YouTube, Netflix, Plex) ; le favori n'a plus de touche (US-45 CA7, B UX8). */
+  basculerPleinEcran: () => void
   revenirDerniereChaine: () => void
   basculerMiniGuide: () => void
   basculerInfos: () => void
@@ -39,6 +40,9 @@ export function brancherClavier(a: ActionsClavier): (e: KeyboardEvent) => void {
     const cible = e.target as HTMLElement | null
     const saisie = cible?.tagName === 'INPUT' || cible?.tagName === 'TEXTAREA'
     a.reveiller()
+    // Espace sur un bouton focalise ACTIVE le bouton (clavier, telecommande « OK ») :
+    // on laisse le navigateur faire, au lieu de basculer la pause (US-45 CA7, B14).
+    if (e.key === ' ' && cible && (cible.tagName === 'BUTTON' || cible.tagName === 'A' || cible.getAttribute('role') === 'button' || cible.getAttribute('role') === 'menuitem')) return
 
     if (e.key === 'Escape') {
       if (saisie && !a.calqueOuvert()) cible!.blur()
@@ -51,7 +55,7 @@ export function brancherClavier(a: ActionsClavier): (e: KeyboardEvent) => void {
     else if (e.key === ' ') a.basculerLecture()
     else if (e.key === 'm' || e.key === 'M') a.basculerMuet()
     else if (e.key === 'c' || e.key === 'C') a.basculerDiffusion()
-    else if (e.key === 'f' || e.key === 'F') a.basculerFavori()
+    else if (e.key === 'f' || e.key === 'F') a.basculerPleinEcran()
     else if ((e.key === 'r' || e.key === 'R') && a.direct()) a.revenirDerniereChaine()
     else if ((e.key === 'g' || e.key === 'G') && a.direct()) a.basculerMiniGuide()
     else if (e.key === 'i' || e.key === 'I') a.basculerInfos()

@@ -46,8 +46,12 @@ export default function ErreurLecture(props: {
 
   return (
     <div
+      data-role="erreur-lecture"
       style={{
         position: 'absolute', inset: 0,
+        // AU-DESSUS de la barre de commandes (z-index 2) : hors bureau, ses boutons
+        // « Réessayer » et « Retour » passaient dessous (D3, B5).
+        'z-index': 3,
         // Dans une vidéo 16:9 de 219 px de haut, la carte déborde : la zone
         // défile, et `margin: auto` de la carte centre sans jamais rogner le haut.
         display: 'grid', 'place-items': 'center', overflow: 'auto',
@@ -104,21 +108,6 @@ export default function ErreurLecture(props: {
           )}
         </Show>
 
-        <Show when={props.erreur.detail}>
-          {(detail) => (
-            <code
-              style={{
-                display: 'block', padding: '8px 10px',
-                background: '#0a0f16', 'border-radius': 'var(--r-xs)',
-                'font-family': 'var(--moov-font-mono)', 'font-size': '11px', 'line-height': '16px',
-                color: ENCRE3, 'overflow-wrap': 'anywhere',
-              }}
-            >
-              {detail()}
-            </code>
-          )}
-        </Show>
-
         <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '8px' }}>
           <For each={props.actions}>
             {(a) => (
@@ -138,6 +127,27 @@ export default function ErreurLecture(props: {
             )}
           </For>
         </div>
+
+        {/* Le diagnostic brut (« HTTP 404 — manifestLoadError ») reste disponible,
+            replie : il sert au panneau technique, pas a l'utilisateur (CA9, A UX20). */}
+        <Show when={props.erreur.detail}>
+          {(detail) => (
+            <details data-role="erreur-detail" style={{ 'font-size': '11px', color: ENCRE3 }}>
+              <summary style={{ cursor: 'pointer' }}>Détails techniques</summary>
+              <code
+                style={{
+                  display: 'block', 'margin-top': '6px', padding: '8px 10px',
+                  background: '#0a0f16', 'border-radius': 'var(--r-xs)',
+                  'font-family': 'var(--moov-font-mono)', 'font-size': '11px', 'line-height': '16px',
+                  color: ENCRE3, 'overflow-wrap': 'anywhere',
+                }}
+              >
+                {detail()}
+              </code>
+            </details>
+          )}
+        </Show>
+
       </div>
     </div>
   )

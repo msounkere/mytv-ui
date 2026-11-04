@@ -29,6 +29,8 @@ export interface BoutonControle {
 
 export interface ControlesLecteurProps {
   mode: 'live' | 'vod'
+  /** Telephone et tablette (US-45 CA6) : les essentielles seulement, le reste dans « ⋯ » (passe par `droite`). */
+  compact?: boolean
   enPause: boolean
   muet: boolean
   volume: number
@@ -52,10 +54,17 @@ export default function ControlesLecteur(props: ControlesLecteurProps) {
   let racine!: HTMLDivElement
   const [largeur, poserLargeur] = createSignal(Infinity)
   onMount(() => {
-    const o = new ResizeObserver(() => poserLargeur(racine.clientWidth))
+    // Mesure differee par requestAnimationFrame : ecrire le signal dans le
+    // callback repose la barre et refaisait une mesure dans le meme cycle --
+    // « ResizeObserver loop » remonte en erreur de page par WebKit (D17).
+    let image = 0
+    const o = new ResizeObserver(() => {
+      cancelAnimationFrame(image)
+      image = requestAnimationFrame(() => poserLargeur(racine.clientWidth))
+    })
     o.observe(racine)
     poserLargeur(racine.clientWidth)
-    onCleanup(() => o.disconnect())
+    onCleanup(() => { o.disconnect(); cancelAnimationFrame(image) })
   })
   const etroit = () => largeur() < 660
 
@@ -63,9 +72,9 @@ export default function ControlesLecteur(props: ControlesLecteurProps) {
   // Empilé sous la vidéo, le cadre n'a plus 900 px de haut : la barre ne flotte
   // plus en îlot arrondi, elle occupe toute la largeur comme sur la maquette.
   const flottante = estBureau
-  // 44 px est la cible tactile minimale du cahier des charges.
-  const cible = () => (estMobile() ? 44 : 38)
-  const droite = () => (estMobile() ? props.droite.filter((b) => !b.masquerMobile) : props.droite)
+  // 44 px est la cible tactile minimale du cahier des charges, telephone ET tablette (E5).
+  const cible = () => (props.compact || estMobile() ? 44 : 38)
+  const droite = () => (estMobile() && !props.compact ? props.droite.filter((b) => !b.masquerMobile) : props.droite)
 
   return (
     <div
@@ -113,7 +122,7 @@ export default function ControlesLecteur(props: ControlesLecteurProps) {
           aria-label={props.enPause ? 'Lecture' : 'Pause'}
           style={{
             flex: '0 0 auto', display: 'grid', 'place-items': 'center',
-            width: estMobile() ? '44px' : '40px', height: estMobile() ? '44px' : '40px', 'border-radius': '50%',
+            width: `${Math.max(40, cible())}px`, height: `${Math.max(40, cible())}px`, 'border-radius': '50%',
             background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.22)',
             color: ENCRE,
           }}
@@ -123,17 +132,18 @@ export default function ControlesLecteur(props: ControlesLecteurProps) {
 
         <For each={props.gauche}>{(b) => <BoutonLecteur bouton={b} cible={cible()} />}</For>
 
-        {/* Volume : le mobile s'en remet aux touches matérielles du téléphone. */}
-        <Show when={!estMobile()}>
+        {/* Muet partout (essentiel, CA6) ; le curseur de volume reste au bureau large. */}
         <button
           onClick={props.surMuet}
           title={props.muet ? 'Rétablir le son (M)' : 'Couper le son (M)'}
+          aria-label={props.muet ? 'Rétablir le son' : 'Couper le son'}
           aria-pressed={props.muet}
-          style={boutonIcone(props.muet ? ENCRE3 : ENCRE)}
+          style={boutonIcone(props.muet ? ENCRE3 : ENCRE, cible())}
         >
           <Icone nom="volume_up" taille={24} plein={!props.muet} />
         </button>
 
+        <Show when={!estMobile() && !props.compact}>
         <Show when={!etroit()}>
         <input
           type="range"
@@ -146,7 +156,7 @@ export default function ControlesLecteur(props: ControlesLecteurProps) {
         </Show>
         </Show>
 
-        <Show when={props.mode === 'live' && !estMobile() && !etroit()}>
+        <Show when={props.mode === 'live' && !estMobile() && !props.compact && !etroit()}>
           <BadgeDirect />
         </Show>
 
@@ -154,7 +164,7 @@ export default function ControlesLecteur(props: ControlesLecteurProps) {
 
         {/* Le rappel des touches cède la place avant les boutons : la V2 en
             ajoute trois à droite, et c'est eux qu'il faut pouvoir atteindre. */}
-        <Show when={estBureau()}>
+        <Show when={estBureau() && !props.compact}>
           <span class="tronque" style={{ flex: '0 1 auto', 'min-width': 0, 'font-size': '11px', color: ENCRE2 }}>
             {props.indiceClavier}
           </span>
