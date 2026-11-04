@@ -61,6 +61,8 @@ console.log('--- Reglages : profils uniques, dialogue, categories masquees')
   try {
     await ouvrirSession(b)
     await page.goto(`${serveur.origine}/reglages`)
+    // Le doublon ne peut etre refuse qu'une fois la liste des profils recue (vu en CI : saisie avant).
+    await page.locator('[data-testid="liste-profils"]').getByText('Salon', { exact: false }).first().waitFor()
     const champ = page.getByLabel('Nom du nouveau profil')
     await champ.fill('salon ')
     await champ.press('Enter')
