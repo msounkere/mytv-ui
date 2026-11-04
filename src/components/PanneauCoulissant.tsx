@@ -20,15 +20,28 @@ export default function PanneauCoulissant(props: {
   ouvert: boolean
   surFermer: () => void
   etiquette: string
+  /** Élément qui a ouvert le panneau : le focus lui revient à la fermeture. */
+  ancre?: HTMLElement | null
   children: JSX.Element
 }) {
+  let panneau: HTMLDivElement | undefined
   createEffect(() => {
     if (!props.ouvert) return
     const echap = (e: KeyboardEvent) => {
       if (e.key === 'Escape') props.surFermer()
     }
     document.addEventListener('keydown', echap)
-    onCleanup(() => document.removeEventListener('keydown', echap))
+    // Le focus entre dans le panneau (US-47 CA7) : son premier champ, sinon
+    // son premier bouton. À la fermeture, il revient à l'ancre.
+    requestAnimationFrame(() => {
+      if (!props.ouvert) return
+      panneau?.querySelector<HTMLElement>('input, button:not([disabled])')?.focus()
+    })
+    const ancre = props.ancre
+    onCleanup(() => {
+      document.removeEventListener('keydown', echap)
+      if (ancre && ancre.isConnected) ancre.focus()
+    })
   })
 
   const duree = 'var(--dur, 200ms)'
@@ -51,6 +64,7 @@ export default function PanneauCoulissant(props: {
         }}
       />
       <div
+        ref={panneau}
         role="dialog"
         aria-modal="true"
         aria-label={props.etiquette}

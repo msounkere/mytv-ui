@@ -16,6 +16,7 @@ import { debutDemiHeureLocale, epg, programmeEnCours, type Programme } from '../
 import { chainesAvecGuide } from '../lib/chaines-guide'
 import { idServeurDe } from '../lib/source-lecture'
 import { ErreurLecteur } from '../lib/errors'
+import { ACTION_GUIDE_INDISPONIBLE, MESSAGE_GUIDE_INDISPONIBLE, messageGuideVide } from '../lib/messages-guide'
 import { cles, requete } from '../lib/requetes'
 import { ecran } from '../etat'
 import { estBureau, estMobile } from '../lib/gabarit'
@@ -64,7 +65,9 @@ export default function Guide(props: {
   const [debutFenetre, poserDebutFenetre] = createSignal(debutDemiHeureLocale(Date.now() - 15 * MINUTE))
   const [largeur, poserLargeur] = createSignal(0)
   const [filtre, poserFiltre] = createSignal('')
-  const [echec, poserEchec] = createSignal<string | null>(null)
+  const [echec, poserEchec] = createSignal<{ message: string; action: string } | null>(null)
+  /** Incrémenté par « Réessayer » : relance la demande des grilles manquantes. */
+  const [tentative, poserTentative] = createSignal(0)
 
   const finFenetre = createMemo(() => debutFenetre() + (largeur() / pxMinute()) * MINUTE)
 
@@ -131,11 +134,13 @@ export default function Guide(props: {
     const t0 = debutFenetre()
     const t1 = finFenetre()
     const epgs = visibles()
+    const essai = tentative()
     if (t1 <= t0 || epgs.length === 0) return
 
     // Changer de fenêtre invalide tout : les cases mémorisées ne couvrent plus
-    // l'intervalle affiché.
-    const cle = `${t0}|${Math.round(t1)}`
+    // l'intervalle affiché. « Réessayer » aussi : les blocs en échec ne sont
+    // pas en cache, mais la clé change pour que la demande reparte.
+    const cle = `${t0}|${Math.round(t1)}|${essai}`
     if (cle !== cleCache) {
       cleCache = cle
       cache = new Map()
@@ -145,18 +150,25 @@ export default function Guide(props: {
 
     const abandon = new AbortController()
     onCleanup(() => abandon.abort())
-    poserEchec(null)
     epg
       .grille(manquants, t0, t1, abandon.signal)
       .then((m) => {
         if (abandon.signal.aborted || cleCache !== cle) return
         for (const [k, v] of m) cache.set(k, v)
+        // L'erreur ne s'efface que sur un succès : l'effacer à chaque demande
+        // faisait clignoter le bandeau au fil des lignes qui s'inscrivent.
+        poserEchec(null)
         poserRevision((v) => v + 1)
       })
       .catch((e: unknown) => {
         if (abandon.signal.aborted) return
-        // Le guide est secondaire : l'écran le dit et reste utilisable.
-        poserEchec(e instanceof ErreurLecteur ? `${e.message} — ${e.action}` : String(e))
+        // Le guide est secondaire : l'écran le dit avec SES mots (jamais « ce
+        // contenu n'existe plus au catalogue », D13) et reste utilisable.
+        poserEchec(
+          e instanceof ErreurLecteur
+            ? { message: e.message, action: e.action }
+            : { message: MESSAGE_GUIDE_INDISPONIBLE, action: ACTION_GUIDE_INDISPONIBLE },
+        )
       })
   })
 
@@ -230,10 +242,20 @@ export default function Guide(props: {
   onMount(() => {
     if (!mesure) return
     const el = mesure
-    const observateur = new ResizeObserver(() => poserLargeur(el.clientWidth))
+    // Mesure différée par `requestAnimationFrame` : écrire la largeur dans le
+    // rappel repositionne la règle pendant la même disposition, boucle que
+    // WebKit remonte en `pageerror` (audit D17).
+    let demande = 0
+    const observateur = new ResizeObserver(() => {
+      cancelAnimationFrame(demande)
+      demande = requestAnimationFrame(() => poserLargeur(el.clientWidth))
+    })
     observateur.observe(el)
     poserLargeur(el.clientWidth)
-    onCleanup(() => observateur.disconnect())
+    onCleanup(() => {
+      cancelAnimationFrame(demande)
+      observateur.disconnect()
+    })
   })
 
   /** Cible tactile de 44 px sur mobile (cahier des charges, §6). */
@@ -259,9 +281,11 @@ export default function Guide(props: {
       <button onClick={() => decaler(3 * 60 * MINUTE)} title="Avancer de 3 heures" style={btn()}>
         3 h ⏩
       </button>
-      <span class="secondaire" style={{ 'margin-left': '8px', 'font-size': '13px', 'white-space': 'nowrap' }}>
-        {JOUR.format(new Date(debutFenetre()))}
-      </span>
+      <Show when={!estMobile()}>
+        <span class="secondaire" data-role="jour-guide" style={{ 'margin-left': '8px', 'font-size': '13px', 'white-space': 'nowrap' }}>
+          {JOUR.format(new Date(debutFenetre()))}
+        </span>
+      </Show>
     </>
   )
 
@@ -296,13 +320,20 @@ export default function Guide(props: {
           }}
         />
         <Show when={estMobile()}>
-          <div
-            style={{
-              display: 'flex', 'align-items': 'center', gap: '8px', flex: '1 1 100%',
-              'overflow-x': 'auto', 'scrollbar-width': 'none',
-            }}
-          >
-            <BoutonsNavigation />
+          {/* Téléphone : le jour est TOUJOURS visible, en tête de la rangée, et
+              seuls les boutons défilent (D12 : « mercre » tronqué en bout de rangée). */}
+          <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', flex: '1 1 100%', 'min-width': 0 }}>
+            <span class="secondaire tronque" data-role="jour-guide" style={{ 'font-size': '13px', flex: '0 1 auto', 'max-width': '45%', 'font-weight': 'var(--w-strong)' }}>
+              {JOUR.format(new Date(debutFenetre()))}
+            </span>
+            <div
+              style={{
+                display: 'flex', 'align-items': 'center', gap: '8px', flex: '1 1 0', 'min-width': 0,
+                'overflow-x': 'auto', 'scrollbar-width': 'none',
+              }}
+            >
+              <BoutonsNavigation />
+            </div>
           </div>
         </Show>
       </header>
@@ -313,15 +344,18 @@ export default function Guide(props: {
           padding: '6px 12px', 'border-bottom': '1px solid var(--line)',
         }}
       >
+        {/* Téléphone : deux lignes plutôt qu'une ligne tronquée (D12). */}
         <p
           class="tertiaire num"
+          data-role="stats-guide"
           style={{
-            margin: 0, 'font-size': '12px',
-            ...(estBureau() ? {} : { flex: 1, 'min-width': 0, overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }),
+            margin: 0, 'font-size': '12px', 'line-height': '16px',
+            ...(estBureau() ? {} : { flex: 1, 'min-width': 0 }),
           }}
         >
           <Show when={!lignes.loading} fallback="Lecture du catalogue…">
-            {lignesFiltrees().length.toLocaleString('fr-FR')} chaîne(s) affichée(s) ·{' '}
+            {lignesFiltrees().length.toLocaleString('fr-FR')} chaîne(s) affichée(s)
+            <Show when={!estMobile()} fallback={<br />}>{' · '}</Show>
             {(lignes()?.length ?? 0).toLocaleString('fr-FR')} avec guide sur{' '}
             {(totalLive() ?? 0).toLocaleString('fr-FR')} chaînes en direct
           </Show>
@@ -330,15 +364,29 @@ export default function Guide(props: {
 
       <Show when={echec()}>
         {(m) => (
-          <p
+          <div
             role="alert"
+            data-role="erreur-guide"
             style={{
               margin: 0, padding: '8px 12px', 'font-size': '13px', flex: '0 0 auto',
+              display: 'flex', 'align-items': 'center', gap: '12px', 'flex-wrap': 'wrap',
               color: 'var(--err)', background: 'var(--err-bg)',
             }}
           >
-            {m()}
-          </p>
+            <span style={{ flex: '1 1 auto', 'min-width': 0 }}>
+              {m().message} <span class="secondaire">{m().action}</span>
+            </span>
+            <button
+              onClick={() => {
+                cleCache = ''
+                poserEchec(null)
+                poserTentative((n) => n + 1)
+              }}
+              style={{ border: '1px solid var(--line2)', padding: '0 12px', 'min-height': estBureau() ? '32px' : '44px', 'font-weight': 'var(--w-strong)', color: 'var(--fg)' }}
+            >
+              Réessayer
+            </button>
+          </div>
         )}
       </Show>
 
@@ -411,8 +459,10 @@ export default function Guide(props: {
               hauteurLigne={HAUTEUR_LIGNE}
               marge={4}
               vide={
-                <p class="tertiaire" style={{ padding: '16px' }}>
-                  Aucune chaîne ne correspond — ou le catalogue n'est pas importé, ou aucune chaîne n'annonce de guide.
+                <p class="tertiaire" data-role="guide-vide" style={{ padding: '16px' }}>
+                  <Show when={!lignes.loading} fallback="Lecture du catalogue…">
+                    {messageGuideVide({ filtre: filtre(), totalLive: totalLive() ?? 0, avecGuide: lignes()?.length ?? 0 })}
+                  </Show>
                 </p>
               }
               ligne={(l) => (

@@ -33,12 +33,20 @@ export default function FeuilleFiltres(props: {
   surEffacerTout: () => void
   surFermer: () => void
 }) {
+  let feuille: HTMLDivElement | undefined
   createEffect(() => {
     const echap = (e: KeyboardEvent) => {
       if (e.key === 'Escape') props.surFermer()
     }
     document.addEventListener('keydown', echap)
-    onCleanup(() => document.removeEventListener('keydown', echap))
+    // Le focus entre dans la feuille et revient au bouton « Filtres » a la
+    // fermeture (US-47 CA7, A UX5).
+    const ancre = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    requestAnimationFrame(() => feuille?.querySelector<HTMLElement>('button')?.focus())
+    onCleanup(() => {
+      document.removeEventListener('keydown', echap)
+      if (ancre && ancre.isConnected) ancre.focus()
+    })
   })
 
   return (
@@ -49,6 +57,7 @@ export default function FeuilleFiltres(props: {
         style={{ position: 'fixed', inset: '0', 'z-index': '70', background: 'rgba(0,0,0,.55)' }}
       />
       <div
+        ref={feuille}
         role="dialog"
         aria-modal="true"
         aria-label="Filtres"

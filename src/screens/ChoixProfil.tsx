@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from 'solid-js'
+import { For, Show, createSignal, onMount } from 'solid-js'
 import Icone from '../components/Icone'
 import { choisirProfil, creerProfil, deconnexion, profils } from '../lib/auth'
 import { ErreurApi, ErreurReseau } from '../lib/api'
@@ -24,6 +24,15 @@ export default function ChoixProfil() {
   const [nom, poserNom] = createSignal('')
   const [erreur, poserErreur] = createSignal('')
   const [occupe, poserOccupe] = createSignal(false)
+  let racine: HTMLDivElement | undefined
+
+  // Focus initial sur le premier element utile (US-47 CA4, A UX1) : le premier
+  // profil, sinon le champ du nouveau profil — indispensable a la telecommande.
+  onMount(() => {
+    requestAnimationFrame(() => {
+      racine?.querySelector<HTMLElement>('[data-role="profil"], input')?.focus()
+    })
+  })
 
   async function agir(f: () => Promise<unknown>) {
     if (occupe()) return
@@ -57,6 +66,7 @@ export default function ChoixProfil() {
       }}
     >
       <div
+        ref={racine}
         role="dialog"
         aria-label="Choisir un profil"
         style={{
@@ -77,10 +87,11 @@ export default function ChoixProfil() {
           <For each={profils()}>
             {(p) => (
               <button
+                data-role="profil"
                 onClick={() => void agir(() => choisirProfil(p.id))}
                 disabled={occupe()}
                 style={{
-                  display: 'flex', 'align-items': 'center', gap: '12px',
+                  display: 'flex', 'align-items': 'center', gap: '12px', 'min-height': '44px',
                   padding: '10px 12px', border: '1px solid var(--line2)',
                   'border-radius': 'var(--r-md)', 'text-align': 'left',
                 }}
@@ -106,6 +117,7 @@ export default function ChoixProfil() {
               maxLength={64}
               placeholder="Nom du profil"
               onInput={(e) => poserNom(e.currentTarget.value)}
+              style={{ 'min-height': '44px' }}
             />
           </label>
           <button

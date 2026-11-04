@@ -50,10 +50,21 @@ export default function GrilleCartes(props: GrilleCartesProps) {
     const el = boite()
     if (!el) return
     const mesurer = () => poserLargeur(el.clientWidth)
-    const observateur = new ResizeObserver(mesurer)
+    // La mesure est différée d'une image : écrire le signal DANS le rappel
+    // re-pose la grille pendant la même passe de disposition, ce que WebKit
+    // remonte en « ResizeObserver loop completed with undelivered
+    // notifications » (audit D17).
+    let demande = 0
+    const observateur = new ResizeObserver(() => {
+      cancelAnimationFrame(demande)
+      demande = requestAnimationFrame(mesurer)
+    })
     observateur.observe(el)
     mesurer()
-    onCleanup(() => observateur.disconnect())
+    onCleanup(() => {
+      cancelAnimationFrame(demande)
+      observateur.disconnect()
+    })
   })
 
   const m = () => MESURES[gabaritEcran()]

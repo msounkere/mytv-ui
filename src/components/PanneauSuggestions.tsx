@@ -28,6 +28,15 @@ import type { ResultatRecherche } from '../lib/recherche.worker'
 // min(560px, 100vh - 80px) ; en-tête de section 11 px / 600 / .04em en
 // capitales --fg3 ; ligne récente 36 px, ligne de résultat 52 px, rayon 4 px,
 // sélection --acc-bg ; pied « voir tout » 41 px, --acc-fg, filet supérieur.
+//
+// Lot 10 (US-47 CA1, audit A bug 3 / D E7) : AUCUNE ligne n'est présélectionnée.
+// Entrée dans le champ soumet le formulaire de l'en-tête, donc ouvre la page de
+// résultats ; une suggestion ne s'ouvre qu'en la choisissant (↓ puis Entrée,
+// ou clic), et s'ouvre sur sa FICHE — jamais une lecture depuis le champ, qui
+// sur un abonnement à une connexion couperait ce qui est regardé ailleurs.
+
+/** Indice de « rien de retenu » : Entrée laisse alors le formulaire se soumettre. */
+const AUCUNE = -1
 
 const LARGEUR_MINIMALE = 560
 const ECART_SOUS_CHAMP = 6
@@ -60,10 +69,9 @@ export default function PanneauSuggestions(props: PanneauSuggestionsProps) {
   const [requete, poserRequete] = createSignal('')
   const [groupes, poserGroupes] = createSignal<Groupes>(VIDE)
   const [totaux, poserTotaux] = createSignal<Totaux>(ZERO)
-  const [millisecondes, poserMillisecondes] = createSignal(0)
   const [cherche, poserCherche] = createSignal(false)
   const [position, poserPosition] = createSignal<Position>({ gauche: 0, haut: 52, largeur: 560 })
-  const [selection, poserSelection] = createSignal(0)
+  const [selection, poserSelection] = createSignal(AUCUNE)
 
   let minuterie: number | undefined
   let serie = 0
@@ -106,12 +114,12 @@ export default function PanneauSuggestions(props: PanneauSuggestionsProps) {
 
   function fermer() {
     poserOuvert(false)
-    poserSelection(0)
+    poserSelection(AUCUNE)
   }
 
   function lancer(v: string) {
     poserRequete(v)
-    poserSelection(0)
+    poserSelection(AUCUNE)
     clearTimeout(minuterie)
     if (!v.trim()) {
       poserGroupes(VIDE)
@@ -130,7 +138,6 @@ export default function PanneauSuggestions(props: PanneauSuggestionsProps) {
         if (mien !== serie) return
         poserGroupes(r.groupes)
         poserTotaux(r.totaux)
-        poserMillisecondes(r.ms)
         poserCherche(false)
       })
     }, DELAI_FRAPPE)
@@ -182,13 +189,13 @@ export default function PanneauSuggestions(props: PanneauSuggestionsProps) {
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault()
-      poserSelection((s) => Math.max(0, s - 1))
+      poserSelection((s) => Math.max(AUCUNE, s - 1))
       return
     }
     if (e.key !== 'Enter') return
 
     if (!requete().trim()) {
-      const recente = recherchesRecentes()[selection()]
+      const recente = selection() >= 0 ? recherchesRecentes()[selection()] : undefined
       if (recente) {
         e.preventDefault()
         remplir(recente)
@@ -196,11 +203,18 @@ export default function PanneauSuggestions(props: PanneauSuggestionsProps) {
       }
       return
     }
-    const choix = plat()[selection()]
-    if (choix && !cherche()) {
-      e.preventDefault()
-      void ouvrirResultat(choix)
-      return
+    if (selection() >= 0 && !cherche()) {
+      const choix = plat()[selection()]
+      if (choix) {
+        e.preventDefault()
+        void ouvrirResultat(choix)
+        return
+      }
+      if (selection() === plat().length) {
+        e.preventDefault()
+        voirTout()
+        return
+      }
     }
     // Aucune ligne retenue : on laisse le formulaire de l'en-tête se soumettre,
     // ce qui ouvre la page de résultats. Rien à empêcher, juste à refermer.
@@ -231,11 +245,21 @@ export default function PanneauSuggestions(props: PanneauSuggestionsProps) {
     fermer()
   }
 
+  // Cliquer (ou toucher) un champ déjà focalisé, après Échap, rouvre les
+  // suggestions : `focusin` ne repart pas, le clic si (audit A, mineur).
+  function surClicChamp(e: MouseEvent) {
+    if (!estLeChamp(e.target) || ouvert()) return
+    const c = e.target as HTMLInputElement
+    if (c.value !== requete()) lancer(c.value)
+    ouvrirPanneau()
+  }
+
   onMount(() => {
     document.addEventListener('focusin', surFocus)
     document.addEventListener('input', surSaisie)
     document.addEventListener('keydown', auClavier)
     document.addEventListener('mousedown', surClicAilleurs)
+    document.addEventListener('click', surClicChamp)
     window.addEventListener('resize', placer)
   })
   onCleanup(() => {
@@ -244,13 +268,14 @@ export default function PanneauSuggestions(props: PanneauSuggestionsProps) {
     document.removeEventListener('input', surSaisie)
     document.removeEventListener('keydown', auClavier)
     document.removeEventListener('mousedown', surClicAilleurs)
+    document.removeEventListener('click', surClicChamp)
     window.removeEventListener('resize', placer)
   })
 
   // La ligne retenue au clavier doit rester visible quand la liste défile.
   createEffect(() => {
     const i = selection()
-    if (!ouvert()) return
+    if (!ouvert() || i < 0) return
     queueMicrotask(() => {
       racine?.querySelectorAll('[data-indice]')[i]?.scrollIntoView({ block: 'nearest' })
     })
@@ -335,8 +360,9 @@ export default function PanneauSuggestions(props: PanneauSuggestionsProps) {
               }}
             >
               <span>Voir les {fr(totalTrouve())} résultats</span>
+              {/* Le temps de recherche n'intéresse que le panneau technique (A UX20). */}
               <span class="num" style={{ 'font-size': '11px', 'font-weight': '400', color: 'var(--fg3)' }}>
-                Entrée · {millisecondes()} ms
+                Entrée
               </span>
             </div>
           </Show>

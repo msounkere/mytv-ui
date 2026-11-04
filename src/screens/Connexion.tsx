@@ -1,6 +1,6 @@
 import { Show, createSignal, onCleanup, onMount } from 'solid-js'
 import Icone from '../components/Icone'
-import { connexion, etatAuth, verifierSession, type Echec } from '../lib/auth'
+import { connexion, etatAuth, raisonConnexion, verifierSession, type Echec } from '../lib/auth'
 
 // Page de connexion. Tant qu'elle est affichee, AUCUN ecran de l'application
 // n'est monte (voir Portail.tsx) : l'URL publique ne montre donc plus une
@@ -21,8 +21,14 @@ export default function Connexion() {
   // (429). Le bouton reste inerte pendant ce delai au lieu de relancer le refus.
   const [retard, poserRetard] = createSignal(0)
 
+  let champIdentifiant: HTMLInputElement | undefined
+  let champMotDePasse: HTMLInputElement | undefined
+
   onMount(() => {
     if (etatAuth() === 'inconnu') void verifierSession()
+    // Focus initial sur le premier champ utile (US-47 CA4, audit A UX1) : l'attribut
+    // `autofocus` ne vaut qu'au chargement du document, pas a l'arrivee de l'ecran.
+    requestAnimationFrame(() => champIdentifiant?.focus())
   })
 
   const injoignable = () => etatAuth() === 'injoignable'
@@ -38,6 +44,8 @@ export default function Connexion() {
       poserEchec(r)
       poserMotDePasse('')
       if (r.retardSecondes) demarrerRetard(r.retardSecondes)
+      // Apres un refus, on retape le mot de passe : le focus y revient (A UX1).
+      requestAnimationFrame(() => champMotDePasse?.focus())
     }
   }
 
@@ -95,13 +103,21 @@ export default function Connexion() {
           </Encadre>
         </Show>
 
+        {/* Session expiree (A bug 12, B UX20) : on le dit, et la reconnexion
+            ramene a l'ecran d'ou l'on vient (l'URL est conservee). */}
+        <Show when={!injoignable() && raisonConnexion() === 'expiree' && !echec()}>
+          <Encadre couche="info" titre="Session expirée">
+            Votre session a expiré, reconnectez-vous. Vous retrouverez l’écran où vous étiez.
+          </Encadre>
+        </Show>
+
         <Show when={!injoignable()}>
           <Champ
             libelle="Identifiant"
             valeur={identifiant()}
             surSaisie={poserIdentifiant}
             auto="username"
-            premier
+            ref={(el) => (champIdentifiant = el)}
           />
           <Champ
             libelle="Mot de passe"
@@ -109,6 +125,7 @@ export default function Connexion() {
             surSaisie={poserMotDePasse}
             masque
             auto="current-password"
+            ref={(el) => (champMotDePasse = el)}
           />
         </Show>
 
@@ -150,17 +167,19 @@ export default function Connexion() {
   )
 }
 
-function Encadre(props: { couche: 'err'; titre: string; children: unknown }) {
+function Encadre(props: { couche: 'err' | 'info'; titre: string; children: unknown }) {
+  const couleur = () => (props.couche === 'err' ? 'var(--err)' : 'var(--acc-fg)')
   return (
     <div
-      role="alert"
+      role={props.couche === 'err' ? 'alert' : 'status'}
+      data-role={props.couche === 'err' ? 'connexion-erreur' : 'connexion-info'}
       style={{
-        padding: '10px 12px', background: 'var(--err-bg)',
-        border: '1px solid var(--err)', 'border-radius': 'var(--r-md)',
+        padding: '10px 12px', background: props.couche === 'err' ? 'var(--err-bg)' : 'var(--acc-bg)',
+        border: `1px solid ${couleur()}`, 'border-radius': 'var(--r-md)',
         'font-size': '13px',
       }}
     >
-      <strong style={{ color: 'var(--err)' }}>{props.titre}</strong>
+      <strong style={{ color: couleur() }}>{props.titre}</strong>
       <p style={{ margin: '3px 0 0' }}>{props.children as never}</p>
     </div>
   )
@@ -172,18 +191,20 @@ function Champ(props: {
   surSaisie: (v: string) => void
   masque?: boolean
   auto?: string
-  premier?: boolean
+  ref?: (el: HTMLInputElement) => void
 }) {
   return (
     <label style={{ display: 'grid', gap: '4px' }}>
       <span class="secondaire" style={{ 'font-size': '12px' }}>{props.libelle}</span>
       <input
+        ref={props.ref}
         type={props.masque ? 'password' : 'text'}
         value={props.valeur}
         autocomplete={props.auto}
-        autofocus={props.premier}
         spellcheck={false}
         onInput={(e) => props.surSaisie(e.currentTarget.value)}
+        // 44 px au doigt (D21 : champs de 34 px sur telephone).
+        style={{ 'min-height': '44px' }}
       />
     </label>
   )

@@ -1,4 +1,4 @@
-import { estMobile } from '../lib/gabarit'
+import { estBureau } from '../lib/gabarit'
 import { For } from 'solid-js'
 import Icone from './Icone'
 
@@ -47,11 +47,11 @@ export default function SelecteurSegmente(props: {
               aria-label={s.libelle}
               onClick={() => props.surChoisir(s.cle)}
               style={{
-                // 44 px au doigt (cahier des charges, mobile) ; 28 px sinon.
-                height: estMobile() ? '44px' : '28px',
-                'min-width': props.iconesSeules && estMobile() ? '44px' : undefined,
+                // 44 px au doigt (telephone ET tablette, D21) ; 28 px au bureau.
+                height: estBureau() ? '28px' : '44px',
+                'min-width': props.iconesSeules && !estBureau() ? '44px' : undefined,
                 'justify-content': props.iconesSeules ? 'center' : undefined,
-                padding: props.iconesSeules && estMobile() ? '0' : '0 10px',
+                padding: props.iconesSeules && !estBureau() ? '0' : '0 10px',
                 display: 'flex',
                 'align-items': 'center',
                 gap: '6px',

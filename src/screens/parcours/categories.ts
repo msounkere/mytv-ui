@@ -5,6 +5,7 @@ import {
   requete, requeteClefee,
 } from '../../lib/requetes'
 import { onglet } from '../../etat'
+import { emettreToast } from '../../lib/toasts'
 
 // La colonne de Direct : 358 catégories qui sont une vraie taxonomie de pays,
 // et le rangement qui les rend parcourables — groupement par pays, replis,
@@ -226,14 +227,22 @@ export function creerColonneCategories() {
   }
 
   // Masquer est un confort durable — trois cents catégories étrangères ne
-  // servent à personne — mais jamais une perte : le choix se reprend ici même.
-  async function basculerMasquage(fiche: Fiche) {
+  // servent à personne — mais jamais une perte : le choix se reprend ici même,
+  // dans les Réglages (liste des masquées), ou tout de suite par « Annuler ».
+  // La catégorie masquée RESTE affichée tant qu'on ne la quitte pas (A UX11) :
+  // changer de catégorie sans prévenir désorientait.
+  async function basculerMasquage(fiche: Fiche, { annonce = true } = {}) {
     const masquer = fiche.cat.masquee === 0
     await db.categories.update(fiche.cat.cle, { masquee: masquer ? 1 : 0 })
-    if (masquer && !afficherMasquees()) poserCategorieActive(null)
     // La colonne de Direct ET l'index de facettes des films lisent cette
     // table : les deux doivent repartir de la base.
     void invaliderCategories('live')
+    if (!annonce) return
+    emettreToast({
+      message: masquer ? `${fiche.libelle} · catégorie masquée` : `${fiche.libelle} · catégorie réaffichée`,
+      ton: 'ok',
+      action: () => basculerMasquage({ ...fiche, cat: { ...fiche.cat, masquee: masquer ? 1 : 0 } }, { annonce: false }),
+    })
   }
 
   return {

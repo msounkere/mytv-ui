@@ -87,11 +87,6 @@ export default function EcranMedia(props: { surOuvrir: (e: EntreeCatalogue) => v
   // que l'utilisateur a fait, pas de ce que le fournisseur a nommé. Périmées à
   // chaque geste, donc toujours justes — y compris quand l'étoile a été cochée
   // depuis le lecteur ou depuis une autre machine.
-  const [favoris] = requete(
-    cles.favorisCles,
-    async () => new Set((await db.favoris.toArray()).map((f) => f.cle)),
-    { fraicheur: FRAICHEUR.geste },
-  )
   const [reprises] = requete(
     cles.reprisesCles,
     async () => new Set((await db.reprises.toArray()).map((r) => r.cle)),
@@ -129,7 +124,8 @@ export default function EcranMedia(props: { surOuvrir: (e: EntreeCatalogue) => v
     const out = filtrer(
       idx,
       c,
-      c.favoris ? (favoris() ?? AUCUNE_CLE) : AUCUNE_CLE,
+      // Favoris = chaines seulement (lot 10) : la bascule a disparu des grilles.
+      AUCUNE_CLE,
       c.enCours ? (reprises() ?? AUCUNE_CLE) : AUCUNE_CLE,
     )
     performance.measure('mytv:filtrage', { start: debut, end: performance.now() })

@@ -1,6 +1,7 @@
 import { ErreurLecteur, erreurDeStatut } from './errors'
 import { cheminContenu } from './identifiants'
 import { signalerSiNonAuthentifie } from './session-expiree'
+import { ACTION_GUIDE_INDISPONIBLE, CONTEXTE_GUIDE, MESSAGE_GUIDE_INDISPONIBLE } from './messages-guide'
 
 // Le guide des programmes vient du serveur, par fenetre de temps :
 //   GET /api/v1/epg/grille?chaines=a,b,c&de=<RFC3339>&a=<RFC3339>
@@ -183,10 +184,7 @@ export function creerClientEpg(opts: OptionsClientEpg = {}) {
       r = await appel(url, { credentials: 'same-origin', signal })
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') throw e
-      throw new ErreurLecteur(
-        'reseau', 'Le guide des programmes est injoignable.',
-        'Réessayer ; la navigation reste utilisable sans guide.', String(e),
-      )
+      throw new ErreurLecteur('reseau', MESSAGE_GUIDE_INDISPONIBLE, ACTION_GUIDE_INDISPONIBLE, String(e))
     }
     if (!r.ok) {
       signalerSiNonAuthentifie(r.status)
@@ -197,7 +195,7 @@ export function creerClientEpg(opts: OptionsClientEpg = {}) {
         // Corps absent ou illisible : le statut suffit.
       }
       throw erreurDeStatut(r.status, {
-        retryAfter: r.headers.get('Retry-After'), code, expiration: r.headers.get('X-Mytv-Expiration'), contexte: 'guide des programmes',
+        retryAfter: r.headers.get('Retry-After'), code, expiration: r.headers.get('X-Mytv-Expiration'), contexte: CONTEXTE_GUIDE,
       })
     }
     return r.json()

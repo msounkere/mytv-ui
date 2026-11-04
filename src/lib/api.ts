@@ -1,3 +1,4 @@
+import { createSignal } from 'solid-js'
 import { ErreurLecteur, erreurFournisseur, type Couche } from './errors'
 
 // Couche reseau UNIQUE de l'interface vers `/api/v1` (contrat : docs/openapi.yaml
@@ -53,6 +54,15 @@ export function signalerSessionPerdue(): void {
   for (const f of surSessionPerdue) f()
 }
 
+/**
+ * Le reseau vient-il d'echouer ? Vrai des qu'un appel n'obtient AUCUNE reponse,
+ * faux des qu'un appel en obtient une (meme une erreur : le service parle).
+ * C'est l'un des trois signes que `lib/reseau.ts` combine pour dire
+ * « Hors ligne » sur tous les ecrans (US-47 CA4).
+ */
+const [reseauCoupe, poserReseauCoupe] = createSignal(false)
+export { reseauCoupe, poserReseauCoupe }
+
 export interface OptionsAppel {
   methode?: 'GET' | 'POST' | 'PUT' | 'DELETE'
   corps?: unknown
@@ -103,8 +113,10 @@ export async function appeler(chemin: string, o: OptionsAppel = {}): Promise<Res
     })
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e
+    poserReseauCoupe(true)
     throw new ErreurReseau(String(e))
   }
+  poserReseauCoupe(false)
   if (r.ok || r.status === 304) return r
   const err = await erreurDe(r)
   if (r.status === 401 && !o.sansDetectionSession) for (const f of surSessionPerdue) f()

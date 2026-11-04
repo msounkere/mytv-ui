@@ -1,8 +1,8 @@
 import { createSignal } from 'solid-js'
 import { db, type TypeContenu, type EntreeCatalogue } from './db'
-import { ErreurLecteur, type Couche } from './errors'
+import { ErreurLecteur, erreurStockageLocal, estErreurStockage, type Couche } from './errors'
 import type { AvancementImport, DepuisWorker, VersWorker } from './import.worker'
-import { signalerSessionPerdue } from './api'
+import { poserReseauCoupe, signalerSessionPerdue } from './api'
 import { estConnecte } from './auth'
 import { invaliderCatalogue } from './requetes'
 import { reindexer } from './recherche-client'
@@ -67,6 +67,9 @@ export function importerCatalogue(
     }
     worker.onerror = (e) => {
       worker.terminate()
+      // Une base locale bloquee (navigation privee) peut remonter ici, non
+      // interceptee : une phrase humaine, pas l'exception (D14).
+      if (estErreurStockage({ name: '', message: e.message })) return rejeter(erreurStockageLocal(new Error(e.message)))
       rejeter(new ErreurLecteur('donnees', e.message || "L'import a échoué.", "Réessayer l'import."))
     }
     worker.postMessage({ type: 'importer', force: options.force } satisfies VersWorker)
@@ -123,10 +126,13 @@ export function mettreAJourCatalogue(force = false): Promise<ResultatImport | un
         return r
       } catch (e) {
         poserAvancementCatalogue(null)
-        const err = e instanceof ErreurLecteur ? e : new ErreurLecteur('donnees', String(e), 'Réessayer.')
+        const err = e instanceof ErreurLecteur ? e : estErreurStockage(e) ? erreurStockageLocal(e) : new ErreurLecteur('donnees', String(e), 'Réessayer.')
         poserErreurCatalogue(err)
         poserEtatCatalogue('erreur')
         if (err.couche === 'auth') signalerSessionPerdue()
+        // L'import passe par un worker, hors de `api.ts` : il annonce lui-meme
+        // une coupure (le bandeau « Hors ligne » en depend).
+        if (err.couche === 'reseau') poserReseauCoupe(true)
         return undefined
       } finally {
         enCours = undefined

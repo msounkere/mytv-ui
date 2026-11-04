@@ -30,10 +30,20 @@ export default function ListeVirtuelle<T>(props: ListeVirtuelleProps<T>) {
     const el = scroller()
     if (!el) return
     const mesurer = () => poserTaille({ width: el.clientWidth, height: el.clientHeight })
-    const observateur = new ResizeObserver(mesurer)
+    // Mesure différée d'une image : écrire la taille DANS le rappel monte des
+    // lignes pendant la même disposition, boucle que WebKit remonte en
+    // « ResizeObserver loop completed with undelivered notifications » (D17).
+    let demande = 0
+    const observateur = new ResizeObserver(() => {
+      cancelAnimationFrame(demande)
+      demande = requestAnimationFrame(mesurer)
+    })
     observateur.observe(el)
     mesurer()
-    onCleanup(() => observateur.disconnect())
+    onCleanup(() => {
+      cancelAnimationFrame(demande)
+      observateur.disconnect()
+    })
   })
 
   return (

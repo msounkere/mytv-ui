@@ -1,4 +1,4 @@
-import { estMobile } from '../../lib/gabarit'
+import { estBureau, estMobile } from '../../lib/gabarit'
 import { ErrorBoundary, For, Show, type JSX } from 'solid-js'
 import Diagnostic from '../../components/Diagnostic'
 import Icone from '../../components/Icone'
@@ -56,7 +56,8 @@ export default function ColonneCategories(props: {
               aria-current={onglet() === t ? 'page' : undefined}
               style={{
                 flex: '1',
-                height: '30px',
+                // 44 px au doigt : tablette et telephone (D21).
+                height: estBureau() ? '30px' : '44px',
                 'border-radius': 'var(--r-btn-sm)',
                 'font-size': '12px',
                 'font-weight': 'var(--w-strong)',
@@ -75,7 +76,7 @@ export default function ColonneCategories(props: {
         <span
           aria-hidden="true"
           style={{
-            position: 'absolute', left: '22px', top: estMobile() ? '26px' : '20px',
+            position: 'absolute', left: '22px', top: estBureau() ? '20px' : '26px',
             display: 'flex', color: 'var(--fg3)', 'pointer-events': 'none',
           }}
         >
@@ -88,7 +89,7 @@ export default function ColonneCategories(props: {
           aria-label="Rechercher une catégorie"
           style={{
             width: '100%',
-            height: estMobile() ? '44px' : '32px',
+            height: estBureau() ? '32px' : '44px',
             padding: '0 30px 0 32px',
             'border-radius': 'var(--r-sm)',
             border: '1px solid var(--line2)',
@@ -102,8 +103,8 @@ export default function ColonneCategories(props: {
             aria-label="Effacer la recherche"
             onClick={() => etat.poserRecherche('')}
             style={{
-              position: 'absolute', right: estMobile() ? '12px' : '18px', top: estMobile() ? '12px' : '17px',
-              width: estMobile() ? '44px' : '22px', height: estMobile() ? '44px' : '22px', padding: '0',
+              position: 'absolute', right: estBureau() ? '18px' : '12px', top: estBureau() ? '17px' : '12px',
+              width: estBureau() ? '22px' : '44px', height: estBureau() ? '22px' : '44px', padding: '0',
               'border-radius': 'var(--r-btn-sm)',
               display: 'flex', 'align-items': 'center', 'justify-content': 'center',
               color: 'var(--fg3)',

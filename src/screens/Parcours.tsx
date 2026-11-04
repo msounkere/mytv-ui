@@ -1,14 +1,16 @@
-import { Show, createEffect, createSignal, onCleanup } from 'solid-js'
+import { Show, createEffect, createSignal, on, onCleanup } from 'solid-js'
 import Couche from '../components/Couche'
 import GrilleCartes from '../components/GrilleCartes'
 import ListeVirtuelle from '../components/ListeVirtuelle'
 import PanneauCoulissant from '../components/PanneauCoulissant'
-import Icone from '../components/Icone'
 import LigneChaine, { colonnesChaine, HAUTEUR_CHAINE } from '../components/LigneChaine'
 import { memoriserDefilement } from '../components/memoireDefilement'
 import type { EntreeCatalogue, TypeContenu } from '../lib/db'
 import { estMobile, estTablette } from '../lib/gabarit'
-import { ecran, onglet, poserOnglet, poserEcran, LIBELLE_ONGLET } from '../etat'
+import {
+  ecran, onglet, poserOnglet, poserEcran, LIBELLE_ONGLET, parametresDirect, poserParametresDirect, selection,
+} from '../etat'
+import { numeroDuGroupe } from '../lib/direct-tri'
 import BarreOutilsDirect, { type ModeDirect } from './parcours/BarreOutilsDirect'
 import ColonneCategories from './parcours/ColonneCategories'
 import EcranMedia from './parcours/EcranMedia'
@@ -47,12 +49,37 @@ function ecrireMasquer4K(v: boolean): void {
 
 export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => void }) {
   const [filtre, poserFiltre] = createSignal('')
-  const [mode, poserMode] = createSignal<ModeDirect>('liste')
+  const [mode, poserMode] = createSignal<ModeDirect>(parametresDirect().mode ?? 'liste')
   const [masquer4K, poserMasquer4K] = createSignal(lireMasquer4K())
   const [maintenant, poserMaintenant] = createSignal(Date.now())
 
   const colonne = creerColonneCategories()
-  const chaines = creerListeChaines({ categorieActive: colonne.categorieActive, filtre, masquer4K })
+  const favorites = () => !!parametresDirect().favoris
+  const chaines = creerListeChaines({ categorieActive: colonne.categorieActive, filtre, masquer4K, seulementFavorites: favorites })
+
+  // Catégorie et mode vivent aussi dans l'URL (US-47 CA7, audit A UX10) : un
+  // lien partagé ou un rechargement retombe sur ce qu'on regardait. L'URL fait
+  // foi quand elle en porte ; l'écran l'écrit quand on y choisit.
+  // Chaque effet ne suit QUE sa source (`on`) : l'un lisant ce que l'autre
+  // écrit, ils se relanceraient mutuellement et annuleraient le choix.
+  createEffect(
+    on(parametresDirect, (p) => {
+      if (p.categorie && p.categorie !== colonne.categorieActive()) colonne.poserCategorieActive(p.categorie)
+      if (p.mode && p.mode !== mode()) poserMode(p.mode)
+    }),
+  )
+  createEffect(
+    on([colonne.categorieActive, mode], ([categorie, m]) => {
+      if (categorie) poserParametresDirect({ categorie, mode: m })
+    }),
+  )
+
+  // La chaîne jouée (ou l'une de ses variantes) est surlignée dans la liste (A UX14).
+  const cleJouee = () => selection()?.cle
+  const estActive = (g: Groupe<EntreeCatalogue>) => {
+    const c = cleJouee()
+    return !!c && g.variantes.some((v) => v.cle === c)
+  }
 
   // L'horloge ne bat que sur Direct : le surlignage « en cours » et les jauges
   // n'existent nulle part ailleurs, et un minuteur qui tourne sous Films ne
@@ -74,6 +101,8 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
   }
 
   const [panneau, poserPanneau] = createSignal(false)
+  /** Bouton qui a ouvert le panneau : le focus lui revient à la fermeture (CA7). */
+  const [ancreCategories, poserAncreCategories] = createSignal<HTMLElement | null>(null)
 
   // Quitter Direct ou changer de gabarit referme le panneau : monté mais hors
   // champ, il rouvrirait tout seul au retour.
@@ -83,20 +112,19 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
 
   function choisirCategorie(id: string) {
     colonne.poserCategorieActive(id)
+    // Choisir une categorie quitte la vue des favorites.
+    poserParametresDirect({ favoris: false })
     poserFiltre('')
     // Choisir une catégorie est le but de l'ouverture : on referme.
     poserPanneau(false)
   }
 
   function choisirMode(cle: string) {
-    // « Guide TV » n'est pas un troisième rendu de cette liste : le dossier en
-    // fait un raccourci vers l'écran Guide, qui a déjà sa grille et son worker
-    // XMLTV. En monter une seconde copie ici ferait tourner deux imports.
-    if (cle === 'guide') poserEcran('guide')
-    else poserMode(cle as ModeDirect)
+    if (cle === 'liste' || cle === 'cartes') poserMode(cle)
   }
 
   const titreDirect = () => {
+    if (favorites()) return 'Mes chaînes favorites'
     const f = colonne.ficheActive()
     if (!f) return LIBELLE_ONGLET.live
     if (!f.pays) return f.libelle
@@ -119,7 +147,7 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
   /** Une vue par catégorie ET par mode, comme l'exigent les règles. */
   const cleVue = () => {
     const id = colonne.categorieActive()
-    return id ? `live:${mode()}:${id}` : null
+    return id ? `live:${mode()}:${favorites() ? 'favorites:' : ''}${id}` : null
   }
 
   const [zoneListe, poserZoneListe] = createSignal<HTMLDivElement | null>(null)
@@ -161,32 +189,9 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
               />
             }
           >
-            <PanneauCoulissant ouvert={panneau()} surFermer={() => poserPanneau(false)} etiquette="Catégories">
-              <div style={{ position: 'relative', padding: '12px 12px 0', 'flex': 'none' }}>
-                <span
-                  aria-hidden="true"
-                  style={{
-                    position: 'absolute', left: '22px', top: '26px',
-                    display: 'flex', color: 'var(--fg3)', 'pointer-events': 'none',
-                  }}
-                >
-                  <Icone nom="filter_list" taille={16} />
-                </span>
-                {/* Le champ « Filtrer cette liste » n'a pas sa place dans la
-                    barre d'outils à 390 px : il vit ici, avec le choix de la
-                    catégorie qu'il filtre. */}
-                <input
-                  value={filtre()}
-                  onInput={(e) => poserFiltre(e.currentTarget.value)}
-                  placeholder="Filtrer cette liste"
-                  aria-label="Filtrer les chaînes de cette liste"
-                  style={{
-                    width: '100%', height: '44px', padding: '0 10px 0 32px',
-                    'border-radius': 'var(--r-sm)', border: '1px solid var(--line2)',
-                    'border-bottom-color': 'var(--fg3)', background: 'var(--elev)', 'font-size': '14px',
-                  }}
-                />
-              </div>
+            {/* Un seul champ par panneau (A UX16) : « Filtrer cette liste » vit
+                dans la barre d'outils, ici il ne reste que la recherche de catégorie. */}
+            <PanneauCoulissant ouvert={panneau()} surFermer={() => poserPanneau(false)} etiquette="Catégories" ancre={ancreCategories()}>
               <ColonneCategories
                 etat={colonne}
                 surOnglet={choisirOnglet}
@@ -218,7 +223,13 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
               }}
               mode={mode()}
               surMode={choisirMode}
-              surCategories={() => poserPanneau(true)}
+              surCategories={() => {
+                poserAncreCategories(document.activeElement as HTMLElement | null)
+                poserPanneau(true)
+              }}
+              // « Guide TV » n'est pas un troisième rendu de cette liste : c'est
+              // un lien vers l'écran Guide, qui a déjà sa grille (A UX12).
+              surGuide={() => poserEcran('guide')}
             />
 
             <Show
@@ -273,11 +284,13 @@ export default function Parcours(props: { surOuvrir: (e: EntreeCatalogue) => voi
                   vide={<VideChaines filtre={filtre()} />}
                   ligne={(g, i) => (
                     <LigneChaine
-                      numero={i + 1}
+                      // Colonne « N° » : le numéro du bouquet, pas l'index de la ligne (A UX13).
+                      numero={numeroDuGroupe(g.variantes, i + 1)}
                       entree={g.representant}
                       programme={chaines.programmeDuGroupe(g)}
                       maintenant={maintenant()}
                       qualites={qualitesDuGroupe(g)}
+                      active={estActive(g)}
                       surOuvrir={() => ouvrir(g)}
                     />
                   )}

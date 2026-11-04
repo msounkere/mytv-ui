@@ -4,7 +4,7 @@ import PlaqueChaine, { avancement, plageHoraire, type ProgrammeCourant } from '.
 import EtiquettePays from './EtiquettePays'
 import Badge4K from './Badge4K'
 import type { EntreeCatalogue } from '../lib/db'
-import { LIBELLE_QUALITE, type Qualite } from '../lib/variantes'
+import { LIBELLE_QUALITE, qualiteDe, type Qualite } from '../lib/variantes'
 
 // Ligne de chaîne du mode Liste de Direct. Le dossier de conception la veut
 // porteuse de son programme en cours — « 20:00 – 21:00 · Journal » — parce que
@@ -14,12 +14,18 @@ import { LIBELLE_QUALITE, type Qualite } from '../lib/variantes'
 // mode Liste : ligne 56 px avec filet bas, colonnes
 // « 40px 52px minmax(170px,1fr) minmax(240px,1.6fr) », écart 12 px, retraits
 // latéraux 20 px ; plaque 52 × 34 ; horaire sur 96 px ; jauge 160 × 3 px.
+//
+// Lot 10 (US-47 CA2, audit D5 / A UX14) : le NOM prime sur le badge des
+// variantes. Hors bureau, le badge se replie en sa seule qualité la plus haute
+// (« HD »), et il cède d'abord si la place manque (il rétrécit vingt fois plus
+// vite que le nom). La chaîne en cours de lecture est surlignée.
 
 export const COLONNES_CHAINE = '40px 52px minmax(170px, 1fr) minmax(240px, 1.6fr)'
 // Tablette : la liste ne dispose que de 512 px (748 − colonne de 236). Les
 // minimums du bureau en demandent 578 : la ligne débordait. Ici ils cèdent la
-// place à des fractions, et seule la colonne du programme garde de quoi lire.
-const COLONNES_TABLETTE = '28px 52px minmax(0, 1fr) minmax(0, 1.5fr)'
+// place à des fractions ; le NOM garde la plus large (audit D5 : à 1,5fr pour
+// le programme, « Chaîne 2 4K » devenait « Chaîn… »).
+const COLONNES_TABLETTE = '28px 52px minmax(0, 1.25fr) minmax(0, 1fr)'
 // Mobile : logo, nom, programme — le numéro et la jauge n'ont plus la place.
 const COLONNES_MOBILE = '52px minmax(0, 1fr)'
 
@@ -38,22 +44,37 @@ export interface LigneChaineProps {
   maintenant: number
   /** Qualités des variantes du groupe (US-39 CA1), de la plus haute à la plus basse ; vide : chaîne sans variante. */
   qualites?: Qualite[]
+  /** La chaîne (ou l'une de ses variantes) est en cours de lecture. */
+  active?: boolean
   surOuvrir: () => void
 }
 
 /** « 4K · FHD · HD » : les variantes disponibles, sans la ligne pour chacune. */
-export function BadgesVariantes(props: { qualites?: Qualite[] }) {
+export function BadgesVariantes(props: { qualites?: Qualite[]; compact?: boolean; nom?: string }) {
+  const texte = () => {
+    const q = props.qualites ?? []
+    if (!props.compact) return q.map((x) => LIBELLE_QUALITE[x]).join(' · ')
+    // Replié : la meilleure définition seule ; « standard » seul ne dit rien,
+    // et une qualité déjà dans le nom (« Chaîne 2 4K ») ne se répète pas.
+    const haute = q[0]
+    if (!haute || haute === 'inconnue') return ''
+    if (props.nom && qualiteDe(props.nom) === haute) return ''
+    return LIBELLE_QUALITE[haute]
+  }
   return (
-    <Show when={props.qualites && props.qualites.length > 1}>
+    <Show when={props.qualites && props.qualites.length > 1 && texte()}>
       <span
         data-role="variantes"
         title={`${props.qualites!.length} variantes : ${props.qualites!.map((q) => LIBELLE_QUALITE[q]).join(', ')}`}
         style={{
-          flex: 'none', 'font-family': 'var(--moov-font-mono)', 'font-size': '10px', 'line-height': '14px',
+          // Il cède la place avant le nom : rétrécissement vingt fois plus rapide,
+          // et il disparaît (overflow) plutôt que de pousser le nom hors de la ligne.
+          flex: props.compact ? '0 20 auto' : 'none', 'min-width': '0', overflow: 'hidden', 'white-space': 'nowrap',
+          'font-family': 'var(--moov-font-mono)', 'font-size': '10px', 'line-height': '14px',
           padding: '0 5px', 'border-radius': 'var(--r-2xs)', background: 'var(--acc-bg)', color: 'var(--acc-fg)',
         }}
       >
-        {props.qualites!.map((q) => LIBELLE_QUALITE[q]).join(' · ')}
+        {texte()}
       </span>
     </Show>
   )
@@ -64,6 +85,8 @@ export default function LigneChaine(props: LigneChaineProps) {
     <button
       onClick={props.surOuvrir}
       title={props.entree.nom}
+      aria-current={props.active ? 'true' : undefined}
+      data-role="ligne-chaine"
       style={{
         display: 'grid',
         'grid-template-columns': colonnesChaine(),
@@ -75,6 +98,10 @@ export default function LigneChaine(props: LigneChaineProps) {
         'border-bottom': '1px solid var(--line)',
         'border-radius': '0',
         'text-align': 'left',
+        // Chaîne en cours (A UX14) : fond d'accent et barre de sélection à gauche.
+        'box-shadow': props.active ? 'inset 3px 0 0 var(--acc-fg)' : undefined,
+        background: props.active ? 'var(--acc-bg)' : undefined,
+        color: props.active ? 'var(--acc-fg)' : undefined,
       }}
     >
       <Show when={!estMobile()}>
@@ -92,9 +119,9 @@ export default function LigneChaine(props: LigneChaineProps) {
           // restante — c'est le programme qui décide de zapper.
           <span style={{ display: 'flex', 'flex-direction': 'column', gap: '3px', 'min-width': '0' }}>
             <span style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'min-width': '0' }}>
-              <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.entree.nom}</span>
+              <span class="tronque" data-role="nom-chaine" style={{ 'font-weight': 'var(--w-strong)', flex: '0 1 auto', 'min-width': '0' }}>{props.entree.nom}</span>
               <Badge4K nom={props.entree.nom} />
-              <BadgesVariantes qualites={props.qualites} />
+              <BadgesVariantes qualites={props.qualites} compact nom={props.entree.nom} />
             </span>
             <span class="tronque" style={{ 'font-size': '12px', 'line-height': '16px', color: 'var(--fg3)' }}>
               {props.programme?.titre ?? 'Aucun programme disponible'}
@@ -103,10 +130,12 @@ export default function LigneChaine(props: LigneChaineProps) {
         }
       >
       <span style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'min-width': '0' }}>
-        <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{props.entree.nom}</span>
+        <span class="tronque" data-role="nom-chaine" style={{ 'font-weight': 'var(--w-strong)', flex: '0 1 auto', 'min-width': '0' }}>{props.entree.nom}</span>
         <Badge4K nom={props.entree.nom} />
-        <BadgesVariantes qualites={props.qualites} />
-        <EtiquettePays pays={props.entree.pays} />
+        <BadgesVariantes qualites={props.qualites} compact={!gabarit().startsWith('bureau')} nom={props.entree.nom} />
+        <Show when={!estTablette()}>
+          <EtiquettePays pays={props.entree.pays} />
+        </Show>
       </span>
 
       <span style={{ display: 'flex', 'flex-direction': 'column', gap: '5px', 'min-width': '0' }}>
