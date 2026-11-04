@@ -4,7 +4,7 @@ import type { RouteSectionProps } from '@solidjs/router'
 import { profilActif, session } from './lib/auth'
 import {
   LIBELLE_ONGLET, arreterLecture, quitterLecteur, barreDeployee, brancherRouteur, changerDeChaine, cleArretee, cleFiche,
-  cleFicheFilm, cleLecture, ecran, episodeSuivant, filmOuvert, ouvrirDetails, poserFilmOuvert, lireEpisode, oublierContenuOuvert, onglet, ouvrir,
+  cleFicheFilm, cleLecture, ecran, episodeSuivant, filmOuvert, ouvrirDetails, poserFilmOuvert, lireEpisode, oublierContenuOuvert, onglet, ouvrir, lire,
   ouvrirRecherche, poserEcran, poserOnglet, poserSelection, poserSerieOuverte, revenirAuLecteur, revenirEnArriere,
   selection, serieOuverte, urlEpisode, lectureEnCours,
 } from './etat'
@@ -31,9 +31,8 @@ const FicheSerie = lazy(() => import('./screens/FicheSerie'))
 const FicheFilm = lazy(() => import('./screens/FicheFilm'))
 const Guide = lazy(() => import('./screens/Guide'))
 const Reglages = lazy(() => import('./screens/Reglages'))
-// Lot 10 : l'ecran « À voir » devient « Ma liste » (ui-7 renomme le fichier en
-// screens/MaListe.tsx ; le coordinateur ajuste cet import a la fusion).
-const MaListe = lazy(() => import('./screens/AVoir'))
+// Lot 10 : l'ecran « À voir » est devenu « Ma liste » (screens/MaListe.tsx).
+const MaListe = lazy(() => import('./screens/MaListe'))
 
 // Coque permanente : rail de navigation, en-tête, surface unique. Changer
 // d'écran ne recharge jamais la page — le zapping doit rester sous la seconde.
@@ -152,7 +151,7 @@ function EcranFicheFilm() {
       {(f) => (
         <FicheFilm
           film={f()}
-          surLire={ouvrir}
+          surLire={lire}
           // On revient la OU l'on etait ; sans historique (lien direct,
           // rechargement), l'accueil.
           surRetour={() => revenirEnArriere('/')}
@@ -455,7 +454,7 @@ function Coque(props: RouteSectionProps) {
                           }
                         : undefined
                     }
-                    surSuivantListe={ouvrir}
+                    surSuivantListe={lire}
                     surChanger={changerDeChaine}
                     surFermer={arreterLecture}
                     surRetour={quitterLecteur}
