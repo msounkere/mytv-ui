@@ -38,6 +38,9 @@ for (const moteur of moteursDemandes()) {
     const semer = async (cle) => {
       await s.ouvrirLecture(cle)
       await page.waitForFunction(() => (document.querySelector('video')?.readyState ?? 0) >= 2, null, { timeout: 20_000 })
+      // Le MP3 factice n'a pas d'en-tete de duree : WebKit la rend `Infinity` un moment, et sans duree finie
+      // il n'y a pas de position a noter (ce n'est pas une reprise). On attend qu'elle soit connue.
+      await page.waitForFunction(() => { const d = document.querySelector('video')?.duration; return Number.isFinite(d) && d > 0 }, null, { timeout: 20_000 })
       await page.evaluate(() => { const vi = document.querySelector('video'); vi.currentTime = 1.5; return vi.play().catch(() => {}) })
       await pause(600)
       v.ok((await video())?.t >= 1, `lecture en cours a t=${(await video())?.t?.toFixed(1)} s`)
