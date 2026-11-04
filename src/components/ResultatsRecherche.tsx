@@ -51,7 +51,6 @@ export default function ResultatsRecherche(props: ResultatsRechercheProps) {
   const [groupes, poserGroupes] = createSignal<Groupes>(VIDE)
   const [totaux, poserTotaux] = createSignal<Totaux>(ZERO)
   const [langues, poserLangues] = createSignal<Facette[]>([])
-  const [millisecondes, poserMillisecondes] = createSignal(0)
   const [charge, poserCharge] = createSignal(true)
 
   const [type, poserType] = createSignal<TypeContenu | 'tout'>('tout')
@@ -83,7 +82,6 @@ export default function ResultatsRecherche(props: ResultatsRechercheProps) {
       poserGroupes(r.groupes)
       poserTotaux(r.totaux)
       poserLangues(r.langues)
-      poserMillisecondes(r.ms)
       poserCharge(false)
     })
   })
@@ -120,7 +118,7 @@ export default function ResultatsRecherche(props: ResultatsRechercheProps) {
           </h1>
           <span class="tertiaire num" style={{ 'font-size': '12px' }}>
             <Show when={etatIndex() === 'pret'} fallback="Indexation du catalogue…">
-              {fr(total())} résultat{total() > 1 ? 's' : ''} · {millisecondes()} ms
+              {fr(total())} résultat{total() > 1 ? 's' : ''}
             </Show>
           </span>
         </div>
