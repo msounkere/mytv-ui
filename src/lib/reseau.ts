@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js'
-import { reseauCoupe } from './api'
+import { poserReseauCoupe, reseauCoupe } from './api'
 import { etatSynchro } from './synchro'
 
 // « Hors ligne » : UN signal pour tous les ecrans (US-47 CA4). Trois sources,
@@ -12,13 +12,35 @@ import { etatSynchro } from './synchro'
 const [enLigneNavigateur, poserEnLigne] = createSignal(
   typeof navigator === 'undefined' ? true : navigator.onLine,
 )
+// `navigator.onLine` ment parfois (WebKit sans gestionnaire de reseau le dit
+// « hors ligne » alors que tout passe) : quand il dit non, on VERIFIE par un
+// appel leger ; s'il passe, on cesse de croire `onLine` et on s'en remet aux
+// appels eux-memes (`reseauCoupe`).
+const [onLineFiable, poserOnLineFiable] = createSignal(true)
+
+async function verifier(): Promise<void> {
+  try {
+    const r = await fetch('/api/v1/sante', { cache: 'no-store', credentials: 'same-origin' })
+    if (r.ok) {
+      poserOnLineFiable(false)
+      poserReseauCoupe(false)
+    } else poserReseauCoupe(true)
+  } catch {
+    poserReseauCoupe(true)
+  }
+}
+
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => poserEnLigne(true))
-  window.addEventListener('offline', () => poserEnLigne(false))
+  window.addEventListener('offline', () => {
+    poserEnLigne(false)
+    void verifier()
+  })
+  if (!navigator.onLine) void verifier()
 }
 
 export const horsLigne = (): boolean =>
-  !enLigneNavigateur() || reseauCoupe() || etatSynchro() === 'hors-ligne'
+  (onLineFiable() && !enLigneNavigateur()) || reseauCoupe() || etatSynchro() === 'hors-ligne'
 
 export { SUFFIXE_HORS_LIGNE, phraseHorsLigne } from './hors-ligne'
 import { libelleGeste as libelleGestePur } from './hors-ligne'

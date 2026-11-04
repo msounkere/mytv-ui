@@ -79,6 +79,7 @@ function EcranIndisponible(props: { erreur: unknown; surReessayer: () => void })
     <div
       role="alert"
       data-role="ecran-indisponible"
+      data-detail={String(props.erreur).slice(0, 200)}
       style={{ display: 'flex', 'flex-direction': 'column', 'align-items': 'center', gap: '10px', padding: '56px 16px', 'text-align': 'center' }}
     >
       <div style={{ 'font-size': '16px', 'font-weight': 'var(--w-strong)' }}>{message()}</div>
