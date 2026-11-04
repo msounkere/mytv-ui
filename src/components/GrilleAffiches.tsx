@@ -2,6 +2,13 @@ import { gabarit as gabaritEcran } from '../lib/gabarit'
 import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from 'solid-js'
 import ListeVirtuelle from './ListeVirtuelle'
 import { memoriserDefilement } from './memoireDefilement'
+import ChipPreparation from './ChipPreparation'
+import MenuContextuel, { type EntreeMenu } from './MenuContextuel'
+import { BoutonMenuCarte } from './CarteAffiche'
+import { useMaListeCles, useMaListeElements } from './BoutonMaListe'
+import { lire as lireDirect } from '../etat'
+import { basculerMaListe } from '../lib/ma-liste'
+import { LIBELLES, type Preparation } from '../lib/ma-liste-regles'
 import type { EntreeCatalogue } from '../lib/db'
 
 // Films et séries ne se parcourent pas en liste de texte : la maquette les
@@ -12,6 +19,12 @@ import type { EntreeCatalogue } from '../lib/db'
 // font que 15 309 rangées, et le virtualiseur n'a besoin que d'une hauteur de
 // ligne constante — ce qu'une grille CSS fluide ne donnerait pas. Les colonnes
 // sont donc calculées à la main depuis la largeur mesurée.
+//
+// Lot 10 (US-46 CA2, CA6) : un tap/clic sur l'affiche OUVRE LA FICHE ; chaque
+// affiche porte un bouton « ⋯ » toujours visible (Lecture · + Ma liste /
+// Retirer de Ma liste · Détails) et le badge d'etat de preparation quand le
+// titre est dans Ma liste (C UX29 : le bouton existe partout ou une affiche
+// apparait).
 //
 // Valeurs relevées au getComputedStyle sur « Lecteur IPTV.dc.html » (V2,
 // section de 1220 px) : retrait 20 px, écart 16 px, 7 colonnes de 155 px,
@@ -46,7 +59,10 @@ function teinte(nom: string): number {
 
 export interface GrilleAffichesProps {
   elements: EntreeCatalogue[]
+  /** Tap/clic sur l'affiche et « Détails » : la FICHE. */
   surOuvrir: (e: EntreeCatalogue) => void
+  /** « ▶ Lecture » du menu ; absent = lecture directe (`lire`). */
+  surLire?: (e: EntreeCatalogue) => void
   /** Titre affiché sous l'affiche, souvent allégé de ce que porte la légende. */
   titre?: (e: EntreeCatalogue) => string
   /** Ligne de métadonnées sous le titre (année, format…). */
@@ -105,6 +121,10 @@ export default function GrilleAffiches(props: GrilleAffichesProps) {
     return { colonnes: colonnes(), hauteur: h, pas: h + HAUTEUR_LEGENDE + ECART(), bord: BORD(), ecart: ECART() }
   })
 
+  // Ma liste : une lecture pour toute la grille (perimee au geste), passee aux affiches.
+  const clesListe = useMaListeCles()
+  const elementsListe = useMaListeElements()
+
   const rangees = createMemo(() => {
     const n = gabarit().colonnes
     const tout = props.elements
@@ -152,7 +172,10 @@ export default function GrilleAffiches(props: GrilleAffichesProps) {
                         marque={props.marque?.(e)}
                         note={props.note?.(e)}
                         infobulle={props.infobulle?.(e) ?? e.nom}
+                        dansMaListe={clesListe()?.has(e.cle) ?? false}
+                        preparation={elementsListe()?.get(e.cle)?.preparation}
                         surOuvrir={() => props.surOuvrir(e)}
+                        surLire={() => (props.surLire ?? lireDirect)(e)}
                       />
                     )}
                   </For>
@@ -206,22 +229,44 @@ function Affiche(props: {
   marque?: string
   note?: string
   infobulle: string
+  dansMaListe: boolean
+  preparation?: Preparation
   surOuvrir: () => void
+  surLire: () => void
 }) {
   // Les jaquettes sont souvent absentes ou servies par un hôte muet : la
   // plaque colorée et le titre sont posés d'emblée, l'image ne vient
   // par-dessus qu'une fois réellement chargée.
   const [chargee, poserChargee] = createSignal(false)
   const [survol, poserSurvol] = createSignal(false)
+  const [menu, poserMenu] = createSignal<{ x: number; y: number; ancre: HTMLElement } | null>(null)
   const t = createMemo(() => teinte(props.entree.nom))
+  const serie = () => props.entree.type === 'series'
+
+  const entreesMenu = (): EntreeMenu[] => [
+    ...(serie() ? [] : [{ icone: 'play_arrow', libelle: 'Lecture', action: props.surLire }]),
+    props.dansMaListe
+      ? { icone: 'check', libelle: LIBELLES.retirer, action: () => void basculerMaListe(props.entree.cle), danger: true }
+      : { icone: 'add', libelle: LIBELLES.ajouter, action: () => void basculerMaListe(props.entree.cle) },
+    { icone: 'info', libelle: 'Détails', action: props.surOuvrir },
+  ]
 
   return (
-    <button
+    <div
+      role="button"
+      tabindex="0"
+      aria-label={props.titre}
       onClick={props.surOuvrir}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          props.surOuvrir()
+        }
+      }}
       onMouseEnter={() => poserSurvol(true)}
       onMouseLeave={() => poserSurvol(false)}
-      onFocus={() => poserSurvol(true)}
-      onBlur={() => poserSurvol(false)}
+      onFocusIn={() => poserSurvol(true)}
+      onFocusOut={() => poserSurvol(false)}
       title={props.infobulle}
       style={{
         display: 'flex',
@@ -231,6 +276,7 @@ function Affiche(props: {
         padding: '0',
         'text-align': 'left',
         background: 'transparent',
+        cursor: 'pointer',
       }}
     >
       <div
@@ -292,24 +338,24 @@ function Affiche(props: {
           {props.titre}
         </span>
 
-        <Show when={props.marque}>
-          <span
-            style={{
-              position: 'absolute',
-              top: '6px',
-              left: '6px',
-              'font-size': '10px',
-              'line-height': '16px',
-              padding: '0 6px',
-              'border-radius': 'var(--r-2xs)',
-              background: 'var(--acc)',
-              color: 'var(--acc-ink)',
-              'font-weight': 'var(--w-strong)',
-            }}
-          >
-            {props.marque}
-          </span>
-        </Show>
+        <div style={{ position: 'absolute', top: '6px', left: '6px', right: '6px', display: 'flex', gap: '4px', 'pointer-events': 'none' }}>
+          <Show when={props.marque}>
+            <span
+              style={{
+                'font-size': '10px',
+                'line-height': '16px',
+                padding: '0 6px',
+                'border-radius': 'var(--r-2xs)',
+                background: 'var(--acc)',
+                color: 'var(--acc-ink)',
+                'font-weight': 'var(--w-strong)',
+              }}
+            >
+              {props.marque}
+            </span>
+          </Show>
+          <ChipPreparation forme="badge" preparation={props.preparation} />
+        </div>
 
         <span
           aria-hidden="true"
@@ -343,6 +389,8 @@ function Affiche(props: {
             play_arrow
           </span>
         </span>
+
+        <BoutonMenuCarte titre={props.titre} surOuvrir={poserMenu} />
       </div>
 
       <span class="tronque" style={{ 'font-weight': 'var(--w-strong)', 'line-height': '20px' }}>
@@ -379,6 +427,9 @@ function Affiche(props: {
           </span>
         </Show>
       </span>
-    </button>
+      <Show when={menu()}>
+        {(m) => <MenuContextuel x={m().x} y={m().y} ancre={m().ancre} libelle={`Options de ${props.titre}`} entrees={entreesMenu()} surFermer={() => poserMenu(null)} />}
+      </Show>
+    </div>
   )
 }

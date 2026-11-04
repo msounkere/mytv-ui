@@ -1,15 +1,23 @@
-import { estMobile } from '../lib/gabarit'
 import { Show, createSignal } from 'solid-js'
 import Icone from './Icone'
+import ChipPreparation from './ChipPreparation'
+import MenuContextuel, { type EntreeMenu } from './MenuContextuel'
+import { BoutonMenuCarte } from './CarteAffiche'
 import { plaqueTexte } from './couleurs'
 import { RAYON_VISUEL, couverture } from './aplats'
 import { titreCourt } from './titres'
 import type { EntreeCatalogue } from '../lib/db'
 
-// Carte enrichie de « Continuer à regarder » : miniature 16:9, barre de
-// progression, temps restant et menu « … ». Le temps restant est la seule
-// information que l'utilisateur regarde vraiment ici — il décide s'il a le
-// temps de finir —, il est donc en clair plutôt que déduit de la barre.
+// Carte de la rangee « Reprendre » (ex-« Continuer a regarder ») : miniature
+// 16:9, barre de progression, temps restant et menu « ⋯ ». Le temps restant
+// est la seule information que l'utilisateur regarde vraiment ici — il décide
+// s'il a le temps de finir —, il est donc en clair plutôt que déduit de la barre.
+//
+// Lot 10 (US-46 CA3) : le tap LANCE la lecture (du film, ou de l'episode a
+// lire d'une serie : jamais la fiche, C16) ; la legende dit `S01E03 · reste
+// 23 min` ou `S01E03 · épisode suivant` ; le menu « ⋯ » (toujours visible,
+// focalisable, son Entree n'atteint pas la carte : B2) propose Reprendre ·
+// Marquer comme vu · Retirer de Reprendre.
 
 const TRANSITION = 'transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease)'
 const OMBRE_REPOS = '0 0 0 1px rgba(255,255,255,.06), 0 2px 4px rgba(0,0,0,.28)'
@@ -19,30 +27,30 @@ export interface CarteRepriseProps {
   entree: EntreeCatalogue
   /** Avancement entre 0 et 1. */
   progression: number
+  /** « S01E03 · épisode suivant », « Film · 2019 ». */
   sousTitre: string
-  /** « Reste 17 min ». */
+  /** « reste 17 min » ; vide pour un episode suivant. */
   reste: string
+  /** Le fichier a lire est pret sur le serveur. */
+  pret?: boolean
+  /** Tap = LECTURE (film ou episode a lire). */
   surOuvrir: (e: EntreeCatalogue) => void
-  surMenu: (e: EntreeCatalogue, position: { x: number; y: number }) => void
+  /** Entrees du menu « ⋯ » : Reprendre · Marquer comme vu · Retirer de Reprendre. */
+  entreesMenu: EntreeMenu[]
 }
 
 export default function CarteReprise(props: CarteRepriseProps) {
   const [survol, poserSurvol] = createSignal(false)
-  const [survolMenu, poserSurvolMenu] = createSignal(false)
   const [chargee, poserChargee] = createSignal(false)
+  const [menu, poserMenu] = createSignal<{ x: number; y: number; ancre: HTMLElement } | null>(null)
   const titre = () => titreCourt(props.entree.nom)
-
-  function ouvrirMenu(e: MouseEvent) {
-    e.stopPropagation()
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    props.surMenu(props.entree, { x: r.right - 260, y: r.bottom + 6 })
-  }
 
   return (
     <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px', 'min-width': 0 }}>
       <div
         role="button"
         tabindex="0"
+        data-role="carte-reprise"
         aria-label={`Reprendre ${titre()}, ${props.sousTitre}`}
         onClick={() => props.surOuvrir(props.entree)}
         onKeyDown={(e) => {
@@ -90,6 +98,12 @@ export default function CarteReprise(props: CarteRepriseProps) {
           />
         </Show>
 
+        <Show when={props.pret}>
+          <div style={{ position: 'absolute', top: '6px', left: '6px', 'pointer-events': 'none' }}>
+            <ChipPreparation forme="badge" etat="pret" />
+          </div>
+        </Show>
+
         <div
           style={{
             position: 'absolute', inset: 0, display: 'flex', 'align-items': 'center', 'justify-content': 'center',
@@ -108,30 +122,7 @@ export default function CarteReprise(props: CarteRepriseProps) {
           </span>
         </div>
 
-        <span
-          role="button"
-          tabindex="0"
-          aria-label={`Plus d’options pour ${titre()}`}
-          title="Plus d’options"
-          onClick={ouvrirMenu}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-              props.surMenu(props.entree, { x: r.right - 260, y: r.bottom + 6 })
-            }
-          }}
-          onMouseEnter={() => poserSurvolMenu(true)}
-          onMouseLeave={() => poserSurvolMenu(false)}
-          style={{
-            position: 'absolute', top: estMobile() ? '0' : '6px', right: estMobile() ? '0' : '6px',
-            width: estMobile() ? '44px' : '30px', height: estMobile() ? '44px' : '30px',
-            'border-radius': 'var(--r-xs)', background: survolMenu() ? 'rgba(70,70,70,.95)' : 'rgba(32,32,32,.85)',
-            color: '#fff', display: 'flex', 'align-items': 'center', 'justify-content': 'center', cursor: 'pointer',
-          }}
-        >
-          <Icone nom="more_horiz" taille={18} />
-        </span>
+        <BoutonMenuCarte titre={titre()} coin="haut" surOuvrir={poserMenu} />
 
         <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '4px', background: 'rgba(0,0,0,.55)' }}>
           <div style={{ height: '100%', width: `${Math.min(100, Math.round(props.progression * 100))}%`, background: 'var(--acc-fg)' }} />
@@ -140,11 +131,17 @@ export default function CarteReprise(props: CarteRepriseProps) {
 
       <div style={{ display: 'flex', 'flex-direction': 'column', gap: '1px', 'min-width': 0 }}>
         <span class="tronque" style={{ 'font-weight': 'var(--w-strong)' }}>{titre()}</span>
-        <div class="num" style={{ display: 'flex', 'justify-content': 'space-between', gap: '8px', 'font-size': '12px', 'line-height': '16px', color: 'var(--fg3)' }}>
+        <div class="num" data-role="legende-reprise" style={{ display: 'flex', 'justify-content': 'space-between', gap: '8px', 'font-size': '12px', 'line-height': '16px', color: 'var(--fg3)' }}>
           <span class="tronque">{props.sousTitre}</span>
-          <span style={{ 'white-space': 'nowrap' }}>{props.reste}</span>
+          <Show when={props.reste}>
+            <span style={{ 'white-space': 'nowrap' }}>{props.reste}</span>
+          </Show>
         </div>
       </div>
+
+      <Show when={menu()}>
+        {(m) => <MenuContextuel x={m().x} y={m().y} ancre={m().ancre} libelle={`Options de ${titre()}`} entrees={props.entreesMenu} surFermer={() => poserMenu(null)} />}
+      </Show>
     </div>
   )
 }

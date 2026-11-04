@@ -271,7 +271,9 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
         return res.end()
       }
       // US-43 : liste « À voir » et sonde de disponibilite.
-      if (r === '/profil/a_voir' && req.method === 'GET') return json(res, 200, { elements: aVoir })
+      if (r === '/profil/a_voir' && req.method === 'GET') return json(res, 200, { elements: aVoir, budget: { utilise: 0, total: 10737418240 } })
+      // Lot 10 (US-44 CA3) : nouvelle tentative, journalisee, 204.
+      if ((m = /^\/profil\/a_voir\/(.+)\/reessayer$/.exec(r)) && req.method === 'POST') { res.writeHead(204); return res.end() }
       if (r === '/profil/a_voir' && req.method === 'PUT') return void lireCorps(req).then((c) => { entree.corps = c; res.writeHead(204); res.end() })
       if ((m = /^\/profil\/a_voir\/(.+)$/.exec(r)) && (req.method === 'PUT' || req.method === 'DELETE'))
         return void lireCorps(req).then((c) => { entree.corps = c; res.writeHead(204); res.end() })
