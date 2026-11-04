@@ -53,9 +53,11 @@ for (const moteur of moteursDemandes()) {
       if (variante !== 'webkit-iphone') { await page.evaluate(() => document.fullscreenElement && document.exitFullscreen()); await pause(300) }
       else { await page.keyboard.press('f'); await pause(200) }
       v.ok((await page.getByRole('button', { name: /favori/i }).count()) === 0, 'CA7 plus de favori dans le lecteur VOD (F ne bascule plus un favori)')
+      // Relatif : le banc Firefox (sans carte son) force le muet a la lecture.
+      const muetAvantM = (await video()).muted
       await page.keyboard.press('m')
       await pause(200)
-      v.ok((await video()).muted === true, 'CA7 M = muet')
+      v.ok((await video()).muted !== muetAvantM, `CA7 M = muet (bascule ${muetAvantM} -> ${(await video()).muted})`)
       await page.keyboard.press('m')
       await page.keyboard.press('i')
       const infos = page.locator('[role="dialog"][aria-label^="Informations"]')
@@ -68,9 +70,10 @@ for (const moteur of moteursDemandes()) {
       const muet = commandes().getByRole('button', { name: /Couper le son|Rétablir le son/ })
       await muet.focus()
       const pausedAvant = (await video()).paused
+      const muetAvantEspace = (await video()).muted
       await page.keyboard.press(' ')
       await pause(300)
-      v.ok((await video()).muted === true && (await video()).paused === pausedAvant, 'CA7 Espace sur un bouton focalise ACTIVE le bouton, ne bascule pas la pause')
+      v.ok((await video()).muted !== muetAvantEspace && (await video()).paused === pausedAvant, 'CA7 Espace sur un bouton focalise ACTIVE le bouton, ne bascule pas la pause')
       await page.keyboard.press(' ')
       v.ok(s.erreurs.length === 0, `aucune erreur de page (${s.erreurs.join(' | ') || 'aucune'})`)
     } catch (e) {
