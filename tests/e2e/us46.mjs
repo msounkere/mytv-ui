@@ -662,8 +662,9 @@ const SCENARIOS = {
       await naviguer(page, '/a-voir')
       await attendre(async () => (await page.locator('[data-role="element-ma-liste"][data-etat="pret"]').count()) === 1, { delai: 13_000, quoi: 'pret recu' })
       await page.locator('[data-role="titre-ma-liste"]').click()
-      await ligne.waitFor()
-      assert.equal(await texte(ligne), '● Prêt · préparé sur le serveur', 'CA7 « ● Prêt · préparé sur le serveur » : le cache « lent » est invalide par l etat')
+      // US-45 CA3 (C10) : un fichier pret se dit par le chip « ● Prêt » de la fiche, plus par la ligne de sonde.
+      await page.locator('[data-role="fiche-film"] [data-role="chip-preparation"][data-etat="pret"]').waitFor()
+      assert.equal(await ligne.count(), 0, 'CA7 « ● Prêt » : le cache « lent » est invalide par l etat, la sonde disparait')
       assert.equal(sondes('iptva:5001').length, 1, 'CA7 aucune nouvelle sonde pour un fichier pret')
       assert.ok(liste().includes('vod:iptva:5001'))
     })
