@@ -1,4 +1,5 @@
-import { For, Show, createSignal, onCleanup, onMount } from 'solid-js'
+import { For, Show, createEffect, createSignal, on, onCleanup, onMount } from 'solid-js'
+import { Portal } from 'solid-js/web'
 import { estMobile } from '../lib/gabarit'
 import Icone from './Icone'
 
@@ -12,8 +13,10 @@ import Icone from './Icone'
 // (qui rend le focus a l'ancre), par la perte de focus ; le focus va sur la
 // premiere entree ; fleches ↑↓, Entree/Espace activent (vrais `<button>`,
 // `role=menuitem`) ; largeur adaptee au contenu (220 px min, 90 vw max, D11) ;
-// 44 px par entree au doigt. Positionne en `fixed` : la piste d'une rangee est
-// en `overflow:auto`, un menu pose dedans serait coupe.
+// 44 px par entree au doigt. Positionne en `fixed` DANS `body` (Portal) : la
+// piste d'une rangee est en `overflow:auto` et les rangees d'une grille
+// virtualisee sont en `transform` -- un menu pose dedans serait coupe, ou
+// passerait sous la rangee suivante.
 
 export interface EntreeMenu {
   icone?: string
@@ -54,10 +57,13 @@ export default function MenuContextuel(props: MenuContextuelProps) {
   let racine: HTMLDivElement | undefined
   const [taille, poserTaille] = createSignal({ largeur: LARGEUR_MIN, hauteur: 0 })
   const hauteurEntree = () => (estMobile() ? 44 : 36)
+  // L'ancre est capturee UNE fois : `surFermer` demonte le menu, et relire
+  // `props.ancre` apres coup serait une lecture perimee (« Stale read »).
+  const ancre = props.ancre ?? null
 
   const fermer = (rendreFocus = false) => {
     props.surFermer()
-    if (rendreFocus) props.ancre?.focus?.()
+    if (rendreFocus) ancre?.focus?.()
   }
 
   const entreesFocalisables = () => Array.from(racine?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled]), select') ?? [])
@@ -100,12 +106,27 @@ export default function MenuContextuel(props: MenuContextuelProps) {
   function auFocusDocument(e: FocusEvent) {
     const cible = e.target
     if (racine && cible instanceof Node && racine.contains(cible)) return
-    if (cible === props.ancre) return
+    if (cible === ancre) return
     fermer(false)
   }
 
+  // Echap ferme d'ou que vienne la touche : une entree qui vient d'etre
+  // re-rendue (compteur, choix) peut avoir laisse le focus sur `body`.
+  function auClavierDocument(e: KeyboardEvent) {
+    if (e.key !== 'Escape') return
+    if (racine && e.target instanceof Node && racine.contains(e.target)) return
+    e.preventDefault()
+    fermer(true)
+  }
+  // Les entrees re-rendues (apres « + » ou un choix) reprennent le focus si
+  // plus rien ne l'a : le clavier continue la ou il etait.
+  createEffect(on(() => props.entrees, () => {
+    if (document.activeElement === document.body || !document.activeElement) focaliser(0)
+  }, { defer: true }))
+
   let poseur: ReturnType<typeof setTimeout> | undefined
   onMount(() => {
+    document.addEventListener('keydown', auClavierDocument)
     poseur = setTimeout(() => {
       poseur = undefined
       document.addEventListener('click', auClicDocument)
@@ -119,6 +140,7 @@ export default function MenuContextuel(props: MenuContextuelProps) {
   })
   onCleanup(() => {
     if (poseur) clearTimeout(poseur)
+    document.removeEventListener('keydown', auClavierDocument)
     document.removeEventListener('click', auClicDocument)
     document.removeEventListener('focusin', auFocusDocument)
   })
@@ -143,6 +165,7 @@ export default function MenuContextuel(props: MenuContextuelProps) {
   })
 
   return (
+    <Portal>
     <div
       ref={racine}
       role="menu"
@@ -204,12 +227,15 @@ export default function MenuContextuel(props: MenuContextuelProps) {
             <button
               type="button"
               role="menuitem"
+              aria-label={e.libelle}
               disabled={e.desactive}
               data-role="menu-entree"
               onClick={() => {
                 if (e.desactive) return
+                // L'action est lue AVANT la fermeture : fermer demonte le menu.
+                const action = e.action
                 fermer(true)
-                e.action?.()
+                action?.()
               }}
               style={styleEntree(e)}
             >
@@ -221,6 +247,7 @@ export default function MenuContextuel(props: MenuContextuelProps) {
         )}
       </For>
     </div>
+    </Portal>
   )
 }
 

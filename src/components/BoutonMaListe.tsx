@@ -158,7 +158,7 @@ export function LigneDisponibilite(props: {
             <Show when={props.prefixe}>{(p) => <span class="num">{p()} · </span>}</Show>
             {x().texte}
           </span>
-          <Show when={x().detail && !estMobile()}>
+          <Show when={estMobile() ? undefined : x().detail}>
             {(d) => <span class="num" data-role="disponibilite-detail" style={{ 'font-size': '12px', color: 'var(--fg3)' }}>{d()}</span>}
           </Show>
           <Show when={x().proposerAVoir && !props.present}>

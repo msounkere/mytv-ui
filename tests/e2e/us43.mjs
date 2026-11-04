@@ -1,6 +1,8 @@
-// US-43 : liste « À voir », preparation visible, enchainement, sonde -- application complete
-// contre le faux serveur (serveur-factice.mjs, contrat suppose : ui-5.contrat.demande).
-// Aucun vrai fournisseur, aucune requete hors 127.0.0.1.
+// US-43 : liste « À voir » (devenue « Ma liste » au lot 10 / US-46), preparation visible,
+// enchainement, sonde -- application complete contre le faux serveur (serveur-factice.mjs,
+// contrat suppose : ui-5.contrat.demande). Aucun vrai fournisseur, aucune requete hors 127.0.0.1.
+// Lot 10 : selecteurs et libelles mis a jour (bouton data-role="ma-liste", ecran
+// « Ma liste », menu « ⋯ » des lignes) ; les comportements verifies sont ceux du lot 9.
 //   npm run build && NODE_OPTIONS=--tls-max-v1.2 node tests/e2e/us43.mjs [scenario ...]
 import { chromium } from 'playwright'
 import assert from 'node:assert/strict'
@@ -73,8 +75,9 @@ async function scenario(navigateur, corps) {
       requetes: (f) => serveur.etat.requetes.filter(f),
       evenements: (type) => serveur.etat.evenements.filter((e) => e.type === type),
       rail: (nom) => page.locator('nav.rail').getByRole('button', { name: nom, exact: true }),
-      boutonAVoir: (racine = page) => racine.locator('[data-role="a-voir"]'),
-      lignes: () => page.locator('[data-role="element-a-voir"]'),
+      boutonAVoir: (racine = page) => racine.locator('[data-role="ma-liste"]'),
+      lignes: () => page.locator('[data-role="element-ma-liste"]'),
+      menu: () => page.locator('[role="menu"]'),
       chemin: () => page.evaluate(() => location.pathname),
     }
     await corps(outils)
@@ -91,7 +94,7 @@ const SCENARIOS = {
   // CA2 : ecran « À voir » ordonne, reordonnable, retrait, options de serie, etats rafraichis toutes les 10 s,
   // une serie = une ligne.
   async liste(navigateur) {
-    await scenario(navigateur, async ({ serveur, page, liste, element, requetes, evenements, rail, boutonAVoir, lignes }) => {
+    await scenario(navigateur, async ({ serveur, page, liste, element, requetes, evenements, boutonAVoir, lignes, menu }) => {
       // --- Fiche film --------------------------------------------------------------
       await page.goto(`${serveur.origine}/film/vod:iptva:5000`)
       const fiche = page.locator('[data-role="fiche-film"]')
@@ -113,50 +116,51 @@ const SCENARIOS = {
       await page.goto(`${serveur.origine}/serie/series:iptva:s5001`)
       const episode2 = page.locator('[data-role="episode"]').nth(1)
       await episode2.getByText('Épisode 2', { exact: true }).waitFor()
-      await episode2.locator('[data-role="a-voir"]').click()
+      await episode2.locator('[data-role="ma-liste"]').click()
       await attendre(() => element('serie:iptva:s5001')?.depuis?.episode === 2, { quoi: 'PUT serie avec depuis = S01E02' })
       assert.deepEqual(element('serie:iptva:s5001').depuis, { saison: 1, episode: 2 })
       assert.ok(!liste().some((x) => x.includes('.mkv')), 'jamais un episode comme element de la liste')
       // Le bouton de la serie elle-meme dit « present ».
-      await attendre(async () => (await page.locator('header [data-role="a-voir"]').getAttribute('aria-pressed')) === 'true', { quoi: 'bouton de la serie presse' })
+      await attendre(async () => (await page.locator('header [data-role="ma-liste"]').getAttribute('aria-pressed')) === 'true', { quoi: 'bouton de la serie presse' })
 
       // --- Resultats de recherche ---------------------------------------------------------
       await page.goto(`${serveur.origine}/recherche?q=${encodeURIComponent('Film Test 3')}`)
       const carte = page.getByRole('button', { name: 'Film Test 3', exact: true }).first()
       await carte.waitFor()
       await carte.hover()
-      await carte.getByRole('button', { name: 'Ajouter à « À voir »' }).click()
+      await carte.getByRole('button', { name: 'Ajouter à Ma liste' }).click()
       await attendre(() => liste().includes('vod:iptva:5003'), { quoi: 'PUT depuis la recherche' })
       assert.deepEqual(liste(), ['vod:iptva:5000', 'serie:iptva:s5001', 'vod:iptva:5003'], 'ordre d ajout conserve')
 
-      // --- Ecran « À voir » (entree du menu principal) -----------------------------------------
-      await rail('À voir').click()
+      // --- Ecran « Ma liste » (/a-voir) ----------------------------------------------------------
+      await page.goto(`${serveur.origine}/a-voir`)
       await attendre(async () => (await lignes().count()) === 3, { quoi: '3 lignes' })
       assert.equal(await page.evaluate(() => location.pathname), '/a-voir')
       const cles = async () => Promise.all((await lignes().all()).map((l) => l.getAttribute('data-cle')))
       assert.deepEqual(await cles(), ['vod:iptva:5000', 'series:iptva:s5001', 'vod:iptva:5003'])
       const ligneSerie = lignes().nth(1)
       const etatSerie = () => ligneSerie.locator('[data-role="etat-preparation"]').innerText()
-      await attendre(async () => /^S01E02 · /.test(await etatSerie()), { quoi: 'resume de la serie' })
-      assert.match(await etatSerie(), /^S01E02 · (en attente|en cours.*|prêt) · suivant /, 'une serie affiche « S01E02 · etat · suivant … »')
-      assert.equal((await etatSerie()).match(/S\d\dE\d\d/g).length, 1, 'jamais la liste de ses episodes : un seul repere dans la ligne d etat')
+      await attendre(async () => /^[○⟳●✕] S01E02 /.test(await etatSerie()), { quoi: 'resume de la serie' })
+      assert.match(await etatSerie(), /^[○⟳●✕] S01E02 (en attente|en préparation.*|prêt) · S01E03 /, 'une serie affiche « S01E02 etat · S01E03 etat »')
+      assert.equal((await etatSerie()).match(/S\d\dE\d\d/g).length, 2, 'jamais la liste de ses episodes : l episode et le suivant seulement')
       assert.equal(await ligneSerie.locator('[data-role="etat-preparation"]').count(), 1, 'une seule ligne d etat pour la serie')
 
       // Etat rafraichi toutes les 10 s pendant que l'ecran est ouvert : on impose des etats cote serveur.
       const etatFilm = () => lignes().first().locator('[data-role="etat-preparation"]').innerText()
       await serveur.appel('preparation', { contenu: 'vod:iptva:5000', reglage: { etat: 'en_cours', octets: 420, total: 1000, debit_kbps: 2100 } })
       const t0 = Date.now()
-      await attendre(async () => (await etatFilm()) === 'En cours · 42 % · 2,1 Mbit/s', { delai: 13_000, quoi: 'etat « en cours » avec pourcentage et debit' })
+      await attendre(async () => /^⟳ En préparation · 42 % · ~\d+ s$/.test(await etatFilm()), { delai: 13_000, quoi: 'etat « en preparation » avec pourcentage et temps restant' })
       const dt = Date.now() - t0
       assert.ok(dt <= 12_000, `rafraichi en ${dt} ms (<= 10 s + marge)`)
       await serveur.appel('preparation', { contenu: 'vod:iptva:5000', reglage: { etat: 'echec', cause: 'disque plein' } })
-      await attendre(async () => (await etatFilm()) === 'Échec : disque plein', { delai: 13_000, quoi: 'etat « echec » avec la cause' })
+      await attendre(async () => (await etatFilm()) === '✕ Échec · disque plein Réessayer', { delai: 13_000, quoi: 'etat « echec » avec la cause' })
       await serveur.appel('preparation', { contenu: 'vod:iptva:5000', reglage: { etat: 'pret' } })
-      await attendre(async () => (await etatFilm()) === 'Prêt', { delai: 13_000, quoi: 'etat « pret »' })
+      await attendre(async () => (await etatFilm()) === '● Prêt', { delai: 13_000, quoi: 'etat « pret »' })
       assert.ok(requetes((r) => r.chemin === '/api/v1/profil/a_voir' && r.methode === 'GET').length >= 3, 'GET /profil/a_voir repete pendant que l ecran est ouvert')
 
-      // Reordonner : « Descendre » (bouton, donc clavier et telecommande), puis Alt+Flèche.
-      await lignes().first().getByRole('button', { name: 'Descendre' }).click()
+      // Reordonner : « Descendre » (menu « ⋯ », donc clavier et telecommande), puis Alt+Flèche.
+      await lignes().first().locator('[data-role="menu-ma-liste"]').click()
+      await menu().getByRole('menuitem', { name: 'Descendre' }).click()
       await attendre(async () => (await cles())[0] === 'series:iptva:s5001', { quoi: 'descendu localement' })
       await attendre(() => liste()[0] === 'serie:iptva:s5001' && liste()[1] === 'vod:iptva:5000', { quoi: 'PUT /profil/a_voir (ordre)' })
       await lignes().nth(2).focus()
@@ -164,14 +168,19 @@ const SCENARIOS = {
       await attendre(async () => (await cles())[1] === 'vod:iptva:5003', { quoi: 'Alt+↑ monte la ligne' })
       await attendre(() => liste().join() === 'serie:iptva:s5001,vod:iptva:5003,vod:iptva:5000', { quoi: 'ordre synchronise' })
 
-      // Options d'une serie : episodes d'avance et « a partir de ».
-      await lignes().first().getByLabel('Épisodes d’avance').selectOption('3')
+      // Options d'une serie (menu « ⋯ ») : episodes d'avance (+) et « a partir de ».
+      await lignes().first().locator('[data-role="menu-ma-liste"]').click()
+      await menu().waitFor()
+      await menu().locator('[data-role="menu-plus"]').click()
       await attendre(() => element('serie:iptva:s5001')?.episodes_avance === 3, { quoi: 'episodes_avance = 3' })
-      await lignes().first().getByLabel('À partir de').selectOption('2:1')
+      await menu().locator('select').selectOption('2:1')
       await attendre(() => element('serie:iptva:s5001')?.depuis?.saison === 2, { quoi: 'depuis = S02E01' })
+      await page.keyboard.press('Escape')
+      await attendre(async () => (await menu().count()) === 0)
 
-      // Retrait.
-      await lignes().nth(1).getByRole('button', { name: 'Retirer de la liste' }).click()
+      // Retrait (menu « ⋯ »).
+      await lignes().nth(1).locator('[data-role="menu-ma-liste"]').click()
+      await menu().getByRole('menuitem', { name: 'Retirer de Ma liste' }).click()
       await attendre(async () => (await lignes().count()) === 2, { quoi: 'ligne retiree' })
       await attendre(() => !liste().includes('vod:iptva:5003'), { quoi: 'DELETE synchronise' })
     })
@@ -209,12 +218,13 @@ const SCENARIOS = {
       await serveur.appel('preparation', { contenu: 'iptva:500211.mkv', reglage: { etat: 'attente' } })
       // GET /profil/a_voir fait foi au demarrage.
       await page.reload()
-      const rangee = page.locator('section[aria-label="À voir"]')
+      const rangee = page.locator('section[aria-label="Ma liste"]')
       await rangee.waitFor()
       await attendre(async () => (await rangee.getByRole('button', { name: /^Film Test|^Série Test/ }).count()) === 3, { quoi: '3 cartes' })
-      const titres = await rangee.getByRole('button', { name: /^Film Test|^Série Test/ }).allInnerTexts()
-      assert.equal(titres[0].split('\n')[0], 'Film Test 1', 'le film pret passe devant')
-      assert.equal(await rangee.locator('[data-role="badge-pret"]').count(), 1, 'un seul badge « Prêt »')
+      // Lot 10 : l'ORDRE de la liste (le badge « Prêt » distingue), plus « prets d'abord ».
+      const titres = await rangee.getByRole('button', { name: /^Film Test|^Série Test/ }).evaluateAll((l) => l.map((e) => e.getAttribute('aria-label')))
+      assert.deepEqual(titres, ['Film Test 3', 'Film Test 1', 'Série Test 2'], 'rangee dans l ordre de la liste')
+      assert.equal(await rangee.locator('[data-role="badge-preparation"]:has-text("Prêt")').count(), 1, 'un seul badge « Prêt »')
       assert.ok(/Prêt/.test(await rangee.innerText()) && /En attente/.test(await rangee.innerText()), 'chaque carte dit son etat')
 
       // Fiche : badge « Prêt » quand le serveur l'indique.
@@ -229,7 +239,7 @@ const SCENARIOS = {
       const carte = rangee.getByRole('button', { name: 'Film Test 1', exact: true })
       await carte.waitFor()
       await carte.hover()
-      await carte.getByRole('button', { name: 'Lecture rapide' }).click()
+      await carte.getByRole('button', { name: 'Lecture' }).click()
       await attendre(async () => (await chemin()) === '/lecture/vod:iptva:5001', { quoi: 'lecteur ouvert' })
       await attendre(() => requetes((r) => r.chemin === '/api/v1/vod/iptva:5001' && r.methode === 'GET').length >= 1, { quoi: 'GET /api/v1/vod/iptva:5001' })
       assert.ok(!requetes((r) => r.chemin.startsWith('/api/v1/vod/')).some((r) => /prepar|source|disque/.test(r.chemin + r.requete)), 'aucune adresse speciale')
@@ -283,7 +293,9 @@ const SCENARIOS = {
       await pause(11_000)
       assert.equal(await chemin(), '/lecture/vod:iptva:5000', 'CA4 un film ne lance rien tout seul')
       await proposition.getByRole('button', { name: 'Regarder' }).click()
-      await attendre(async () => (await chemin()) === '/lecture/vod:iptva:5003', { quoi: 'le suivant s ouvre au clic' })
+      // Lot 10 : App.tsx (ui-8) passe encore `ouvrir` au calque de fin ; `ouvrir` d'un film = sa fiche.
+      // Quand ui-8 passera `lire`, ce sera le lecteur (voir ui-7.contrat.demande) : les deux sont acceptes.
+      await attendre(async () => ['/lecture/vod:iptva:5003', '/film/vod:iptva:5003'].includes(await chemin()), { quoi: 'le suivant s ouvre au clic' })
     })
   },
 
@@ -302,40 +314,40 @@ const SCENARIOS = {
       await page.goto(`${serveur.origine}/film/vod:iptva:5001`)
       const ligne = page.locator('[data-role="fiche-film"] [data-role="disponibilite"]')
       await ligne.waitFor()
-      assert.equal((await ligne.innerText()).trim().replace(/\s+/g, ' '), "Lent (2,7 Mbit/s pour 4,4 nécessaires) : préparer d'avance ? À voir")
+      assert.equal((await ligne.innerText()).trim().replace(/\s+/g, ' '), 'Risque de coupures — préparer d’avance ? 2,7 Mbit/s mesurés pour 4,4 nécessaires Ma liste')
       assert.equal(sondes('iptva:5001').length, 1, 'CA5 une sonde a l ouverture de la fiche')
-      await ligne.locator('[data-role="a-voir"]').click()
+      await ligne.locator('[data-role="ma-liste"]').click()
       await attendre(() => liste().includes('vod:iptva:5001'), { quoi: 'ajoute depuis la sonde' })
-      await attendre(async () => (await ligne.locator('[data-role="a-voir"]').count()) === 0, { quoi: 'le bouton de la sonde disparait une fois ajoute' })
+      await attendre(async () => (await ligne.locator('[data-role="ma-liste"]').count()) === 0, { quoi: 'le bouton de la sonde disparait une fois ajoute' })
 
       // Film immediat.
       await page.goto(`${serveur.origine}/film/vod:iptva:5002`)
       await ligne.waitFor()
-      assert.equal((await ligne.innerText()).trim(), 'Disponible immédiatement')
+      assert.equal((await ligne.innerText()).trim().replace(/\s+/g, ' '), 'Lecture fluide 12 Mbit/s mesurés')
       assert.equal(await ligne.getAttribute('data-etat'), 'immediat')
 
       // Fichier prepare : « Prêt » (le faux serveur repond pret pour un fichier qu'il tient).
       await page.goto(`${serveur.origine}/film/vod:iptva:5004`)
       await ligne.waitFor()
-      assert.equal((await ligne.innerText()).trim(), 'Prêt')
+      assert.equal((await ligne.innerText()).trim(), '● Prêt · préparé sur le serveur')
 
       // Episode : la fiche serie sonde le prochain episode a regarder (S01E01).
       await page.goto(`${serveur.origine}/serie/series:iptva:s5001`)
       const ligneSerie = page.locator('header [data-role="disponibilite"]')
       await ligneSerie.waitFor()
-      assert.match((await ligneSerie.innerText()).replace(/\s+/g, ' '), /^S01E01 · Lent \(1,5 Mbit\/s pour 4,4 nécessaires\) : préparer d'avance \?/)
+      assert.match((await ligneSerie.innerText()).replace(/\s+/g, ' '), /^S01E01 · Risque de coupures — préparer d’avance \? 1,5 Mbit\/s mesurés pour 4,4 nécessaires/)
       assert.equal(sondes('iptva:500111.mkv').length, 1, 'CA5 une sonde pour l episode')
 
       // Lecture en cours : AUCUNE sonde a l'ouverture d'une fiche.
       await page.goto(`${serveur.origine}/film/vod:iptva:5002`)
       await page.locator('[data-role="fiche-film"]').getByRole('button', { name: 'Regarder' }).click()
       await attendre(async () => (await chemin()) === '/lecture/vod:iptva:5002', { quoi: 'lecture ouverte' })
-      await rail('À voir').click()
-      await page.locator('[data-role="element-a-voir"]').first().waitFor()
-      await page.locator('[data-role="element-a-voir"]').first().getByRole('button', { name: 'Regarder' }).waitFor()
+      // Entree du rail : « À voir » (lot 9) ou « Ma liste » (lot 10, coque ui-8).
+      await page.locator('nav.rail').getByRole('button', { name: /^(À voir|Ma liste)$/ }).click()
+      await page.locator('[data-role="element-ma-liste"]').first().waitFor()
       // Les fiches s'ouvrent par le titre de la ligne (pas de rechargement : la lecture continue).
       const avant = sondes('iptva:5004').length + sondes('iptva:5001').length
-      await page.locator('[data-role="element-a-voir"]').first().getByText('Film Test 4').click()
+      await page.locator('[data-role="element-ma-liste"]').first().getByText('Film Test 4').click()
       await page.locator('[data-role="fiche-film"]').getByRole('button', { name: 'Regarder' }).waitFor()
       await pause(1500)
       assert.equal(sondes('iptva:5004').length + sondes('iptva:5001').length, avant, 'CA5 aucune sonde pendant une lecture')

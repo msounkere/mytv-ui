@@ -224,11 +224,13 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
   /** La liste d'un profil, avec l'etat de preparation de chaque element (contrat ui-5.contrat.demande + US-44). */
   const listeAVoir = (profil, avancer) => {
     const elements = (etat.aVoir.get(profil) ?? []).map((e, i) => {
-      const base = { contenu: e.contenu, rang: i + 1, ajoute: e.ajoute, episodes_avance: e.episodes_avance ?? DEFAUT_EPISODES_AVANCE, ...(e.depuis ? { depuis: e.depuis } : {}) }
+      // Lot 10 : `episodes_avance` n'est rendu que s'il a ete choisi ; sinon le serveur applique
+      // son reglage (DEFAUT_EPISODES_AVANCE) sans le dire -- l'interface affiche « (réglage du serveur) ».
+      const base = { contenu: e.contenu, rang: i + 1, ajoute: e.ajoute, ...(e.episodes_avance !== undefined ? { episodes_avance: e.episodes_avance } : {}), ...(e.depuis ? { depuis: e.depuis } : {}) }
       if (e.contenu.startsWith('vod:')) return { ...base, ...etatFichier(e.contenu, avancer) }
       const tous = episodesDe(e.contenu.slice('serie:'.length))
       const depart = e.depuis ? Math.max(0, tous.findIndex((x) => x.saison === e.depuis.saison && x.episode === e.depuis.episode)) : 0
-      const episodes = tous.slice(depart, depart + base.episodes_avance).map((ep) => ({ ...ep, ...etatFichier(ep.contenu, avancer) }))
+      const episodes = tous.slice(depart, depart + (e.episodes_avance ?? DEFAUT_EPISODES_AVANCE)).map((ep) => ({ ...ep, ...etatFichier(ep.contenu, avancer) }))
       const premier = episodes[0] ?? { etat: 'attente' }
       return { ...base, etat: premier.etat, ...(premier.octets !== undefined ? { octets: premier.octets, total: premier.total } : {}), ...(premier.debit_kbps ? { debit_kbps: premier.debit_kbps } : {}), ...(premier.cause ? { cause: premier.cause } : {}), ...(premier.reessai ? { reessai: premier.reessai } : {}), episodes }
     })

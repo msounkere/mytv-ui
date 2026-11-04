@@ -127,6 +127,9 @@ export { toastCourant }
 
 /** Emet un toast ; n'importe quel module peut l'appeler (gestes de `ma-liste.ts`, `preferences.ts`, synchro). */
 export function emettreToast(d: DemandeToast): number {
+  // L'hote est garanti : s'il n'est monte nulle part, il l'est ici (import a la
+  // demande : Toast.tsx importe ce module).
+  if (typeof document !== 'undefined') void import('../components/Toast').then((m) => m.assurerHoteToasts()).catch(() => undefined)
   return file.emettre(d)
 }
 

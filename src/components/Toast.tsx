@@ -1,5 +1,5 @@
 import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js'
-import { Portal } from 'solid-js/web'
+import { Portal, render } from 'solid-js/web'
 import Icone from './Icone'
 import { agirToast, fermerToast, reprendreToast, suspendreToast, toastCourant, type TonToast } from '../lib/toasts'
 
@@ -15,6 +15,21 @@ import { agirToast, fermerToast, reprendreToast, suspendreToast, toastCourant, t
 // Le premier hote monte est celui qui rend ; les autres attendent qu'il parte.
 const [hoteActif, poserHoteActif] = createSignal<number | null>(null)
 let numeroHote = 0
+
+/**
+ * Hote AUTONOME : monte dans `body` par `lib/toasts.ts` au premier toast si
+ * aucun ecran n'en a monte un (un geste fait depuis une fiche ouverte par un
+ * lien direct, avant que l'Accueil n'ait jamais ete visite). Un hote monte
+ * ensuite par un ecran attend son tour, comme les autres.
+ */
+let autonome: (() => void) | undefined
+export function assurerHoteToasts(): void {
+  if (hoteActif() !== null || autonome || typeof document === 'undefined') return
+  const racine = document.createElement('div')
+  racine.dataset['role'] = 'hote-toasts'
+  document.body.appendChild(racine)
+  autonome = render(() => <ToastHote />, racine)
+}
 
 const TEINTE: Record<TonToast, { icone: string; couleur: string }> = {
   ok: { icone: 'check_circle', couleur: 'var(--ok)' },

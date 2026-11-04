@@ -68,17 +68,14 @@ export default function MaListe(props: {
     })
   })
 
-  // Lignes STABLES d'une relecture a l'autre : la relecture de l'etat (10 s)
-  // rend de nouveaux objets, et `For` remonterait les douze lignes -- menus
-  // perdus, bouton vise qui disparait sous le doigt. Un element dont rien n'a
-  // change garde son objet, donc sa ligne.
-  const elements = createMemo<AVoirJoint[]>((precedents) => {
-    const avant = new Map(precedents.map((j) => [j.element.cle, j]))
-    return (liste() ?? []).map((j) => {
-      const p = avant.get(j.element.cle)
-      return p && JSON.stringify(p) === JSON.stringify(j) ? p : j
-    })
-  }, [])
+  // Lignes STABLES d'une relecture a l'autre : la relecture de l'etat (10 s) et
+  // chaque geste rendent de nouveaux objets, et un `For` sur les objets
+  // remonterait les lignes -- menu « ⋯ » ferme sous la souris apres « + »,
+  // bouton vise qui disparait sous le doigt. Les lignes sont donc clefees par
+  // la CLE de l'element ; leur contenu suit par `props`.
+  const elements = createMemo<AVoirJoint[]>(() => liste() ?? [])
+  const parCle = createMemo(() => new Map(elements().map((j) => [j.element.cle, j])))
+  const clesOrdonnees = createMemo(() => elements().map((j) => j.element.cle))
 
   const horsLigne = () => !enLigne() || etatSynchro() === 'hors-ligne'
   const heureEtats = () => {
@@ -152,26 +149,30 @@ export default function MaListe(props: {
           }
         >
           <ol data-role="liste-ma-liste" style={{ margin: 0, padding: 0, 'list-style': 'none', display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
-            <For each={elements()}>
-              {(j, i) => (
-                <Ligne
-                  joint={j}
-                  index={i()}
-                  total={elements().length}
-                  enGlisse={glisse() === i()}
-                  survole={survol() === i() && glisse() !== null && glisse() !== i()}
-                  surOuvrir={() => props.surOuvrir(j.entree)}
-                  surDetails={() => props.surDetails(j.entree)}
-                  surMonter={() => void bouger(i(), -1)}
-                  surDescendre={() => void bouger(i(), 1)}
-                  surRetirer={() => void retirerMaListe(j.element.cle)}
-                  surReessayer={() => void reessayerMaListe(j.element.cle)}
-                  surOptions={(o) => void modifierOptionsMaListe(j.element.cle, o)}
-                  surDebutGlisse={() => poserGlisse(i())}
-                  surFinGlisse={() => { poserGlisse(null); poserSurvol(null) }}
-                  surSurvol={() => poserSurvol(i())}
-                  surDepot={() => void deposer(i())}
-                />
+            <For each={clesOrdonnees()}>
+              {(cle, i) => (
+                <Show when={parCle().get(cle)}>
+                  {(j) => (
+                    <Ligne
+                      joint={j()}
+                      index={i()}
+                      total={elements().length}
+                      enGlisse={glisse() === i()}
+                      survole={survol() === i() && glisse() !== null && glisse() !== i()}
+                      surOuvrir={() => props.surOuvrir(j().entree)}
+                      surDetails={() => props.surDetails(j().entree)}
+                      surMonter={() => void bouger(i(), -1)}
+                      surDescendre={() => void bouger(i(), 1)}
+                      surRetirer={() => void retirerMaListe(cle)}
+                      surReessayer={() => void reessayerMaListe(cle)}
+                      surOptions={(o) => void modifierOptionsMaListe(cle, o)}
+                      surDebutGlisse={() => poserGlisse(i())}
+                      surFinGlisse={() => { poserGlisse(null); poserSurvol(null) }}
+                      surSurvol={() => poserSurvol(i())}
+                      surDepot={() => void deposer(i())}
+                    />
+                  )}
+                </Show>
               )}
             </For>
           </ol>

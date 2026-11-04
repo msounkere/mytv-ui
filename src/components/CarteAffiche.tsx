@@ -2,7 +2,7 @@ import { Show, createSignal } from 'solid-js'
 import Icone from './Icone'
 import ChipPreparation from './ChipPreparation'
 import MenuContextuel, { positionSous, type EntreeMenu } from './MenuContextuel'
-import { useMaListeCles } from './BoutonMaListe'
+import { useMaListeElements } from './BoutonMaListe'
 import { plaque, plaqueTexte } from './couleurs'
 import { RAYON_VISUEL } from './aplats'
 import { titreCourt } from './titres'
@@ -139,10 +139,12 @@ export default function CarteAffiche(props: CarteAfficheProps) {
   const titre = () => titreCourt(props.entree.nom)
   const serie = () => props.entree.type === 'series'
 
-  // Presence dans Ma liste : donnee par l'appelant (rangee « Ma liste »), sinon lue ici.
-  const clesListe = props.dansMaListe === undefined && props.aVoir === undefined ? useMaListeCles() : undefined
-  const dansMaListe = () => props.dansMaListe ?? props.aVoir ?? clesListe?.()?.has(props.entree.cle) ?? false
-  const preparation = () => props.preparation ?? (props.pret ? { etat: 'pret' as const } : undefined)
+  // Presence et etat dans Ma liste : donnes par l'appelant (rangee « Ma liste »),
+  // sinon lus ici -- une seule lecture partagee par toutes les cartes.
+  const elementsListe = props.preparation === undefined || props.dansMaListe === undefined ? useMaListeElements() : undefined
+  const element = () => elementsListe?.()?.get(props.entree.cle)
+  const dansMaListe = () => props.dansMaListe ?? props.aVoir ?? (element() !== undefined)
+  const preparation = () => props.preparation ?? element()?.preparation ?? (props.pret ? { etat: 'pret' as const } : undefined)
   const lire = () => (props.surLire ?? lireDirect)(props.entree)
   const basculer = () => {
     const f = props.surMaListe ?? props.surAVoir
