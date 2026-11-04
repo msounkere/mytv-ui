@@ -28,7 +28,7 @@ export interface Attache {
  * passer une playlist qu'il ne sait pas ouvrir : `DEMUXER_ERROR_COULD_NOT_PARSE`.
  * On n'accepte donc que la reponse franche.
  */
-function hlsNatif(video: HTMLVideoElement): boolean {
+export function hlsNatif(video: HTMLVideoElement): boolean {
   return video.canPlayType('application/vnd.apple.mpegurl') === 'probably'
 }
 

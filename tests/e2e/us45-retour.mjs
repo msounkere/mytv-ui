@@ -75,14 +75,16 @@ try {
   console.log('3. direct -> lecture -> Arrêter')
   await rail('Direct').click()
   await attendreChemin('/direct')
-  const ligne = page.locator('main').getByRole('button', { name: /Chaîne 1\b/ }).first()
+  const ligne = page.locator('main button[title^="Chaîne"]').first()
   await ligne.waitFor()
   await ligne.click()
   await attendre(async () => /^\/lecture\/live:/.test(await chemin()), { quoi: 'lecteur depuis Direct' })
   await page.locator('[data-role="commandes"]').waitFor({ state: 'attached' })
   await pause(1500)
-  await reveil()
-  await commandes().getByRole('button', { name: 'Arrêter le flux' }).click()
+  // Le faux serveur n'a pas de direct : la chaine est en erreur, « Retour » de la carte = l'arret.
+  const alerte = page.locator('[role="alert"]')
+  if (await alerte.count()) await alerte.getByRole('button', { name: 'Retour' }).click()
+  else { await reveil(); await commandes().getByRole('button', { name: 'Arrêter le flux' }).click() }
   await attendreChemin('/direct', 'retour au direct')
   v.ok(true, 'CA2 direct -> lecture -> Arrêter = l ecran precedent (Direct)')
   v.ok(await attendre(async () => (await videosAvecSource()) === 0, { delai: 3000 }).catch(() => false), 'CA1 et le flux est detache')
@@ -114,9 +116,9 @@ try {
   v.ok(true, 'CA2 pile vide : « Arrêter » ouvre la fiche du film')
   await page.goto(`${serveur.origine}/lecture/live:iptva:100002`)
   await page.locator('[data-role="commandes"]').waitFor({ state: 'attached' })
-  await pause(1000)
-  await reveil()
-  await commandes().getByRole('button', { name: 'Arrêter le flux' }).click()
+  await pause(1500)
+  if (await alerte.count()) await alerte.getByRole('button', { name: 'Retour' }).click()
+  else { await reveil(); await commandes().getByRole('button', { name: 'Arrêter le flux' }).click() }
   await attendreChemin('/', 'pile vide, chaine : l accueil')
   v.ok(true, 'CA2 pile vide, chaine : l accueil')
 

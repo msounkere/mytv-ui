@@ -31,8 +31,16 @@ les parcours multi-moteurs, defaut : les trois). Banc commun des parcours US-45 
 
 ## WebKit (CA9, D16)
 
-Voir le rapport de fin d'US : le script d'audit `D/crash-webkit.mjs` rejoue contre le `dist` de cette branche
-et `tests/e2e/us45-webkit.mjs` (zapping par ↓, bouton, liste, trois zaps rapides apres un 404 HLS).
+Reproduit sous Playwright webkit 27.2 (`tests/e2e/us45-webkit.mjs`, base D/crash-webkit.mjs) : apres un passage
+par l'Accueil puis le Direct, lecture d'une chaine dont le HLS echoue (404), puis ↓ : « Target crashed ». Isole par
+experiences (scratchpad wk2-wk7, resumees dans le rapport) : aucune operation sur la video seule ne plante
+(`remove()`, `removeAttribute('src')+load()`, reaffectation de `src`, element neuf, `remote.cancelWatchAvailability`,
+rVFC) ; le remontage du lecteur par l'URL ne plante pas ; le zapping depuis une page NEUVE ne plante pas ; il plante
+depuis une page qui a rendu l'Accueil et le Direct. Deux parades posees quand meme dans le lecteur (defensives,
+sans effet sur les autres moteurs) : changement de chaine DIFFERE a la tache suivante avec focus rendu
+(`changer()` dans Lecture.tsx), et element `<video>` RECREE a chaque changement de chaine en HLS natif
+(`generation`). Etat final : voir le rapport (hypothese restante : boucle ResizeObserver des grilles de la coque,
+D17, corrigee par ui-8 en US-47 CA6).
 
 ## Notes de fusion (coordinateur)
 

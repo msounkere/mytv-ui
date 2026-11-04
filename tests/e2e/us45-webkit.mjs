@@ -11,7 +11,14 @@ const s = await ouvrirSession({ navigateur, moteur: 'webkit', gabarit: 'bureau' 
 const { page, serveur, commandes, chemin } = s
 try {
   const attendreErreur = () => page.locator('[role="alert"]').waitFor({ timeout: 25_000 })
-  await page.goto(`${serveur.origine}/lecture/live:iptva:100003`)
+  // Le plantage se reproduit apres un passage par l'Accueil puis le Direct (ecrans preserves montes),
+  // comme un vrai parcours : on le rejoue tel quel, puis la lecture par l'adresse interne.
+  await page.goto(`${serveur.origine}/`)
+  await pause(2500)
+  await s.rail('Direct').click()
+  await attendre(async () => (await chemin()) === '/direct', { quoi: 'direct' })
+  await pause(2000)
+  await page.evaluate(() => { history.pushState(null, '', '/lecture/live:iptva:100003'); dispatchEvent(new PopStateEvent('popstate')) })
   await page.locator('[data-role="commandes"]').waitFor({ state: 'attached' })
   await attendreErreur()
   v.ok(/Impossible de lire|Ce contenu|flux/i.test(await page.locator('[role="alert"]').innerText()), 'chaine en echec HLS : erreur nommee (le faux serveur n a pas de direct)')

@@ -25,7 +25,7 @@ import type { SaisonApi } from '../lib/api'
 import { estBureau, estMobile } from '../lib/gabarit'
 import { ecran, ouvrirDetails, ouvrirFiche, poserEcran, revenirAuLecteur } from '../etat'
 import { db } from '../lib/db'
-import { attacher, type Attache } from '../lib/lecteur'
+import { attacher, hlsNatif, type Attache } from '../lib/lecteur'
 import { planDirect, planVod, urlVod, deplacementParService, bornerPosition, BADGE_MODE, type Plan } from '../lib/flux'
 import { lectureDe, chaineDeLecture } from '../lib/source-lecture'
 import { annulerFinDifferee } from '../lib/bail'
@@ -382,11 +382,26 @@ export default function Lecture(props: {
     surQuitterEcran: revenir,
   })
 
+  /**
+   * Changement de chaine DIFFERE hors du geste (US-45 CA9, D16). WebKit (tout
+   * iPhone) plantait au zapping apres un echec HLS : la coque REMONTE le lecteur
+   * (selection changee), donc retire du document l'element focalise -- la racine
+   * ou un bouton de la colonne -- PENDANT la touche ou le clic qui le vise.
+   * Isole sous Playwright webkit : aucune operation sur la video ne plante seule ;
+   * seul le demontage pendant l'evenement plante. On rend le focus et on change
+   * a la tache suivante.
+   */
+  function changer(e: EntreeCatalogue) {
+    const actif = document.activeElement as HTMLElement | null
+    if (actif && racine?.contains(actif)) actif.blur()
+    setTimeout(() => props.surChanger(e), 0)
+  }
+
   const zapping = creerZapping({
     entree: () => props.entree,
     direct,
     guideOuvert: calques.miniGuideOuvert,
-    surChanger: props.surChanger,
+    surChanger: changer,
     notifier,
   })
 
@@ -407,7 +422,7 @@ export default function Lecture(props: {
     debitMbps: debitCourantMbps,
     urlLecture: (lecture) => urlDirect(lecture),
     entetes: () => ({ 'X-Mytv-Capacites': capacitesAnnoncees(etatTentatives.sansHevc).join(','), ...entetesQualite(qualite()) }),
-    surChanger: props.surChanger,
+    surChanger: changer,
   })
   /** « Passer en Éco ? » : proposé une fois par lecture quand la liaison est trop juste. */
   const [propositionEco, poserPropositionEco] = createSignal(false)
@@ -523,7 +538,13 @@ export default function Lecture(props: {
       // Un autre contenu : le point atteint dans le précédent ne vaut plus rien.
       pointAtteint = 0
     }
+    // HLS natif (WebKit) : un element neuf pour la nouvelle chaine, jamais la
+    // reaffectation d'un element dont le chargement a echoue (D16).
+    if (precedente && precedente.cle !== entree.cle && entree.type === 'live' && hlsNatif(video)) poserGeneration((g) => g + 1)
     precedente = entree
+    // Capture SYNCHRONE du point atteint : le detachement du flux precedent
+    // (nettoyage ci-dessous, `load()`) signale ensuite un `timeupdate` a zero.
+    const atteintAvant = pointAtteint
     // Une fin de lecture différée (zapping) ne doit plus partir : ce qui
     // s'ouvre reprend la place que l'ancienne chaîne allait rendre.
     annulerFinDifferee()
@@ -555,6 +576,7 @@ export default function Lecture(props: {
         // En Éco, toute ouverture (direct, film, épisode) porte `qualite=eco`.
         const lecture = urlAvecQualite(lectureEntree(entree), modeQualite)
         let p: Plan
+        let pointDepart = 0
         if (entree.type === 'live') {
           p = planDirect(lecture)
           p = { ...p, url: urlDirect(lectureEntree(entree), cap) }
@@ -568,20 +590,23 @@ export default function Lecture(props: {
           // position de fin. Sous une minute, rouvrir au debut ne coute rien.
           const sauvegardee = premierPassage ? await positionSauvegardee(entree.cle) : undefined
           if (annule) return
-          const depart = departDeLecture({ premierPassage, pointAtteint, sauvegardee, seuil: SEUIL_REPRISE })
-          pointAtteint = depart.depart
+          const depart = departDeLecture({ premierPassage, pointAtteint: atteintAvant, sauvegardee, seuil: SEUIL_REPRISE })
+          // Valeur LOCALE : pendant l'attente du HEAD, le `timeupdate` a zero du
+          // media detache arrive encore et ne doit pas effacer le point de depart.
+          pointDepart = depart.depart
+          pointAtteint = pointDepart
           poserVerification(true)
           try {
-            p = await planVod({ lecture, capacites: cap, decalage: pointAtteint, signal: abandon.signal })
+            p = await planVod({ lecture, capacites: cap, decalage: pointDepart, signal: abandon.signal })
           } finally {
             poserVerification(false)
           }
         }
         if (annule) return
         poserPlan(p)
-        // Un film remuxé repart de `pointAtteint` par `?t=` ; un fichier servi tel
+        // Un film remuxé repart de `pointDepart` par `?t=` ; un fichier servi tel
         // quel reprend, lui, par un déplacement natif une fois ses métadonnées lues.
-        poserDecalage(p.viaService ? pointAtteint : 0)
+        poserDecalage(p.viaService ? pointDepart : 0)
 
         const source =
           p.genre === 'live'
@@ -594,8 +619,9 @@ export default function Lecture(props: {
           surMode: (m, codec) => { poserModeServeur(m); codecServeur = codec },
         })
         if (annule) return attache.detacher()
-        if (p.genre === 'vod' && !p.viaService && pointAtteint > 0) {
-          const reprise = pointAtteint
+        if (p.genre === 'vod' && !p.viaService && pointDepart > 0) {
+          const reprise = pointDepart
+          pointAtteint = reprise
           video.addEventListener('loadedmetadata', () => { video.currentTime = reprise }, { once: true })
         }
         await video.play().catch(() => {
@@ -623,8 +649,20 @@ export default function Lecture(props: {
     if (erreur()) poserChargement(false)
   })
 
-  // Miroir de l'élément <video> vers les signaux de la barre de contrôles.
-  onMount(() => {
+  /**
+   * Generation de l'element <video> (US-45 CA9, D16). Sur WebKit -- qui lit le
+   * HLS nativement -- reaffecter la source d'un element dont le chargement
+   * precedent a echoue plantait la page (« Target crashed », reproduit sous
+   * Playwright webkit apres un passage par l'Accueil et le Direct). A chaque
+   * changement de chaine en HLS natif, l'element est donc RECREE : l'ancien est
+   * detache proprement (source vide, `load()`) puis retire, le nouveau branche.
+   */
+  const [generation, poserGeneration] = createSignal(1)
+
+  // Miroir de l'élément <video> vers les signaux de la barre de contrôles, et
+  // objet de diffusion : branches sur CHAQUE element cree (voir `generation`).
+  function brancherVideo(el: HTMLVideoElement) {
+    video = el
     const lire = () => {
       poserMuet(video.muted)
       poserVolume(video.volume)
@@ -636,7 +674,7 @@ export default function Lecture(props: {
       // rouvre au point ou l'on en est, plus au dernier saut demande. Pas apres
       // un detachement (`load()` remet le media a zero et le signale) : la
       // source vide dit que ce zero n'est pas une position.
-      if (!direct() && video.currentSrc && Number.isFinite(video.currentTime)) pointAtteint = decalage() + video.currentTime
+      if (!direct() && video.readyState > 0 && Number.isFinite(video.currentTime)) pointAtteint = decalage() + video.currentTime
     }
     const auxImages = () => {
       // Le tampon restant d'une lecture coupee peut encore afficher des images
@@ -695,22 +733,15 @@ export default function Lecture(props: {
       ['timeupdate', auTemps], ['loadeddata', auxImages], ['playing', auxImages],
       ['waiting', () => poserChargement(true)],
     ]
-    for (const [nom, cb] of evenements) video.addEventListener(nom, cb)
-    poserEnPause(video.paused)
+    for (const [nom, cb] of evenements) el.addEventListener(nom, cb)
+    poserEnPause(el.paused)
     lire()
-    onCleanup(() => {
-      for (const [nom, cb] of evenements) video.removeEventListener(nom, cb)
-    })
-  })
-
-  // Diffusion : l'objet suit l'élément <video> pour toute la vie du lecteur.
-  let diffusion!: Diffusion
-  let debutDiffusionMs = 0
-  onMount(() => {
-    diffusion = creerDiffusion(video)
-    poserDiffusionSupportee(diffusion.supportee())
-    poserEtatDiffusion(diffusion.etat())
-    diffusion.surChangement((e) => {
+    // Diffusion : l'objet suit l'élément <video>.
+    const d = creerDiffusion(el)
+    diffusion = d
+    poserDiffusionSupportee(d.supportee())
+    poserEtatDiffusion(d.etat())
+    d.surChangement((e) => {
       poserEtatDiffusion(e)
       if (!diffusionEnCours()) return
       if (e === 'diffusion') {
@@ -721,8 +752,14 @@ export default function Lecture(props: {
         void terminerDiffusion()
       }
     })
-    onCleanup(() => diffusion.detacher())
-  })
+    onCleanup(() => {
+      for (const [nom, cb] of evenements) el.removeEventListener(nom, cb)
+      d.detacher()
+    })
+  }
+
+  let diffusion!: Diffusion
+  let debutDiffusionMs = 0
 
   // Mémorisation de la position de lecture pour la VOD (US-45 CA1).
   //
@@ -1237,11 +1274,15 @@ export default function Lecture(props: {
             cursor: calques.commandesVisibles() ? undefined : 'none',
           }}
         >
-          <video
-            ref={video}
-            playsinline
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: 'var(--video)' }}
-          />
+          <Show when={generation()} keyed>
+            {(_g) => (
+              <video
+                ref={brancherVideo}
+                playsinline
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: 'var(--video)' }}
+              />
+            )}
+          </Show>
 
           {/* Identité du contenu tant qu'aucune image n'est arrivée : un carré
               noir ne dit pas si le flux est en route ou perdu. */}
@@ -1503,7 +1544,7 @@ export default function Lecture(props: {
               ensuite={zapping.ensuiteDe}
               surChoisir={(e) => {
                 calques.poserMiniGuideOuvert(false)
-                props.surChanger(e)
+                changer(e)
               }}
               surFermer={() => calques.poserMiniGuideOuvert(false)}
             />
@@ -1591,7 +1632,7 @@ export default function Lecture(props: {
             filtre={zapping.filtre()}
             surFiltre={zapping.poserFiltre}
             sousTitre={(v) => (v.cle === props.entree.cle ? zapping.enCours()?.titre : undefined)}
-            surChoisir={props.surChanger}
+            surChoisir={changer}
           />
         </Show>
       </aside>

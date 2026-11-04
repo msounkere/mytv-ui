@@ -16,7 +16,8 @@ try {
   console.log('1. qualite')
   await s.ouvrirLecture('vod:iptva:5000')
   await page.waitForFunction(() => (document.querySelector('video')?.readyState ?? 0) >= 2, null, { timeout: 20_000 })
-  await page.evaluate(() => { const vi = document.querySelector('video'); vi.currentTime = 3.5; return vi.play().catch(() => {}) })
+  // Le media factice dure 6 s : en boucle, pour que la fin de lecture ne pose pas son calque pendant les etapes 1 a 3.
+  await page.evaluate(() => { const vi = document.querySelector('video'); vi.loop = true; vi.currentTime = 3.5; return vi.play().catch(() => {}) })
   await pause(900)
   const tAvant = (await video()).t
   await page.mouse.move(600, 100)
@@ -29,6 +30,7 @@ try {
   await page.mouse.move(600, 100)
   await commandes().getByRole('button', { name: /^Qualité/ }).click()
   await attendre(async () => !/qualite=eco/.test((await video())?.currentSrc ?? ''), { quoi: 'retour auto' })
+  await page.evaluate(() => { document.querySelector('video').loop = true })
 
   // --- 2. PiP refuse : message discret, pas d'erreur, pas de reouverture (CA8, B7) ------------------------
   console.log('2. pip')
@@ -64,7 +66,7 @@ try {
   await page.keyboard.press('Escape')
   await pause(300)
   v.ok((await page.locator('[data-role="variantes"]').count()) === 0 && /^\/lecture/.test(await chemin()), 'CA8 Echap ferme Variantes sans quitter (D7)')
-  v.ok(!/iptva:|manifestLoadError|127\.0\.0\.1/.test(await page.locator('.couche-lecteur').evaluate((e) => Array.from(e.querySelectorAll('*')).filter((x) => x.offsetParent !== null && x.children.length === 0).map((x) => x.textContent).join(' '))), 'CA9 aucun identifiant interne visible dans le lecteur (direct en erreur compris)')
+  v.ok(!/iptva:|manifestLoadError|127\.0\.0\.1/.test(await page.locator('.couche-lecteur').evaluate((e) => Array.from(e.querySelectorAll('*')).filter((x) => x.children.length === 0 && (x.checkVisibility ? x.checkVisibility({ contentVisibilityAuto: true }) : x.offsetParent !== null)).map((x) => x.textContent).join(' '))), 'CA9 aucun identifiant interne visible dans le lecteur (direct en erreur compris)')
   const detail = page.locator('[data-role="erreur-detail"]')
   v.ok((await detail.count()) === 1 && !(await detail.locator('code').isVisible()), 'CA9 le diagnostic brut est replie derriere « Détails techniques »')
 

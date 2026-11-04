@@ -45,17 +45,19 @@ for (const moteur of moteursDemandes()) {
       // --- 2. Tap sur la video = commandes affichees / masquees ; double-tap lateral = ±10 s --------------
       console.log(`[${moteur}/${gabarit}] 2. gestes`)
       const opacite = () => commandes().evaluate((e) => getComputedStyle(e).opacity)
-      await page.evaluate(() => document.querySelector('video').play())
+      // Le media factice dure 6 s : en boucle, pour que la fin de lecture ne vienne pas poser son calque.
+      await page.evaluate(() => { const vi = document.querySelector('video'); vi.loop = true; vi.currentTime = 0; return vi.play() })
       await pause(3800)
       v.ok((await opacite()) === '0', 'commandes masquees apres 3,2 s de lecture')
-      const centre = { x: boiteVideo.x + boiteVideo.width / 2, y: boiteVideo.y + boiteVideo.height * 0.8 }
+      // A mi-hauteur (entre la barre du haut et celle du bas), decale du bouton central.
+      const centre = { x: boiteVideo.x + boiteVideo.width * 0.3, y: boiteVideo.y + boiteVideo.height * 0.5 }
       await tap(centre.x, centre.y)
-      await pause(500)
-      v.ok((await opacite()) === '1', 'CA6 un tap montre les commandes')
+      v.ok(await attendre(async () => (await opacite()) === '1', { delai: 3000 }).catch(() => false), 'CA6 un tap montre les commandes')
+      await pause(400)
       await tap(centre.x, centre.y)
-      await pause(500)
-      v.ok((await opacite()) === '0', 'CA6 un second tap les masque')
-      await page.evaluate(() => { document.querySelector('video').currentTime = 1 })
+      v.ok(await attendre(async () => (await opacite()) === '0', { delai: 3000 }).catch(() => false), 'CA6 un second tap les masque')
+      // Sans boucle : +10 s sur un media de 6 s doit buter sur la fin, pas repartir de zero.
+      await page.evaluate(() => { const vi = document.querySelector('video'); vi.loop = false; vi.currentTime = 1 })
       await pause(300)
       const tAvant = (await video()).t
       const droite = { x: boiteVideo.x + boiteVideo.width * 0.85, y: boiteVideo.y + boiteVideo.height * 0.5 }
@@ -83,7 +85,7 @@ for (const moteur of moteursDemandes()) {
       await alerte.waitFor({ timeout: 20_000 })
       const boutonsAlerte = await alerte.getByRole('button').allInnerTexts()
       v.ok(boutonsAlerte[0] === 'Réessayer', `CA6 « Réessayer » en premier (${JSON.stringify(boutonsAlerte)})`)
-      const dessus = await alerte.getByRole('button', { name: 'Retour' }).evaluate((b) => { const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return e === b || b.contains(e) })
+      const dessus = await alerte.getByRole('button', { name: 'Retour' }).evaluate((b) => { b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return e === b || b.contains(e) })
       v.ok(dessus, 'CA6 le bouton « Retour » de la carte est au-dessus de tout (atteignable)')
       v.ok((await alerte.locator('[data-role="erreur-detail"] code').isVisible()) === false, 'CA9 le detail technique est replie')
       await alerte.getByRole('button', { name: 'Retour' }).click()
