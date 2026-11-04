@@ -102,9 +102,17 @@ async function attendre(condition, { delai = 15_000, pas = 100, quoi = 'conditio
 }
 
 async function seConnecter(page, { profil = 'Salon', creer = true } = {}) {
-  await page.getByLabel('Identifiant').fill(COMPTE)
-  await page.getByLabel('Mot de passe').fill(MOT_DE_PASSE)
-  await page.getByRole('button', { name: 'Se connecter' }).click()
+  const bouton = page.getByRole('button', { name: 'Se connecter' })
+  const remplir = async () => {
+    await page.getByLabel('Identifiant').fill(COMPTE)
+    await page.getByLabel('Mot de passe').fill(MOT_DE_PASSE)
+  }
+  await remplir()
+  // Le bouton reste inactif tant que les champs sont vides, qu'une verification de
+  // session court ou qu'un retard s'applique : on re-remplit si l'ecran a ete remonte
+  // entre-temps (vu une fois en CI) et on attend qu'il soit actif.
+  await attendre(async () => (await bouton.isEnabled()) || (await remplir(), bouton.isEnabled()), { delai: 20_000, quoi: 'bouton « Se connecter » actif' })
+  await bouton.click()
   if (creer) {
     await page.getByPlaceholder('Nom du profil').fill(profil)
     await page.getByRole('button', { name: 'Créer et utiliser' }).click()
