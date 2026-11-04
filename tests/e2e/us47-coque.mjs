@@ -171,7 +171,7 @@ console.log('--- navigation : fleches, focus de fiche, retour')
     // Fiche serie : Retour = ecran precedent (accueil), pas Direct.
     await page.goto(`${serveur.origine}/`)
     await page.getByText('À la une').first().waitFor()
-    await page.locator('main section[aria-label="Séries récemment ajoutées"] [role="button"][title], main section[aria-label="Séries récemment ajoutées"] button[title]').first().click()
+    await page.locator('main section[aria-label="Séries récemment ajoutées"] [role="button"][title]:not([data-role="menu-carte"])').first().click({ position: { x: 12, y: 60 } })
     v.ok(await jusqua(async () => /^\/serie\//.test(await chemin(page)), 8000), `fiche serie ouverte (${await chemin(page)})`)
     await page.keyboard.press('Escape')
     v.ok(await jusqua(async () => (await chemin(page)) === '/', 5000), `CA7 Echap sur la fiche serie = ecran precedent (${await chemin(page)})`)

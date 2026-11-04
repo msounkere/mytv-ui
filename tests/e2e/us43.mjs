@@ -135,7 +135,7 @@ const SCENARIOS = {
       // --- Ecran « Ma liste » (/a-voir) ----------------------------------------------------------
       await page.goto(`${serveur.origine}/a-voir`)
       await attendre(async () => (await lignes().count()) === 3, { quoi: '3 lignes' })
-      assert.equal(await page.evaluate(() => location.pathname), '/a-voir')
+      assert.equal(await page.evaluate(() => location.pathname), '/ma-liste')
       const cles = async () => Promise.all((await lignes().all()).map((l) => l.getAttribute('data-cle')))
       assert.deepEqual(await cles(), ['vod:iptva:5000', 'series:iptva:s5001', 'vod:iptva:5003'])
       const ligneSerie = lignes().nth(1)
