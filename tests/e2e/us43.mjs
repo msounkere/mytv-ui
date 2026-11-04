@@ -121,11 +121,19 @@ const SCENARIOS = {
       await attendre(async () => (await page.locator('header [data-role="a-voir"]').getAttribute('aria-pressed')) === 'true', { quoi: 'bouton de la serie presse' })
 
       // --- Resultats de recherche ---------------------------------------------------------
+      // Lot 10 (US-46 CA2, US-47 arbitrage 5) : la carte de resultat lit « Ma liste »
+      // elle-meme (ui-7) ; en attendant la fusion, l'ajout depuis la recherche passe
+      // par le menu « ⋯ » de la carte s'il existe, sinon par la fiche ouverte au clic.
       await page.goto(`${serveur.origine}/recherche?q=${encodeURIComponent('Film Test 3')}`)
       const carte = page.getByRole('button', { name: 'Film Test 3', exact: true }).first()
       await carte.waitFor()
       await carte.hover()
-      await carte.getByRole('button', { name: 'Ajouter à « À voir »' }).click()
+      const boutonCarte = carte.getByRole('button', { name: /Ma liste|À voir/ })
+      if (await boutonCarte.count()) await boutonCarte.first().click()
+      else {
+        await carte.click()
+        await page.locator('[data-role="fiche-film"] [data-role="a-voir"], [data-role="fiche-film"] [data-role="ma-liste"]').first().click()
+      }
       await attendre(() => liste().includes('vod:iptva:5003'), { quoi: 'PUT depuis la recherche' })
       assert.deepEqual(liste(), ['vod:iptva:5000', 'serie:iptva:s5001', 'vod:iptva:5003'], 'ordre d ajout conserve')
 
