@@ -30,6 +30,7 @@ import { useDisponibilite } from '../lib/disponibilite'
 import { chargerSaisons, lireSaisons } from '../lib/saisons'
 import { prochainAVoir } from '../lib/episodes-suivants'
 import { lectureEnCours } from '../etat'
+import { profondeurHistorique } from '../lib/sortie-lecteur'
 import type { EntreeCatalogue } from '../lib/db'
 
 // Une serie n est pas une entree de plus dans une liste : c est un index. Le
@@ -310,12 +311,18 @@ export default function FicheSerie(props: {
     () => lectureEnCours() === null,
   )
 
-  // Escape ferme la fiche : c est une vue de detail, pas une page de plus.
+  // Retour et Echap : l'ECRAN PRECEDENT (pile d'historique, US-45 CA2), comme la
+  // fiche film ; sans pile (lien direct), le repli de la coque. Constat (B4) : la
+  // fiche renvoyait vers l'onglet Parcours retenu, c'est-a-dire Direct.
+  function retour() {
+    if (profondeurHistorique() > 0) history.back()
+    else props.surRetour()
+  }
   onMount(() => {
     const auClavier = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.preventDefault()
-      props.surRetour()
+      retour()
     }
     window.addEventListener('keydown', auClavier)
     onCleanup(() => window.removeEventListener('keydown', auClavier))
@@ -435,14 +442,13 @@ export default function FicheSerie(props: {
         }}
       >
         <button
-          onClick={() => props.surRetour()}
+          onClick={retour}
           style={{ padding: '5px 12px', border: '1px solid var(--line2)', 'min-height': hauteurCible() }}
         >
           ← Retour
         </button>
-        <span class="secondaire tronque" style={{ 'font-size': '13px' }}>
-          Série · <span class="num">{props.serie.idServeur}</span>
-        </span>
+        {/* Jamais l'identifiant du fournisseur ici (CA9) : il n'aide que le diagnostic. */}
+        <span class="secondaire tronque" style={{ 'font-size': '13px' }}>Série</span>
       </nav>
 
       <Switch>

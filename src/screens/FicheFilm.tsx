@@ -12,6 +12,7 @@ import { BadgePret, BoutonAVoir, LigneDisponibilite, useAVoirCles } from '../com
 import { estPret } from '../lib/a-voir-serveur'
 import { useDisponibilite } from '../lib/disponibilite'
 import { lectureEnCours } from '../etat'
+import { profondeurHistorique } from '../lib/sortie-lecteur'
 import type { EntreeCatalogue } from '../lib/db'
 
 // Fiche d'un film (US-28). Les details -- synopsis, genre, duree, casting,
@@ -56,12 +57,17 @@ export default function FicheFilm(props: {
   const dansAVoir = () => aVoir()?.has(props.film.cle) ?? false
   const disponibilite = useDisponibilite(() => props.film.idServeur, () => lectureEnCours() === null)
 
+  // Retour et Echap : l'ecran precedent (pile d'historique, US-45 CA2) ; sans pile, le repli de la coque.
+  function retour() {
+    if (profondeurHistorique() > 0) history.back()
+    else props.surRetour()
+  }
   onMount(() => {
     void estFavori(props.film.cle).then(poserFavori)
     const auClavier = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.preventDefault()
-      props.surRetour()
+      retour()
     }
     window.addEventListener('keydown', auClavier)
     onCleanup(() => window.removeEventListener('keydown', auClavier))
@@ -89,7 +95,7 @@ export default function FicheFilm(props: {
     <div data-role="fiche-film" style={{ display: 'grid', 'grid-template-rows': 'auto 1fr', height: '100%', 'min-height': 0 }}>
       <nav style={{ display: 'flex', 'align-items': 'center', gap: '10px', padding: `8px ${marge()}px`, 'border-bottom': '1px solid var(--line)' }}>
         <button
-          onClick={() => props.surRetour()}
+          onClick={retour}
           style={{ padding: '5px 12px', border: '1px solid var(--line2)', 'min-height': estMobile() ? '44px' : undefined }}
         >
           ← Retour

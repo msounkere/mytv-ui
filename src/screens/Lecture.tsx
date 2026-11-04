@@ -1,4 +1,4 @@
-import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js'
+import { Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from 'solid-js'
 import { Portal } from 'solid-js/web'
 import SubstitutLogo from '../components/SubstitutLogo'
 import EtiquettePays from '../components/EtiquettePays'
@@ -17,7 +17,9 @@ import {
 } from '../components/CalquesLecture'
 import { prochainAVoirApres, type AVoirJoint } from '../lib/a-voir'
 import { estBureau, estMobile } from '../lib/gabarit'
-import { ecran, poserEcran, revenirAuLecteur } from '../etat'
+import { cleLecture, ecran, ouvrirDetails, ouvrirFiche, poserEcran, revenirAuLecteur } from '../etat'
+import { db } from '../lib/db'
+import { revenirEnArriere } from '../lib/sortie-lecteur'
 import { attacher, type Attache } from '../lib/lecteur'
 import { planDirect, planVod, urlVod, deplacementParService, bornerPosition, BADGE_MODE, type Plan } from '../lib/flux'
 import { lectureDe, chaineDeLecture } from '../lib/source-lecture'
@@ -41,6 +43,8 @@ import type { EntreeCatalogue } from '../lib/db'
 import ColonnePistes from './lecture/ColonnePistes'
 import PiedLecteur from './lecture/PiedLecteur'
 import { creerCalques } from './lecture/calques'
+import { envoyerPosition } from './lecture/position'
+import { PART_VUE } from '../lib/ui7-contrat'
 import { brancherClavier } from './lecture/clavier'
 import { heure } from './lecture/format'
 import { creerPistes } from './lecture/pistes'
@@ -77,8 +81,6 @@ import {
 /** Hauteur réelle de la barre de contrôles, mesurée sur la maquette. */
 const HAUTEUR_CONTROLES = { live: 68, vod: 94 }
 
-/** Part du contenu au-delà de laquelle le dossier le considère vu. */
-const SEUIL_VU = 0.9
 
 /**
  * Attente avant d'appliquer un déplacement passant par le service. Chaque
@@ -99,9 +101,9 @@ export default function Lecture(props: {
   /** Film terminé (US-43 CA4) : ouvrir le prochain élément de la liste « À voir » (proposé, jamais lancé seul). */
   surSuivantListe?: (e: EntreeCatalogue) => void
   surChanger: (e: EntreeCatalogue) => void
-  /** Arrêt du flux (la croix) : libère la connexion. */
+  /** Arrêt du flux : la coque oublie la sélection (le flux est déjà détaché ici). */
   surFermer: () => void
-  /** Retour à la fiche ou à la liste, la lecture continue dans le mini-lecteur. */
+  /** Quitter l'écran sans arrêter (la coque n'a plus à naviguer : le lecteur le fait, CA2). */
   surRetour: () => void
 }) {
   let video!: HTMLVideoElement
@@ -144,7 +146,11 @@ export default function Lecture(props: {
   /** Position demandée mais pas encore appliquée : la poignée doit la suivre. */
   const [positionVisee, poserPositionVisee] = createSignal<number | null>(null)
 
-  const direct = () => props.entree.type === 'live'
+  // Memo et non fonction : une valeur CAPTUREE, que le nettoyage des effets
+  // peut relire apres la deselection sans toucher a `props.entree` (dont
+  // l'accesseur, celui du `<Show>` de la coque, leve « Stale read » une fois
+  // la selection a null : US-45 CA1, bug bloquant « l'arret qui n'arrete pas »).
+  const direct = createMemo(() => props.entree.type === 'live')
 
   // --- Modes du direct (US-32) ---------------------------------------------
   /** Mode annoncé par le serveur (`X-Mytv-Mode`) pour la chaîne ouverte. */
@@ -167,18 +173,84 @@ export default function Lecture(props: {
   // aucun sens, et après un `?t=` ses horodatages repartent de zéro. La durée
   // vient donc de ce que le serveur annonce, et la position affichée est celle
   // du FILM, décalage compris.
+  // Ni `duree` ni `position` ne lisent `props.entree` : le plan dit lui-meme
+  // s'il decrit un film (CA1 : elles sont relues au nettoyage).
   const dureeAnnoncee = () => {
     const p = plan()
-    if (direct() || !p?.viaService) return undefined
+    if (!p || p.genre !== 'vod' || !p.viaService) return undefined
     const d = p.dureeSecondes ?? 0
     return d > 0 ? d : undefined
   }
   // Via le service, SEULE la duree annoncee compte : sans `X-Mytv-Duree`, elle
   // est inconnue (0) — pas de barre, et un deplacement n'est plus plafonne a 0.
-  const duree = () => (!direct() && plan()?.viaService ? (dureeAnnoncee() ?? 0) : dureeBrute())
+  const duree = () => {
+    const p = plan()
+    return p?.genre === 'vod' && p.viaService ? (dureeAnnoncee() ?? 0) : dureeBrute()
+  }
   const position = () => positionVisee() ?? decalage() + positionBrute()
   /** La coque garde le lecteur monté : il n'est « parti » que visuellement. */
   const horsLecteur = () => ecran() !== 'lecture'
+
+  // --- Sortie : une seule regle, la pile d'historique (US-45 CA2) ----------------
+  /** Selection de sortie, capturee hors reactivite (jamais lue apres la deselection). */
+  const selectionSortie = () => {
+    const e = untrack(() => props.entree)
+    return { type: e.type, cle: e.cle, serie: e.serie }
+  }
+  /** Navigation de repli (pile vide) : la fiche du contenu, sinon l'accueil. */
+  function naviguerVers(chemin: string) {
+    const e = untrack(() => props.entree)
+    if (chemin.startsWith('/film/')) ouvrirDetails(e)
+    else if (chemin.startsWith('/serie/')) {
+      const serie = chemin.slice('/serie/'.length)
+      void db.catalogue.get(serie).then((s) => (s ? ouvrirFiche(s) : poserEcran('accueil')))
+    } else poserEcran('accueil')
+  }
+  /** Retour : l'ecran precedent, la lecture continue dans le mini-lecteur. */
+  function revenir() {
+    revenirEnArriere(selectionSortie(), naviguerVers)
+  }
+  /**
+   * Arret (croix, « Fermer la lecture », « Retour » du panneau d'erreur, Echap,
+   * fin de lecture) : le flux est DETACHE tout de suite (l'effet de source lit
+   * `arret()`), puis l'ecran precedent ; la coque n'oublie la selection qu'une
+   * fois l'ecran quitte -- sinon son effet relirait `/lecture/<cle>` encore
+   * affiche et reselectionnerait le contenu qu'on vient d'arreter (constate :
+   * remontage du lecteur, flux rouvert). Depuis le mini-lecteur (deja hors de
+   * l'ecran), aucune navigation : le mini-lecteur ne navigue jamais.
+   */
+  const [arret, poserArret] = createSignal(false)
+  /** Position de sortie, a noter AVANT le detachement (qui remet le media a zero). */
+  let noterSortie: (() => void) | undefined
+  let cleArretee: string | undefined
+  let reculs = 0
+  let fermetureDemandee = false
+  function arreter() {
+    if (untrack(arret)) return
+    cleArretee = untrack(() => props.entree.cle)
+    noterSortie?.()
+    poserArret(true)
+    if (!untrack(horsLecteur)) revenir()
+  }
+  createEffect(() => {
+    if (!arret()) return
+    if (horsLecteur()) {
+      // L'ecran a change dans le graphe reactif ; le routeur n'ecrit l'URL qu'a
+      // la fin de sa transition (une microtache plus tard). La coque, en
+      // oubliant la selection, relit le chemin courant : on la previent apres.
+      if (fermetureDemandee) return
+      fermetureDemandee = true
+      setTimeout(() => props.surFermer(), 0)
+      return
+    }
+    // Retombe sur un AUTRE /lecture (enchainement, zapping pousses) : encore un pas.
+    const cle = cleLecture()
+    if (cle && cle !== cleArretee && reculs < 5) {
+      reculs += 1
+      cleArretee = cle
+      history.back()
+    }
+  })
 
   // Les favoris ramènent 154 000 entrées à la dizaine réellement regardée.
   createEffect(() => {
@@ -282,7 +354,7 @@ export default function Lecture(props: {
     suivant: suivantEnchaine,
     duree,
     position,
-    surQuitterEcran: () => poserEcran('parcours'),
+    surQuitterEcran: arreter,
   })
 
   const zapping = creerZapping({
@@ -363,6 +435,12 @@ export default function Lecture(props: {
     const entree = props.entree
     // Lu pour que la reconnexion rouvre réellement le flux.
     panne.relance()
+    // Arret demande : le nettoyage ci-dessous a detache le flux, rien ne rouvre.
+    if (arret()) {
+      poserChargement(false)
+      poserImageDisponible(false)
+      return
+    }
     // Changer de qualité (Auto / Éco) rouvre proprement : un seul flux, le
     // serveur arrête son ffmpeg (US-38 CA3), et l'adresse porte le nouveau mode.
     const modeQualite = qualite()
@@ -602,31 +680,55 @@ export default function Lecture(props: {
     onCleanup(() => diffusion.detacher())
   })
 
-  // Mémorisation de la position de lecture pour la VOD.
+  // Mémorisation de la position de lecture pour la VOD (US-45 CA1).
+  //
+  // RIEN ICI NE RELIT `props.entree` AU NETTOYAGE : la coque ferme le `<Show>`
+  // (selection a null) AVANT de demonter le lecteur, et l'accesseur leverait
+  // « Stale read from <Show> » — l'exception interrompait la disposition, le
+  // flux restait attache (son fantome, place du fournisseur tenue) et la
+  // position de sortie n'etait jamais ecrite. La cle, la serie et le type sont
+  // CAPTURES a l'entree de l'effet ; `duree()` et `position()` ne lisent que
+  // des signaux locaux.
   createEffect(() => {
     const entree = props.entree
     if (entree.type === 'live') return
     // Pendant la diffusion, l'élément porte le lien signé (position à zéro) :
     // la position atteinte est gardée à part, rien à mémoriser ici.
     if (diffusionEnCours()) return
-    const noter = () => {
+    const cle = entree.cle
+    const serie = entree.serie
+    const noter = (immediat: boolean) => {
       // Tenu pour vu (fin, ou enchainement) : la fin notee ne doit pas etre reculee.
-      if (cleTerminee === entree.cle) return
+      if (cleTerminee === cle) return
       // Le décalage du dernier `?t=` est compris dans `position()` : sans lui,
       // reprendre un film déplacé le ramènerait au début.
       const d = duree()
       const courant = position()
       if (!Number.isFinite(d) || d <= 0 || !Number.isFinite(courant)) return
-      // Au-delà de 90 %, le dossier tient le contenu pour vu. On enregistre la
-      // fin plutôt qu'un drapeau à part : « Reprendre » et la fiche série
-      // lisent déjà cette position, et elles s'accordent alors d'elles-mêmes.
-      const p = courant / d >= SEUIL_VU ? d : courant
-      void noterPosition(entree.cle, p, d)
+      // Au-delà du seuil « vu », on enregistre la fin plutôt qu'un drapeau à
+      // part : « Reprendre » et la fiche série lisent déjà cette position, et
+      // elles s'accordent alors d'elles-mêmes.
+      const p = courant / d >= PART_VUE ? d : courant
+      void noterPosition(cle, p, d)
+      // Sortie, pause, fermeture de page : la position part tout de suite au
+      // serveur (le journal, lui, attend 30 s) — l'autre appareil reprend juste.
+      if (immediat) envoyerPosition(cle, p, d, serie)
     }
-    const minuteur = setInterval(noter, 5000)
+    // Apres l'arret, plus rien a noter : le media detache repasse a zero, et
+    // cette position-la n'est pas une reprise.
+    if (arret()) return
+    const minuteur = setInterval(() => noter(false), 5000)
+    const alaPause = () => noter(true)
+    const alaFermeture = () => noter(true)
+    video.addEventListener('pause', alaPause)
+    window.addEventListener('pagehide', alaFermeture)
+    noterSortie = () => noter(true)
     onCleanup(() => {
       clearInterval(minuteur)
-      noter()
+      video.removeEventListener('pause', alaPause)
+      window.removeEventListener('pagehide', alaFermeture)
+      noterSortie = undefined
+      if (!untrack(arret)) noter(true)
     })
   })
 
@@ -822,7 +924,8 @@ export default function Lecture(props: {
     fermerCalque: () => {
       if (prochainListe() !== null) poserProchainListe(null)
       else if (calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert() || calques.rebours() !== null) calques.fermerCalque()
-      else props.surRetour()
+      // Echap sans calque : sortie du lecteur, flux detache (CA1), ecran precedent (CA2).
+      else arreter()
     },
     zapper: zapping.zapper,
     deplacer,
@@ -905,7 +1008,7 @@ export default function Lecture(props: {
       masquerMobile: true,
       surAction: () => void basculerPip(),
     },
-    { icone: 'close', libelle: 'Arrêter le flux', titre: 'Arrêter le flux et libérer la connexion (retour à la fiche ou à la liste)', surAction: props.surFermer },
+    { icone: 'close', libelle: 'Arrêter le flux', titre: 'Arrêter le flux et libérer la connexion (retour à l’écran précédent)', surAction: arreter },
     { icone: 'fullscreen', libelle: 'Plein écran', titre: 'Plein écran', surAction: pleinEcran },
   ]
 
@@ -943,7 +1046,7 @@ export default function Lecture(props: {
         panne.relancer()
       },
     })
-    actions.push({ libelle: 'Retour', surAction: props.surFermer })
+    actions.push({ libelle: 'Retour', surAction: arreter })
     return actions
   }
 
@@ -1052,7 +1155,7 @@ export default function Lecture(props: {
                 class="lecteur-retour"
                 title="Retour (la lecture continue dans le mini-lecteur) — Échap"
                 aria-label="Retour"
-                onClick={() => props.surRetour()}
+                onClick={revenir}
                 style={{
                   display: 'inline-flex', 'align-items': 'center', gap: '4px',
                   padding: '4px 8px', 'margin-right': '4px', border: '0', 'border-radius': '6px',
@@ -1343,7 +1446,7 @@ export default function Lecture(props: {
             surOuvrir={revenirAuLecteur}
             surMuet={() => (video.muted = !video.muted)}
             surReduire={() => poserMiniReduit((v) => !v)}
-            surFermer={props.surFermer}
+            surFermer={arreter}
           />
         </Portal>
       </Show>
