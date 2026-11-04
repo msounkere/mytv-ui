@@ -1,4 +1,4 @@
-import { estBureau, estMobile, estTablette } from '../../lib/gabarit'
+import { estBureau, estMobile } from '../../lib/gabarit'
 import { For, Show, createEffect, createSignal, onCleanup, type JSX } from 'solid-js'
 import Icone from '../../components/Icone'
 import SelecteurSegmente from '../../components/SelecteurSegmente'
@@ -133,7 +133,7 @@ export default function BarreOutilsDirect(props: {
             />
           </div>
           <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', padding: estMobile() ? '0 12px 8px' : '0 16px 8px', 'min-width': '0' }}>
-            {champFiltre(estTablette() ? 36 : 44)}
+            {champFiltre(44)}
             {selecteur}
           </div>
         </div>

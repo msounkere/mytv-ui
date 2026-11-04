@@ -354,6 +354,8 @@
   /* Une tablette et un téléphone couché se touchent au doigt : 44 px partout
      (Apple HIG), pas seulement sous 700 px (D21). */
   .entete-bouton-icone, .entete-bouton-profil { width: 44px; height: 44px; }
+  .entete-recherche input { height: 44px; }
+  .entete-recherche-icone, .entete-raccourci { top: 13px; }
   .panneau-option { min-height: 44px; }
 }
 
