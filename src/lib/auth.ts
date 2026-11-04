@@ -3,6 +3,7 @@ import {
   ErreurApi, ErreurReseau, abonnerSessionPerdue, envoyer, json,
   type CompteApi, type LimitesApi, type ProfilApi, type SessionApi,
 } from './api'
+import { MESSAGE_PROFIL_EXISTANT, cheminApresExpiration, nomProfilDisponible } from './profils-regles'
 
 /**
  * Session de l'application, par cookie.
@@ -41,13 +42,27 @@ const [profils, poserProfils] = createSignal<ProfilApi[]>([])
 /** Bornes de la configuration du serveur (`GET /compte`) : taille de page, plage de la grille... */
 const [limites, poserLimites] = createSignal<LimitesApi | undefined>()
 
-export { session, etatAuth, profils, limites }
+/**
+ * Pourquoi l'ecran de connexion est affiche (US-47 CA4, audit A bug 12 / B
+ * UX20) : `expiree` = le service ne reconnait plus la session alors qu'on
+ * etait connecte. L'ecran le DIT ; l'URL est gardee, donc la reconnexion
+ * ramene a l'ecran d'origine.
+ */
+export type RaisonConnexion = 'expiree' | null
+const [raisonConnexion, poserRaisonConnexion] = createSignal<RaisonConnexion>(null)
+
+/** Vrai quand la session en cours est une session LOCALE ouverte sans reseau. */
+const [sessionHorsLigne, poserSessionHorsLigne] = createSignal(false)
+
+export { session, etatAuth, profils, limites, raisonConnexion, sessionHorsLigne }
 
 /** Nom du compte saisi a la derniere connexion sur CETTE machine : non secret,
  *  il sert a l'affichage et a ne pas melanger l'etat de deux comptes. */
 const CLE_COMPTE = 'mytv.compte'
 /** Identite (`compte/profil`) dont l'etat personnel est actuellement en base locale. */
 const CLE_IDENTITE_LOCALE = 'mytv.identite-locale'
+/** Profils du compte tels que vus a la derniere connexion : pour ouvrir hors ligne. */
+const CLE_PROFILS_LOCAUX = 'mytv.profils-locaux'
 
 function lireLocal(cle: string): string | null {
   try {
@@ -123,7 +138,10 @@ function identiteDe(s: Session): string {
 
 async function accepter(compte: CompteApi): Promise<void> {
   poserProfils(compte.profils)
+  ecrireLocal(CLE_PROFILS_LOCAUX, JSON.stringify(compte.profils))
   poserLimites(compte.limites)
+  poserRaisonConnexion(null)
+  poserSessionHorsLigne(false)
   let s = versSession(compte.session)
   // Un seul profil et aucun actif : le choisir est la seule action possible, la
   // demander a l'utilisateur serait un clic pour rien.
@@ -148,8 +166,53 @@ async function activerProfil(s: Session): Promise<void> {
   void import('./synchro').then((m) => m.synchroniser())
 }
 
+/**
+ * La session vient d'expirer alors qu'on etait connecte : on le retient pour
+ * l'ecran de connexion, et l'URL est gardee pour y revenir apres (voir
+ * `cheminApresExpiration`).
+ */
+function signalerExpiration(): void {
+  poserRaisonConnexion('expiree')
+  if (typeof window === 'undefined') return
+  const cible = cheminApresExpiration(window.location.pathname)
+  if (cible !== window.location.pathname) window.history.replaceState(window.history.state, '', cible)
+}
+
+/**
+ * Session locale, sans reseau (US-47 CA4, audit A UX2) : le catalogue, les
+ * favoris et l'historique sont en base locale, l'application s'ouvre dessus
+ * au lieu d'un « Service injoignable » bloquant. Il faut une identite locale
+ * (quelqu'un s'est deja connecte ici), un profil, et un catalogue importe.
+ */
+async function ouvrirHorsLigne(): Promise<boolean> {
+  const identite = lireLocal(CLE_IDENTITE_LOCALE)
+  const compte = lireLocal(CLE_COMPTE)
+  if (!identite || !compte) return false
+  const profilId = identite.split('/')[1]
+  if (!profilId) return false
+  let locaux: ProfilApi[] = []
+  try {
+    const brut = JSON.parse(lireLocal(CLE_PROFILS_LOCAUX) ?? '[]') as unknown
+    if (Array.isArray(brut)) locaux = brut.filter((p): p is ProfilApi => !!p && typeof p.id === 'string' && typeof p.nom === 'string')
+  } catch {
+    // Liste illisible : on se contente du profil de l'identite.
+  }
+  try {
+    const { db } = await import('./db')
+    if (!(await db.reglages.get('catalogue.version'))) return false
+  } catch {
+    return false
+  }
+  poserProfils(locaux.length ? locaux : [{ id: profilId, nom: compte }])
+  poserSessionInterne({ id: 'locale', admin: false, profilId, expire: 0, identifiant: compte })
+  poserSessionHorsLigne(true)
+  poserEtatAuth('connecte')
+  return true
+}
+
 /** Etat du service et de la session, au demarrage de l'application. */
 export async function verifierSession(): Promise<EtatAuth> {
+  const etaitConnecte = etatAuth() === 'connecte' && !sessionHorsLigne()
   try {
     const compte = await json<CompteApi>('/compte', { sansDetectionSession: true })
     await accepter(compte)
@@ -159,15 +222,25 @@ export async function verifierSession(): Promise<EtatAuth> {
       // 401 attendu : le service va bien, c'est nous qui ne sommes pas connectes.
       poserSessionInterne(undefined)
       poserProfils([])
+      poserSessionHorsLigne(false)
+      if (etaitConnecte) signalerExpiration()
       poserEtatAuth('anonyme')
       return 'anonyme'
     }
     // Reseau coupe ou service en erreur : si une session etait ouverte, on la
-    // GARDE (l'etat local reste utilisable hors ligne) ; sinon on le dit.
-    if (etatAuth() !== 'connecte') poserEtatAuth('injoignable')
+    // GARDE (l'etat local reste utilisable hors ligne) ; sinon on ouvre sur le
+    // catalogue local quand il existe, et on le dit seulement s'il n'y a rien.
+    if (etatAuth() !== 'connecte' && !(await ouvrirHorsLigne())) poserEtatAuth('injoignable')
     return etatAuth()
   }
 }
+
+// Le reseau revient : une session locale redevient une vraie session (ou une
+// session expiree, qu'on annonce).
+if (typeof window !== 'undefined')
+  window.addEventListener('online', () => {
+    if (sessionHorsLigne()) void verifierSession()
+  })
 
 // Un 401 n'importe ou = cookie expire ou revoque : retour a la connexion, l'etat
 // local n'a rien perdu.
@@ -219,6 +292,9 @@ export async function deconnexion(): Promise<void> {
   }
   poserSessionInterne(undefined)
   poserProfils([])
+  poserRaisonConnexion(null)
+  poserSessionHorsLigne(false)
+  ecrireLocal(CLE_PROFILS_LOCAUX, null)
   poserEtatAuth('anonyme')
   void import('./synchro').then((m) => m.arreterSynchro())
 }
@@ -249,14 +325,17 @@ export async function rechargerProfils(): Promise<void> {
 }
 
 export async function creerProfil(nom: string): Promise<ProfilApi> {
+  if (!nomProfilDisponible(profils(), nom)) throw new ErreurApi(409, 'profil_existant', MESSAGE_PROFIL_EXISTANT)
   const p = await json<ProfilApi>('/compte/profils', { methode: 'POST', corps: { nom } })
   poserProfils([...profils(), p])
+  ecrireLocal(CLE_PROFILS_LOCAUX, JSON.stringify(profils()))
   return p
 }
 
 export async function supprimerProfil(id: string): Promise<void> {
   await envoyer(`/compte/profils/${encodeURIComponent(id)}`, { methode: 'DELETE' })
   poserProfils(profils().filter((p) => p.id !== id))
+  ecrireLocal(CLE_PROFILS_LOCAUX, JSON.stringify(profils()))
   // Supprimer le profil actif le rend inexistant cote serveur : la session
   // n'en a plus, l'utilisateur doit en choisir un autre.
   const s = session()
