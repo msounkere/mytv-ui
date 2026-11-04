@@ -11,6 +11,9 @@ const { page, serveur, chemin, commandes, reveil, video, videosAvecSource, rail 
 try {
   const fiche = page.locator('[data-role="fiche-film"]')
   const attendreChemin = (c, quoi) => attendre(async () => (await chemin()) === c, { quoi: quoi ?? c })
+  // Le Direct retient sa categorie et son mode dans l'adresse (`/direct?categorie=…`, US-47) : on
+  // verifie l'ecran, pas ses parametres.
+  const attendreDirect = (quoi) => attendre(async () => /^\/direct(\?|$)/.test(await chemin()), { quoi: quoi ?? '/direct' })
 
   // Navigation INTERNE (pushState + popstate = ce que fait le routeur) : `page.goto` rechargerait la page
   // et viderait la pile de l'application.
@@ -74,7 +77,7 @@ try {
   // --- 3. direct -> lecture -> « Arrêter le flux » = direct (meme regle pour le guide) --------------
   console.log('3. direct -> lecture -> Arrêter')
   await rail('Direct').click()
-  await attendreChemin('/direct')
+  await attendreDirect()
   const ligne = page.locator('main button[title^="Chaîne"]').first()
   await ligne.waitFor()
   await ligne.click()
@@ -85,7 +88,7 @@ try {
   const alerte = page.locator('[role="alert"]')
   if (await alerte.count()) await alerte.getByRole('button', { name: 'Retour' }).click()
   else { await reveil(); await commandes().getByRole('button', { name: 'Arrêter le flux' }).click() }
-  await attendreChemin('/direct', 'retour au direct')
+  await attendreDirect('retour au direct')
   v.ok(true, 'CA2 direct -> lecture -> Arrêter = l ecran precedent (Direct)')
   v.ok(await attendre(async () => (await videosAvecSource()) === 0, { delai: 3000 }).catch(() => false), 'CA1 et le flux est detache')
 
