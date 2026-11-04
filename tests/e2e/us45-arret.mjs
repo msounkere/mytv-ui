@@ -19,7 +19,9 @@ for (const moteur of moteursDemandes()) {
       // La ligne locale (Dexie) -- ou, si WebKit tarde a la rendre lisible par une seconde connexion
       // IndexedDB, la meme position recue par le serveur (PUT /profil/historique, envoyee depuis cette ligne).
       const auServeur = () => (serveur.etat.historique.get(serveur.etat.profils[0].id) ?? new Map()).get(cle.replace(/^vod:/, ''))
-      const r = await attendre(async () => { const x = await idb('reprises', cle); return x && x.position > 0.5 && x.position < x.duree ? x : false }, { delai: 10_000 }).catch(() => idb('reprises', cle) ?? auServeur())
+      // Sondage espace (500 ms) : chaque lecture ouvre une connexion IndexedDB de plus, et WebKit fait
+      // attendre l'ecriture Dexie derriere elles.
+      const r = await attendre(async () => { const x = await idb('reprises', cle); return x && x.position > 0.5 && x.position < x.duree ? x : false }, { delai: 15_000, pas: 500 }).catch(() => idb('reprises', cle) ?? auServeur())
       const ok = (r && r.position > 0.5 && r.position < r.duree) || (auServeur()?.position > 0 && auServeur().position < auServeur().duree)
       v.ok(ok, `CA1 ${nom} : position de sortie dans reprises (${JSON.stringify(r ?? auServeur())})`)
       v.ok(await attendre(() => putsHistorique(cle.replace(/^vod:/, '')).length >= 1, { delai: 4000 }).catch(() => false), `CA1 ${nom} : PUT /profil/historique immediat (keepalive)`)
