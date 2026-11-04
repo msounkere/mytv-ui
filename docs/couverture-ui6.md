@@ -17,7 +17,7 @@ les parcours multi-moteurs, defaut : les trois). Banc commun des parcours US-45 
 | CA6 | Telephone/tablette : barre qui tient dans la largeur (lecture, −10/+10, muet, plein ecran, ⋯ : Diffuser, Pistes, Qualite, Infos, PiP, Ma liste, Arreter), carte d'erreur AU-DESSUS des commandes (390×844, 844×390), tap = commandes + bouton central, double-tap lateral = ±10 s, paysage = toute la hauteur | `tests/e2e/us45-mobile.mjs` (3 moteurs × 390×844 et 844×390 : boites des commandes dans la largeur, cibles 44 px, menu ⋯ dans la zone video, tap/tap, double-tap +10 s, hauteur en paysage, « Retour » de l'erreur sous le doigt et operant) | vert |
 | CA7 | Plein ecran iPhone par `video.webkitEnterFullscreen()`, F = plein ecran, M muet, I infos, Espace active le bouton focalise ; favori retire du lecteur VOD | `tests/unit/plein-ecran.test.ts` (4 tests sur `choisirApiPleinEcran`) ; `tests/e2e/us45-plein-ecran.mjs` (3 moteurs ; doublure iPhone : `webkitEnterFullscreen` appele, puis `webkitExitFullscreen` ; standard : `fullscreenElement` ; F/M/I ; Espace sur « Couper le son ») | vert |
 | CA8 | Auto/Éco reprend au point atteint (`timeupdate`) ; panneau « Lecteur » : UN reglage Qualite Auto/Éco (lib/qualite) ; PiP refuse = message discret, pas d'erreur ni de reouverture ; Echap ferme d'abord tout calque (menu, Variantes, Diffuser, Infos, Mini-guide, decompte, fin) | `tests/e2e/us45-lecteur.mjs` (1-4) | vert |
-| CA9 | WebKit : plantage au zapping apres echec HLS reproduit, cause isolee et corrigee (§ WebKit) ; Firefox `cap=hevc` seulement si `smooth && powerEfficient` ; colonne « Pistes » seulement avec un choix ; identifiants internes et « HTTP 404 — manifestLoadError » hors des textes visibles (replies dans « Détails techniques » / panneau Infos) ; Infos d'un episode : numero, titre, resume | `tests/unit/capacites.test.ts` « CA9 » (4 tests) ; `tests/e2e/us45-webkit.mjs` (webkit : Accueil, Direct, 404 HLS puis ↓, « Chaîne suivante », liste, 3 zaps rapides : `page.on('crash')` jamais) ; `tests/e2e/us45-lecteur.mjs` (5) ; `us45-retour.mjs` (fiche serie sans `iptva:s…`) | vert |
+| CA9 | WebKit : plantage au zapping apres echec HLS reproduit, cause cernee, parades posees, test garde a part (§ WebKit) ; Firefox `cap=hevc` seulement si `smooth && powerEfficient` ; colonne « Pistes » seulement avec un choix ; identifiants internes et « HTTP 404 — manifestLoadError » hors des textes visibles (replies dans « Détails techniques » / panneau Infos) ; Infos d'un episode : numero, titre, resume | `tests/unit/capacites.test.ts` « CA9 » (4 tests) ; `npm run test:webkit` (`us45-webkit.mjs` : Accueil, Direct, 404 HLS puis ↓, « Chaîne suivante », liste, 3 zaps rapides : `page.on('crash')` jamais) ; `tests/e2e/us45-lecteur.mjs` (5) ; `us45-retour.mjs` (fiche serie sans `iptva:s…`) | partiel : D16 reproduit, non resolu sous Playwright webkit (test rouge, hors test:e2e) ; le reste vert |
 | CA10 | e2e 3 moteurs pour CA1, CA6, CA7 ; unitaires ; `tsc`, `npm run build` ; ce document | `npm run check`, `npm run test:unit`, `npm run build`, `npm run test:dist`, `npm run test:e2e` | voir rapport |
 
 ## Mutations rapportees
@@ -29,25 +29,30 @@ les parcours multi-moteurs, defaut : les trois). Banc commun des parcours US-45 
 - **CA5** — `src/screens/lecture/fin-regles.ts` : `avancerDecompte` sans la garde `enPause` : `fin-regles.test.ts`
   « en pause, le decompte est SUSPENDU » rouge, `us45-fin.mjs` « decompte suspendu (10 -> 8 s) » rouge ; retour -> vert.
 
-## WebKit (CA9, D16) — plantage reproduit, cause isolee, corrige
+## WebKit (CA9, D16) — plantage reproduit, cause cernee sans certitude, parades posees, test garde a part
 
-Reproduit sous Playwright webkit 27.2 (`tests/e2e/us45-webkit.mjs`, base D/crash-webkit.mjs) : apres un passage
-par l'Accueil puis le Direct (ecrans preserves rendus), lecture d'une chaine dont le HLS echoue (404), puis ↓ :
-« Target crashed », 4/4 essais. Isole par experiences (scratchpad wk2-wk8) :
-- aucune operation sur la video seule ne plante (`remove()`, `removeAttribute('src')` + `load()`, reaffectation
+Reproduit sous Playwright webkit 27.2 (`npm run test:webkit` = `tests/e2e/us45-webkit.mjs`, base D/crash-webkit.mjs) :
+apres un passage par l'Accueil puis le Direct (ecrans preserves rendus), lecture d'une chaine dont le HLS echoue
+(404), puis zapping (↓, « Chaîne suivante », liste, trois ↓ rapides) : « Target crashed » dans 7 essais sur 7 avec
+le code d'origine, et encore au premier ou au quatrieme zap avec toutes les parades (le navigateur Playwright meurt,
+`page.on('crash')`). Experiences (scratchpad wk2-wk8, une session WebKit chacune) :
+- aucune operation sur la video SEULE ne plante (`remove()`, `removeAttribute('src')` + `load()`, reaffectation
   de `src`, element neuf charge a cote, `remote.cancelWatchAvailability`, `requestVideoFrameCallback` puis
-  retrait) ; le remontage du lecteur par l'URL ne plante pas ; le zapping depuis une page NEUVE (sans Accueil ni
-  Direct rendus) ne plante pas ; les parades posees dans le lecteur (changement de chaine differe a la tache
-  suivante avec focus rendu, element `<video>` RECREE a chaque changement de chaine en HLS natif) ne suffisent pas ;
-- **avec tous les `ResizeObserver` de la page differes par `requestAnimationFrame` (script d'injection), le meme
-  parcours ne plante plus** : la cause est la boucle « ResizeObserver loop completed with undelivered
-  notifications » des grilles de la coque (D17 : `ListeVirtuelle`, `GrilleCartes`), que le re-rendu du lecteur
-  au zapping declenche, et que WebKit transforme en plantage de page.
-Correction : `ListeVirtuelle.tsx` et `GrilleCartes.tsx` repris A L'IDENTIQUE de la branche ui-8 (US-47 CA6, deja
-faite : mesure differee par rAF), `ControlesLecteur.tsx` idem (ui-6). Les deux parades du lecteur restent (sans
-effet sur les autres moteurs, elles rendent le zapping plus sur sur un vrai iPhone). Le test
-`us45-webkit.mjs` rejoue le parcours Accueil -> Direct -> chaine en echec -> ↓, « Chaîne suivante », liste,
-trois ↓ rapides : `page.on('crash')` jamais. A confirmer sur un iPhone reel (recette).
+  retrait) ; le remontage du lecteur par l'URL ne plante pas ; le zapping depuis une page NEUVE (Accueil et
+  Direct jamais rendus) ne plante pas (6 variantes de touches et de focus) ;
+- il plante depuis une page qui a rendu l'Accueil et le Direct ; avec TOUS les `ResizeObserver` de la page
+  differes par `requestAnimationFrame` (script d'injection), 3 essais sur 3 sans plantage -- la boucle
+  « ResizeObserver loop » (D17) des grilles de la coque est donc au moins un facteur ; une fois le meme motif
+  applique dans le code (`ListeVirtuelle`, `GrilleCartes` : copies d'ui-8 ; `GrilleAffiches`, `Guide`,
+  `ControlesLecteur`), le test continue pourtant de planter (2 essais sur 2) : l'injection globale couvre
+  aussi les observateurs internes (@tanstack/solid-virtual) et le facteur n'est pas le seul.
+Parades posees dans le lecteur (sans effet sur Chromium et Firefox, verifies) : changement de chaine DIFFERE a la
+tache suivante avec focus rendu (`changer()` dans Lecture.tsx), element `<video>` RECREE a chaque changement de
+chaine en HLS natif (`generation`), observateurs differes. Le test reste hors de `test:e2e` (il tuerait le
+navigateur et la suite) : `npm run test:webkit`, ROUGE a ce jour, a rejouer sur un iPhone reel (recette) -- le
+lecteur, lui, zappe correctement sur webkit quand il ne plante pas (chemins verifies dans le test, 4/5).
+Hors de ce cas, webkit est vert : `us45-arret` 32/32, `us45-plein-ecran` 8/8, `us45-mobile` (barre, menu,
+erreur ; gestes informatifs).
 
 ## Notes de fusion (coordinateur)
 
