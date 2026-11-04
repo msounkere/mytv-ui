@@ -1,20 +1,24 @@
-import { For, Show, createSignal, onCleanup, onMount } from 'solid-js'
+import { For, Show, onCleanup, onMount } from 'solid-js'
 import ALaUne from '../components/ALaUne'
 import CarteAffiche, { SqueletteAffiche } from '../components/CarteAffiche'
 import CarteChaineFavorite from '../components/CarteChaineFavorite'
 import CarteDirect from '../components/CarteDirect'
 import CarteReprise from '../components/CarteReprise'
-import MenuContextuel, { type EntreeMenu } from '../components/MenuContextuel'
+import type { EntreeMenu } from '../components/MenuContextuel'
 import RangeeHorizontale from '../components/RangeeHorizontale'
 import type { ProgrammeCourant } from '../components/PlaqueChaine'
 import { anneeDuTitre, titreCourt } from '../components/titres'
-import { ecran, poserEcran, poserOnglet } from '../etat'
-import { listeAVoirAccueil } from '../lib/a-voir'
-import { libellePreparation, resumeSerie } from '../lib/a-voir-regles'
-import { db, type EntreeCatalogue, type TypeContenu } from '../lib/db'
-import { clesAJoindre, joindreReprises } from '../lib/reprises-accueil'
+import { ecran, lire, lireEpisodeDe, ouvrirDirectFavoris, poserEcran, poserOnglet } from '../etat'
+import { listeMaListeAccueil } from '../lib/ma-liste'
+import { LIBELLES, compteurRangee, repere } from '../lib/ma-liste-regles'
+import { db, type EntreeCatalogue, type Reprise as LigneReprise, type TypeContenu } from '../lib/db'
+import { clesAJoindre, episodeAReprendre, joindreReprises, resteLisible } from '../lib/reprises-accueil'
+import { episodesOrdonnes, type EpisodeLisible } from '../lib/episodes-suivants'
+import { chargerSaisons } from '../lib/saisons'
+import { estPret } from '../lib/a-voir-serveur'
 import { chainesAvecGuide, programmesEnCours as programmesDuMoment } from '../lib/chaines-guide'
-import { basculerFavori, marquerVu, oublierReprise, oublierReprisesDeSerie } from '../lib/preferences'
+import { marquerVu, reprisesCachees, retirerDeReprendre } from '../lib/preferences'
+import { estVu } from '../lib/vu'
 import { gabarit as gabaritCoque } from '../lib/gabarit'
 import {
   FRAICHEUR, cles, donneePartagee, requete,
@@ -57,6 +61,9 @@ interface Reprise {
   sousTitre: string
   /** Cle de la position memorisee : celle de l'EPISODE quand la carte est une serie. */
   cleReprise: string
+  /** Serie : l'episode a lire (entame, sinon le prochain non vu) et celui d'apres. */
+  episode?: EpisodeLisible
+  suivant?: EpisodeLisible
 }
 
 interface ChaineFavorite {
@@ -174,41 +181,84 @@ function versAffiche(entrees: EntreeCatalogue[], nouveau: boolean): Affiche[] {
   return entrees.map((entree) => ({ entree, meta: anneeDuTitre(entree.nom), nouveau }))
 }
 
-function formaterDuree(secondes: number): string {
-  const s = Math.max(0, Math.round(secondes))
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  return h > 0 ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`
-}
-
-/** Positions mémorisées encore utiles, jointes au catalogue. */
+/**
+ * Rangee « Reprendre » (lot 10, CA3) : positions memorisees encore utiles,
+ * jointes au catalogue. Un film entame = sa position ; une serie = L'EPISODE A
+ * LIRE (entame, sinon le prochain non vu apres le dernier vu), relu dans ses
+ * saisons (cache partage avec la fiche et le lecteur) -- elle reste tant qu'il
+ * lui reste un episode (C7). Les cartes retirees (« Retirer de Reprendre »)
+ * sont passees, positions conservees.
+ */
 async function aReprendre(): Promise<Reprise[]> {
-  // On ratisse plus large que la limite : les contenus terminés à plus de 95 %
-  // sont écartés comme dans `reprisePour`, et videraient sinon la rangée.
+  // On ratisse plus large que la limite : les films vus sont ecartes comme dans
+  // `reprisePour`, et videraient sinon la rangee.
   const lignes = await db.reprises.orderBy('vuLe').reverse().limit(LIMITE_REPRISES * 3).toArray()
   // Un episode n'est pas dans le catalogue : il est joint par sa serie (lib/reprises-accueil).
   const cles = clesAJoindre(lignes)
   const trouvees = await db.catalogue.bulkGet(cles)
   const entrees = new Map<string, EntreeCatalogue>()
   trouvees.forEach((e, i) => { if (e) entrees.set(cles[i]!, e) })
-  return joindreReprises(lignes, entrees, LIMITE_REPRISES).map(({ entree, ligne, episode }) => ({
-    entree,
-    cleReprise: ligne.cle,
-    progression: ligne.position / ligne.duree,
-    reste: `Reste ${formaterDuree(ligne.duree - ligne.position)}`,
-    sousTitre: [LIBELLE_TYPE[entree.type], episode ? 'épisode en cours' : anneeDuTitre(entree.nom)].filter(Boolean).join(' · '),
+  const jointes = joindreReprises(lignes, entrees, LIMITE_REPRISES, await reprisesCachees())
+  const sortie: Reprise[] = []
+  await Promise.all(jointes.map(async ({ entree, ligne, episode }, i) => {
+    if (!episode) {
+      sortie[i] = {
+        entree, cleReprise: ligne.cle,
+        progression: ligne.position / ligne.duree,
+        reste: resteLisible(ligne.duree - ligne.position),
+        sousTitre: [LIBELLE_TYPE[entree.type], anneeDuTitre(entree.nom)].filter(Boolean).join(' · '),
+      }
+      return
+    }
+    const r = await repriseSerie(entree, ligne)
+    if (r) sortie[i] = r
   }))
+  return sortie.filter((r): r is Reprise => r !== undefined)
 }
 
-async function favorisTries(): Promise<{ chaines: EntreeCatalogue[]; medias: EntreeCatalogue[]; cles: Set<string> }> {
+/** La carte d'une serie : son episode a lire, ou rien si la serie est finie. */
+async function repriseSerie(entree: EntreeCatalogue, recente: LigneReprise): Promise<Reprise | undefined> {
+  let episodes: EpisodeLisible[]
+  try {
+    episodes = episodesOrdonnes(await chargerSaisons(entree.idServeur), entree.nom)
+  } catch {
+    // Saisons illisibles (hors ligne) : on montre l'episode entame tel quel, sans en nommer un autre.
+    if (estVu(recente.position, recente.duree)) return undefined
+    return {
+      entree, cleReprise: recente.cle, progression: recente.position / recente.duree,
+      reste: resteLisible(recente.duree - recente.position), sousTitre: 'Épisode en cours',
+    }
+  }
+  const lignes = new Map<string, LigneReprise>()
+  for (const l of await db.reprises.filter((x) => x.serie === entree.cle).toArray()) lignes.set(l.cle, l)
+  const choix = episodeAReprendre(episodes, lignes)
+  if (!choix) return undefined
+  const i = episodes.indexOf(choix.episode)
+  const rep = repere(choix.episode.saison, choix.episode.numero)
+  return {
+    entree, cleReprise: choix.episode.cle, episode: choix.episode, suivant: episodes[i + 1],
+    progression: choix.progression,
+    reste: choix.suivant ? '' : resteLisible(choix.resteS ?? 0),
+    sousTitre: choix.suivant ? `${rep} · épisode suivant` : rep,
+  }
+}
+
+/** Chaines favorites seulement (lot 10 : les films et series vivent dans Ma liste). */
+async function favorisTries(): Promise<{ chaines: EntreeCatalogue[]; cles: Set<string> }> {
   const lignes = await db.favoris.orderBy('ajouteLe').reverse().toArray()
   const entrees = (await db.catalogue.bulkGet(lignes.map((l) => l.cle)))
-    .filter((e): e is EntreeCatalogue => e !== undefined)
+    .filter((e): e is EntreeCatalogue => e !== undefined && e.type === 'live')
   return {
-    chaines: entrees.filter((e) => e.type === 'live').slice(0, LIMITE_CHAINES),
-    medias: entrees.filter((e) => e.type !== 'live'),
+    chaines: entrees.slice(0, LIMITE_CHAINES),
     cles: new Set(lignes.map((l) => l.cle)),
   }
+}
+
+/** Cles des films (et episodes) vus, pour le ✓ de coin des cartes. */
+async function clesVues(): Promise<Set<string>> {
+  const vues = new Set<string>()
+  for (const r of await db.reprises.toArray()) if (estVu(r.position, r.duree)) vues.add(r.cle)
+  return vues
 }
 
 // ─── Guide ──────────────────────────────────────────────────────────────────
@@ -366,19 +416,18 @@ const MESURES = { bureau: BUREAU, tablette: TABLETTE, mobile: MOBILE } as const
 const mesures = () => MESURES[gabaritCoque()]
 
 export default function Accueil(props: {
+  /** Clic sur une affiche ou un titre : la FICHE (lot 10, regle transverse). */
   surOuvrir: (e: EntreeCatalogue) => void
-  /** "Voir les details" de l'encart : la fiche d'un film avant de le lire. */
+  /** @deprecated lot 10 : `surOuvrir` ouvre deja la fiche. */
   surDetails?: (e: EntreeCatalogue) => void
   surRechercher: (requete: string) => void
 }) {
-  const [menu, poserMenu] = createSignal<{ entree: EntreeCatalogue; cleReprise?: string; x: number; y: number } | null>(null)
-
   // Neuf rangées, neuf clés de cache. Celles qui décrivent un GESTE sont
   // périmées par le geste lui-même (`lib/preferences.ts`), celles qui décrivent
   // le catalogue ne bougent qu'à l'import, et « En direct maintenant » suit
   // l'horloge. L'Accueil ne relit donc plus rien de lui-même.
   const [lesReprises] = requete(cles.aReprendre, aReprendre, { fraicheur: FRAICHEUR.geste })
-  const [lesFavoris] = requete(cles.favorisTries, favorisTries, { fraicheur: FRAICHEUR.geste })
+  const [lesVues] = requete(cles.reprisesCles, clesVues, { fraicheur: FRAICHEUR.geste })
   const [lesChaines] = requete(cles.chainesFavorites, chainesFavorites, { fraicheur: FRAICHEUR.geste })
   const [lesRecentes] = requete(cles.chainesRecentes, chainesRecentes, { fraicheur: FRAICHEUR.geste })
   const [leDirect] = requete(cles.epgEnDirect, enDirectMaintenant, { fraicheur: FRAICHEUR.horloge })
@@ -386,9 +435,9 @@ export default function Accueil(props: {
   const [lesSeries] = requete(cles.recents('series', LIMITE_AFFICHES), () => recemmentAjoutes('series', LIMITE_AFFICHES))
   const [lesSimilaires] = requete(cles.recommandation, parceQue)
   const [laUne] = requete(cles.aLaUne, alaUne)
-  // US-43 CA3 : « À voir », les prets d'abord puis l'ordre de la liste ; perimee
-  // au geste et a chaque relecture de l'etat de preparation.
-  const [laListeAVoir] = requete(cles.aVoirAccueil, listeAVoirAccueil, { fraicheur: FRAICHEUR.geste })
+  // Lot 10 (CA5) : « Ma liste » dans l'ORDRE de la liste, apres « Reprendre » ;
+  // perimee au geste et a chaque relecture de l'etat de preparation.
+  const [laListe] = requete(cles.aVoirAccueil, listeMaListeAccueil, { fraicheur: FRAICHEUR.geste })
 
   // Le badge « / » du champ de recherche vit désormais dans l'en-tête ; le
   // raccourci, lui, reste transverse (dossier, section 2).
@@ -410,36 +459,39 @@ export default function Accueil(props: {
     window.removeEventListener('keydown', auClavier)
   })
 
-  const estFavori = (cle: string) => lesFavoris()?.cles.has(cle) ?? false
+  const dansMaListe = (cle: string) => laListe()?.some((j) => j.element.cle === cle) ?? false
+  const estVue = (cle: string) => lesVues()?.has(cle) ?? false
 
-  // Plus de relecture à demander : `basculerFavori` périme la table des
-  // favoris, et tout ce qui l'affiche se remet à jour — ici comme ailleurs.
-  async function basculer(e: EntreeCatalogue) {
-    await basculerFavori(e.cle)
+  // Tap sur une carte « Reprendre » : LECTURE du film (le lecteur reprend a la
+  // position) ou de l'episode a lire de la serie -- jamais la fiche (C16).
+  function reprendre(r: Reprise) {
+    if (r.episode) {
+      const ep = r.episode
+      const s = r.suivant
+      lireEpisodeDe(r.entree, {
+        cle: ep.cle, nom: ep.nom, url: ep.url, extension: ep.extension,
+        suivant: s ? { cle: s.cle, nom: s.nom, url: s.url, extension: s.extension } : undefined,
+      })
+      return
+    }
+    lire(r.entree)
   }
 
-  // POURQUOI `cleReprise` : la carte d'une serie en cours porte la cle de la SERIE,
-  // mais la position memorisee est celle de l'EPISODE (trou vu en reel le 31/10 :
-  // « marquer comme vu » et « retirer » n'agissaient sur rien).
-  function entreesMenu(entree: EntreeCatalogue, cleReprise = entree.cle): EntreeMenu[] {
-    const serieEnCours = entree.type === 'series' && cleReprise !== entree.cle
+  // Menu « ⋯ » d'une carte « Reprendre » (§5.5) : Reprendre · Marquer comme vu ·
+  // Retirer de Reprendre. Sur une serie, « Marquer comme vu » marque l'EPISODE
+  // courant et la carte passe au suivant (B15, C7) ; « Retirer » cache la carte
+  // sans toucher aux positions.
+  function entreesMenu(r: Reprise): EntreeMenu[] {
+    const rep = r.episode ? repere(r.episode.saison, r.episode.numero) : undefined
+    const suivant = r.suivant ? repere(r.suivant.saison, r.suivant.numero) : undefined
     return [
-      { icone: 'play_arrow', libelle: 'Reprendre', action: () => props.surOuvrir(entree) },
+      { icone: 'play_arrow', libelle: LIBELLES.reprendre, action: () => reprendre(r) },
       {
         icone: 'check_circle',
-        libelle: 'Marquer comme vu',
-        action: async () => {
-          await marquerVu(cleReprise)
-        },
+        libelle: LIBELLES.marquerVu,
+        action: () => void marquerVu(r.cleReprise, r.episode ? { libelle: rep, suivant, serie: r.entree.cle } : {}),
       },
-      {
-        icone: 'delete',
-        libelle: 'Retirer de la liste',
-        action: async () => {
-          if (serieEnCours) await oublierReprisesDeSerie(entree.cle)
-          else await oublierReprise(cleReprise)
-        },
-      },
+      { icone: 'delete', libelle: LIBELLES.retirerDeReprendre, danger: true, action: () => void retirerDeReprendre(r.entree.cle) },
     ]
   }
 
@@ -448,10 +500,10 @@ export default function Accueil(props: {
       entree={a.entree}
       meta={a.meta}
       nouveau={a.nouveau}
-      favori={estFavori(a.entree.cle)}
+      vu={estVue(a.entree.cle)}
+      dansMaListe={dansMaListe(a.entree.cle)}
       surOuvrir={props.surOuvrir}
-      surLire={props.surOuvrir}
-      surFavori={basculer}
+      surLire={lire}
     />
   )
 
@@ -475,37 +527,14 @@ export default function Accueil(props: {
         >
           <ALaUne
             elements={laUne() ?? []}
-            estFavori={estFavori}
-            surOuvrir={props.surDetails ?? props.surOuvrir}
-            surLire={props.surOuvrir}
-            surBasculerFavori={basculer}
+            dansMaListe={dansMaListe}
+            surOuvrir={props.surOuvrir}
+            surLire={lire}
           />
         </Show>
 
         <RangeeHorizontale
-          titre="À voir"
-          compteur={`${laListeAVoir()?.length ?? 0} à préparer`}
-          surToutVoir={() => poserEcran('a_voir')}
-          elements={laListeAVoir() ?? []}
-          largeurCarte={mesures().affiche}
-          ecart={mesures().ecartCartes}
-          gabarit={(j) => (
-            <CarteAffiche
-              entree={j.entree}
-              meta={j.entree.type === 'series' ? resumeSerie(j.element.preparation) : libellePreparation(j.element.preparation)}
-              pret={j.element.preparation?.etat === 'pret'}
-              favori={estFavori(j.entree.cle)}
-              // La carte ouvre la fiche ; « lecture rapide » passe par le lecteur habituel :
-              // aucune adresse speciale, le serveur choisit la source (CA3).
-              surOuvrir={props.surDetails ?? props.surOuvrir}
-              surLire={props.surOuvrir}
-              surFavori={basculer}
-            />
-          )}
-        />
-
-        <RangeeHorizontale
-          titre="Continuer à regarder"
+          titre="Reprendre"
           compteur={`${lesReprises()?.length ?? 0} en cours`}
           elements={lesReprises() ?? []}
           largeurCarte={mesures().reprise}
@@ -516,8 +545,31 @@ export default function Accueil(props: {
               progression={r.progression}
               sousTitre={r.sousTitre}
               reste={r.reste}
+              pret={estPret(r.cleReprise)}
+              surOuvrir={() => reprendre(r)}
+              entreesMenu={entreesMenu(r)}
+            />
+          )}
+        />
+
+        <RangeeHorizontale
+          titre={LIBELLES.liste}
+          compteur={compteurRangee((laListe() ?? []).map((j) => j.element))}
+          surToutVoir={() => poserEcran('a_voir')}
+          elements={laListe() ?? []}
+          largeurCarte={mesures().affiche}
+          ecart={mesures().ecartCartes}
+          gabarit={(j) => (
+            <CarteAffiche
+              entree={j.entree}
+              meta={[LIBELLE_TYPE[j.entree.type], anneeDuTitre(j.entree.nom)].filter(Boolean).join(' · ')}
+              preparation={j.element.preparation}
+              vu={estVue(j.entree.cle)}
+              dansMaListe
+              // La carte ouvre la fiche ; « Lecture » passe par le lecteur habituel :
+              // aucune adresse speciale, le serveur choisit la source (CA3).
               surOuvrir={props.surOuvrir}
-              surMenu={(entree, p) => poserMenu({ entree, cleReprise: r.cleReprise, ...p })}
+              surLire={lire}
             />
           )}
         />
@@ -536,7 +588,8 @@ export default function Accueil(props: {
         <RangeeHorizontale
           titre="Mes chaînes favorites"
           compteur={`${lesChaines()?.length ?? 0} chaîne${(lesChaines()?.length ?? 0) > 1 ? 's' : ''}`}
-          surToutVoir={() => poserOnglet('live')}
+          // « Tout voir » : le Direct FILTRE sur les favorites (A9), pas tout le Direct.
+          surToutVoir={ouvrirDirectFavoris}
           elements={lesChaines() ?? []}
           largeurCarte={mesures().chaine}
           ecart={mesures().ecartCartes}
@@ -581,27 +634,7 @@ export default function Accueil(props: {
           ecart={mesures().ecartCartes}
           gabarit={affiche}
         />
-
-        <RangeeHorizontale
-          titre="Films et séries favoris"
-          compteur={String(lesFavoris()?.medias.length ?? 0)}
-          elements={versAffiche(lesFavoris()?.medias ?? [], false)}
-          largeurCarte={mesures().affiche}
-          ecart={mesures().ecartCartes}
-          gabarit={affiche}
-        />
       </div>
-
-      <Show when={menu()}>
-        {(m) => (
-          <MenuContextuel
-            x={m().x}
-            y={m().y}
-            entrees={entreesMenu(m().entree, m().cleReprise)}
-            surFermer={() => poserMenu(null)}
-          />
-        )}
-      </Show>
     </div>
   )
 }

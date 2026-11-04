@@ -5,6 +5,7 @@ import { plaqueTexte } from './couleurs'
 import { couverture } from './aplats'
 import { titreCourt } from './titres'
 import ResumeContenu from './ResumeContenu'
+import { BoutonMaListe } from './BoutonMaListe'
 import { cibleDe, dureeLongue, useDetails, type Details } from '../lib/details'
 import type { EntreeCatalogue } from '../lib/db'
 
@@ -83,10 +84,10 @@ function Bouton(props: { children: JSX.Element; principal?: boolean; libelle?: s
 
 export interface ALaUneProps {
   elements: EntreeCatalogue[]
-  estFavori: (cle: string) => boolean
+  /** Dans Ma liste (lot 10, C UX29) : « + Ma liste » remplace l'etoile. */
+  dansMaListe: (cle: string) => boolean
   surOuvrir: (e: EntreeCatalogue) => void
   surLire: (e: EntreeCatalogue) => void
-  surBasculerFavori: (e: EntreeCatalogue) => void
 }
 
 export default function ALaUne(props: ALaUneProps) {
@@ -235,16 +236,7 @@ export default function ALaUne(props: ALaUneProps) {
                   </a>
                 )}
               </Show>
-              <div style={{ width: estMobile() ? '44px' : '36px', display: 'flex' }}>
-                <Bouton
-                  libelle={props.estFavori(e().cle) ? 'Retirer des favoris' : 'Ajouter aux favoris'}
-                  surClic={() => props.surBasculerFavori(e())}
-                >
-                  <span style={{ width: estMobile() ? '44px' : '36px', display: 'flex', 'align-items': 'center', 'justify-content': 'center' }}>
-                    <Icone nom="star" taille={18} plein={props.estFavori(e().cle)} />
-                  </span>
-                </Bouton>
-              </div>
+              <BoutonMaListe cle={e().cle} present={props.dansMaListe(e().cle)} />
             </div>
           </div>
 

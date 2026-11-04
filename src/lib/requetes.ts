@@ -120,10 +120,11 @@ export const cles = {
   serie: (id: string) => ['serie', id] as const,
   /** Saisons brutes de l'API, partagees entre la fiche et l'enchainement (US-43 CA4). */
   saisons: (id: string) => ['serie', id, 'saisons'] as const,
-  /** Liste « À voir » (US-43) : une cle de geste, perimee par chaque ecriture et chaque relecture du serveur. */
+  /** « Ma liste » (US-43, lot 10) : une cle de geste, perimee par chaque ecriture et chaque relecture du serveur. */
   aVoir: ['a_voir'] as const,
   aVoirCles: ['a_voir', 'cles'] as const,
   aVoirAccueil: ['a_voir', 'accueil'] as const,
+  maListeElements: ['a_voir', 'elements'] as const,
   /** Sonde de disponibilite d'un film ou d'un episode (US-43 CA5), gardee 10 min comme au serveur. */
   disponibilite: (id: string) => ['disponibilite', id] as const,
   /** Details (synopsis, genre...) d'un film ou d'une serie, par identifiant serveur. */
@@ -309,8 +310,13 @@ export function donneePartagee<T>(
   fraicheur: number = FRAICHEUR.catalogue,
   peremption = Infinity,
 ): Promise<T> {
+  // `fetchQuery` et non `ensureQueryData` : ce dernier rend ce qu'il a tant
+  // qu'il a QUELQUE CHOSE, meme invalide. Constate (D18) : « À la une » calculee
+  // vide pendant l'import gardait les rangees « recents » vides apres lui, car
+  // l'invalidation de l'import ne faisait pas relire ce cache-la. `fetchQuery`
+  // relit des que la donnee est invalidee ou plus vieille que `fraicheur`.
   return clientRequetes
-    .ensureQueryData({
+    .fetchQuery({
       queryKey: cle,
       queryFn: async () => new Boite(await charger()),
       staleTime: fraicheur,
@@ -395,6 +401,15 @@ export function invaliderHistorique(): Promise<void> {
   return clientRequetes.invalidateQueries({ queryKey: cles.historique })
 }
 
+/**
+ * « Parce que vous avez regardé… » : relue quand l'HISTORIQUE arrive d'une
+ * autre machine (synchro, A10), a l'import et au changement de profil -- jamais
+ * a l'ouverture d'un flux (voir `invaliderHistorique`).
+ */
+export function invaliderRecommandation(): Promise<void> {
+  return clientRequetes.invalidateQueries({ queryKey: cles.recommandation })
+}
+
 /** Position de reprise, marquage « vu », retrait de la liste. */
 export function invaliderReprises(): Promise<void> {
   return clientRequetes.invalidateQueries({ queryKey: cles.reprises })
@@ -428,10 +443,11 @@ export function invaliderReprisesRegroupees(): void {
   }, PAS_REPRISE - depuis)
 }
 
-/** Liste « À voir » : ajout, retrait, ordre, options, et chaque relecture de l'etat de preparation. */
+/** « Ma liste » : ajout, retrait, ordre, options, et chaque relecture de l'etat de preparation. */
 export function invaliderAVoir(): Promise<void> {
   return clientRequetes.invalidateQueries({ queryKey: cles.aVoir })
 }
+export const invaliderMaListe = invaliderAVoir
 
 /** Épinglage d'une catégorie de Direct. */
 export function invaliderEpingles(): Promise<void> {

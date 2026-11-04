@@ -169,9 +169,33 @@ import { episodeApres } from './lib/episodes-suivants'
 
 const cheminLecture = (cle: string) => `/lecture/${cle}`
 
+/**
+ * Un tap/clic sur une affiche OUVRE TOUJOURS LA FICHE (lot 10, regle
+ * transverse) : film -> fiche film, serie -> fiche serie. Seule une chaine se
+ * lit directement (elle n'a pas de fiche). La lecture directe est `lire()`.
+ *
+ * Transitoire : « Regarder » de la fiche film passe encore par `ouvrir` chez
+ * certains appelants (App.tsx) ; ouvrir le film DONT LA FICHE EST DEJA AFFICHEE
+ * ne peut vouloir dire que « le lire ». A retirer quand tous passent `lire`.
+ */
 export function ouvrir(e: EntreeCatalogue): void {
-  // Une série n'est pas lisible telle quelle : on passe par sa fiche pour y
-  // choisir un épisode.
+  if (e.type === 'live') {
+    lire(e)
+    return
+  }
+  if (e.type === 'series') {
+    ouvrirFiche(e)
+    return
+  }
+  if (ecran() === 'film' && cleFicheFilm() === e.cle) {
+    lire(e)
+    return
+  }
+  ouvrirFicheFilm(e)
+}
+
+/** Lecture directe (bouton ▶ explicite). Une serie n'est pas lisible telle quelle : sa fiche. */
+export function lire(e: EntreeCatalogue): void {
   if (e.type === 'series') {
     ouvrirFiche(e)
     return
@@ -183,27 +207,50 @@ export function ouvrir(e: EntreeCatalogue): void {
     poserUrlEpisode(undefined)
     poserEpisodeSuivant(undefined)
     poserSelection(e)
-    aller(cheminLecture(e.cle))
+    aller(cheminLecture(e.cle), { replace: dejaEnLecture() })
   })
 }
 
 /**
- * Fiche d'un film (synopsis, genre, casting...) AVANT de le lancer : « Voir les
- * details » de l'encart « A la une ». Cliquer un film dans une liste continue de
- * le lire directement. Une serie a toujours sa fiche.
+ * Deja sur /lecture/… (enchainement, « Prochain dans Ma liste ») : la lecture
+ * suivante REMPLACE l'entree d'historique, pour que « Retour » revienne a la
+ * fiche ou a l'ecran d'avant, et non a l'episode precedent (arbitrage ui-6).
  */
+function dejaEnLecture(): boolean {
+  return ecran() === 'lecture'
+}
+
+export function ouvrirFicheFilm(e: EntreeCatalogue): void {
+  poserFilmOuvert(e)
+  aller(`/film/${e.cle}`)
+}
+
+/** Compat : la fiche d'un film ou d'une serie, c'est desormais `ouvrir`. */
 export function ouvrirDetails(e: EntreeCatalogue): void {
-  if (e.type === 'vod') {
-    poserFilmOuvert(e)
-    aller(`/film/${e.cle}`)
+  if (e.type === 'live') {
+    lire(e)
     return
   }
   ouvrir(e)
 }
 
+/** « Tout voir » des chaines favorites : le Direct FILTRE sur les favorites (A9). */
+export function ouvrirDirectFavoris(): void {
+  aller(`${CHEMIN_ONGLET.live}?favoris=1`)
+}
+
 export function ouvrirFiche(e: EntreeCatalogue): void {
   poserSerieOuverte(e)
   aller(`/serie/${e.cle}`)
+}
+
+/**
+ * Lecture d'un episode depuis une carte « Reprendre » : la serie n'est pas la
+ * fiche ouverte, on la declare d'abord (l'historique de l'episode se range sous elle).
+ */
+export function lireEpisodeDe(serie: EntreeCatalogue, ep: Episode & { suivant?: Episode }): void {
+  poserSerieOuverte(serie)
+  lireEpisode(ep)
 }
 
 export function lireEpisode(ep: Episode & { suivant?: Episode }): void {
@@ -232,7 +279,7 @@ export function lireEpisode(ep: Episode & { suivant?: Episode }): void {
       recherche: ep.nom.toLowerCase(),
       extension: ep.extension,
     })
-    aller(cheminLecture(ep.cle))
+    aller(cheminLecture(ep.cle), { replace: dejaEnLecture() })
   })
 }
 
