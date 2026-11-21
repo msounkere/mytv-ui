@@ -67,6 +67,9 @@ try {
   v.ok(await jusqua(() => panneau.isVisible(), 10_000), 'P ouvre le panneau en direct')
   v.ok(await jusqua(async () => (await panneau.locator('[data-statut="direct"][data-actif="1"]').count()) === 1, 10_000), 'le programme en cours est marque « ● Direct »')
   const avant = lecteur.api((r) => /^\/api\/v1\/vod\/iptva:replay-7000-/.test(r.chemin)).length
+  // Juste apres minuit (heure locale), « Aujourd'hui » n'a encore rien a revoir : la veille, si.
+  if ((await panneau.locator('[data-statut="revoir"]').count()) === 0) await panneau.getByRole('tab', { name: 'Hier' }).click()
+  v.ok(await jusqua(async () => (await panneau.locator('[data-statut="revoir"]').count()) > 0, 10_000), 'des programmes a revoir (aujourd’hui ou hier)')
   await panneau.locator('[data-statut="revoir"]').last().click()
   v.ok(await jusqua(() => lecteur.api((r) => /^\/api\/v1\/vod\/iptva:replay-7000-/.test(r.chemin)).length > avant, 10_000), 'un clic sur « ↺ Revoir » lance ce replay')
   v.ok(lecteur.api((r) => r.chemin.startsWith('/api/v1/profil/historique/') && r.chemin.includes('replay')).length === 0, 'aucune ecriture d’historique pour un replay')
