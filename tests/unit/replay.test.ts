@@ -4,7 +4,7 @@ import { versProgramme } from '../../src/lib/epg'
 import { erreurDeStatut } from '../../src/lib/errors'
 import { estIdentifiantReplay } from '../../src/lib/identifiants'
 import { corpsPosition } from '../../src/screens/lecture/position'
-import { entreeReplay, revisible } from '../../src/lib/replay'
+import { entreeReplay, estLectureReplay, positionReplay, revisible } from '../../src/lib/replay'
 import type { EntreeCatalogue } from '../../src/lib/db'
 
 const ID = 'iptva:replay-553959-1795260000-40'
@@ -50,4 +50,14 @@ test('replay vide chez le fournisseur : message dedie, pas Â« contenu supprime Â
   const e = erreurDeStatut(404, { code: 'replay_indisponible' })
   assert.match(e.message, /replay/)
   assert.doesNotMatch(erreurDeStatut(404, {}).message, /replay/)
+})
+
+test('replay : un deplacement part de la minute pile (le fournisseur sert au rythme de la lecture)', () => {
+  const r = `/api/v1/vod/${ID}`
+  assert.ok(estLectureReplay(r) && estLectureReplay(`${r}?cap=hevc`))
+  assert.ok(!estLectureReplay('/api/v1/vod/iptva:845410'))
+  assert.equal(positionReplay(r, 742), 720)
+  assert.equal(positionReplay(r, 59.9), 0)
+  assert.equal(positionReplay(r, 120), 120)
+  assert.equal(positionReplay('/api/v1/vod/iptva:845410', 742), 742) // un film : exact
 })

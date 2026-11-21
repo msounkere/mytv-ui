@@ -33,3 +33,19 @@ export function entreeReplay(chaine: EntreeCatalogue, p: Programme & { replay: s
     pays: chaine.pays,
   }
 }
+
+/** Vrai pour l'adresse de lecture d'un replay (`/api/v1/vod/iptva:replay-…`, requete eventuelle). */
+export function estLectureReplay(lecture: string): boolean {
+  return /\/vod\/[A-Za-z0-9_-]{1,32}:replay-[0-9]+-[0-9]+-[0-9]+(?:[?#]|$)/.test(lecture)
+}
+
+/**
+ * Position effectivement demandee pour un deplacement dans un replay : la MINUTE entiere
+ * inferieure. POURQUOI : le fournisseur ne sait partir que d'une minute pile et sert le
+ * replay a peu pres au rythme de la lecture ; le reste (jusqu'a 59 s) devait etre lu puis
+ * jete avant la premiere image (mesure du 21/11 : 19 s d'attente pour 22 s de reste,
+ * contre 3 s a la minute pile). Mieux vaut repartir un peu avant le point vise, tout de suite.
+ */
+export function positionReplay(lecture: string, cible: number): number {
+  return estLectureReplay(lecture) ? Math.floor(cible / 60) * 60 : cible
+}

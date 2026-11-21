@@ -27,6 +27,7 @@ import { ecran, ouvrirDetails, ouvrirFiche, poserEcran, revenirAuLecteur } from 
 import { db } from '../lib/db'
 import { attacher, hlsNatif, type Attache } from '../lib/lecteur'
 import { planDirect, planVod, urlVod, deplacementParService, bornerPosition, BADGE_MODE, type Plan } from '../lib/flux'
+import { positionReplay } from '../lib/replay'
 import { lectureDe, chaineDeLecture } from '../lib/source-lecture'
 import { annulerFinDifferee } from '../lib/bail'
 import { ErreurLecteur, enCoupure } from '../lib/errors'
@@ -929,12 +930,14 @@ export default function Lecture(props: {
    */
   function allerA(cible: number) {
     // Sans duree connue (remux sans `X-Mytv-Duree`), on ne plafonne pas : voir bornerPosition.
-    const borne = bornerPosition(cible, duree())
+    let borne = bornerPosition(cible, duree())
     const p = plan()
     if (!deplacementParService(p)) {
       video.currentTime = borne
       return
     }
+    // Replay : a la minute pile, sinon jusqu'a une minute d'attente (voir positionReplay).
+    borne = positionReplay(p!.lecture, borne)
     // Le point visé est déjà le zéro de ce flux : revenir à son propre début ne
     // vaut pas une connexion de plus chez le fournisseur.
     if (Math.abs(borne - decalage()) < 1) {
