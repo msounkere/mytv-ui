@@ -214,6 +214,15 @@ export function erreurDeStatut(statut: number, infos: InfosStatut = {}): ErreurL
       return new ErreurLecteur('relais', 'Le serveur a refusé l’accès à ce flux.', 'Réessayer ; si cela persiste, se reconnecter.', detail)
     // Un manifeste ou un segment du DIRECT qui manque : la chaine est bien au
     // catalogue, c'est le relais ou le fournisseur qui ne la sert pas (A UX17).
+    // Replay (lot 2 du chantier enregistrement) : la chaine annonce un replay mais le
+    // fournisseur ne sert rien pour ce programme (France 3 le 21/11/2026), ou il est trop ancien.
+    case statut === 404 && infos.code === 'replay_indisponible':
+      return new ErreurLecteur(
+        'donnees',
+        'Le fournisseur ne propose pas ce programme en replay.',
+        'Essayer une autre chaîne qui diffuse le même programme, ou un autre programme.',
+        detail,
+      )
     case statut === 404 && estContexteDirect(infos.contexte):
       return new ErreurLecteur('relais', MESSAGE_FLUX_ILLISIBLE, ACTION_FLUX_ILLISIBLE, detail)
     case statut === 404:

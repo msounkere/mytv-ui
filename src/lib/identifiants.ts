@@ -97,3 +97,11 @@ export function cheminAVoir(id: string): string {
   if (!MOTIF_A_VOIR.test(id)) throw new Error(`identifiant « À voir » invalide : ${id}`)
   return id
 }
+
+/**
+ * Replay d'un programme (`iptva:replay-553959-1795260000-40`) : lu comme un film par
+ * `/vod/{id}`, mais ce n'est pas un contenu du catalogue (ni historique, ni reprise).
+ */
+export function estIdentifiantReplay(id: string): boolean {
+  return /^[A-Za-z0-9_-]{1,32}:replay-[0-9]{1,20}-[0-9]{1,20}-[0-9]{1,3}$/.test(id)
+}

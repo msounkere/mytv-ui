@@ -18,7 +18,8 @@ import { idServeurDe } from '../lib/source-lecture'
 import { ErreurLecteur } from '../lib/errors'
 import { ACTION_GUIDE_INDISPONIBLE, MESSAGE_GUIDE_INDISPONIBLE, messageGuideVide } from '../lib/messages-guide'
 import { cles, requete } from '../lib/requetes'
-import { ecran } from '../etat'
+import { ecran, lire } from '../etat'
+import { entreeReplay, revisible } from '../lib/replay'
 import { estBureau, estMobile } from '../lib/gabarit'
 
 // Grille EPG : lignes = chaînes (virtualisées), colonnes = temps.
@@ -557,11 +558,18 @@ function LigneChaine(props: {
                 ((Math.min(p.fin, props.fin) - Math.max(p.debut, props.debut)) / MINUTE) * pxMinute()
               const enCours = () => courant() === p
               const passe = () => p.fin <= props.maintenant
+              // Programme termine d'une chaine avec replay : le clic le REVOIT (lot 2 du
+              // chantier enregistrement) ; sinon, comme avant, il ouvre la chaine en direct.
+              const revoir = () => revisible(p, props.maintenant)
               return (
                 <Show when={largeur() > 1}>
                   <button
-                    onClick={() => props.surOuvrir(props.ligne.entree)}
-                    title={`${HEURE.format(new Date(p.debut))} – ${HEURE.format(new Date(p.fin))} · ${p.titre}${p.description ? `\n\n${p.description}` : ''}`}
+                    data-replay={revoir() ? '' : undefined}
+                    onClick={() => {
+                      if (revisible(p, props.maintenant)) lire(entreeReplay(props.ligne.entree, p))
+                      else props.surOuvrir(props.ligne.entree)
+                    }}
+                    title={`${revoir() ? 'Revoir — ' : ''}${HEURE.format(new Date(p.debut))} – ${HEURE.format(new Date(p.fin))} · ${p.titre}${p.description ? `\n\n${p.description}` : ''}`}
                     style={{
                       position: 'absolute', top: '3px', height: `${HAUTEUR_LIGNE - 7}px`,
                       left: `${gauche()}px`, width: `${Math.max(0, largeur() - 2)}px`,
@@ -580,6 +588,9 @@ function LigneChaine(props: {
                   >
                     <span class="tronque" style={{ width: '100%', 'font-size': '13px' }}>{p.titre}</span>
                     <span class="num tronque" style={{ width: '100%', 'font-size': '11px', opacity: 0.75 }}>
+                      <Show when={revoir()}>
+                        <span style={{ color: 'var(--acc)', 'font-weight': 'var(--w-strong)' }}>↺ Revoir · </span>
+                      </Show>
                       {HEURE.format(new Date(p.debut))} – {HEURE.format(new Date(p.fin))}
                     </span>
                   </button>

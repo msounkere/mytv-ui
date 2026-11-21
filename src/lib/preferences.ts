@@ -1,3 +1,4 @@
+import { estIdentifiantReplay, idServeurDeCle } from './identifiants'
 import { db, type EntreeCatalogue, type Reprise } from './db'
 import { noterChangement } from './synchro'
 import { associerSerie, serieAssociee } from './series-episodes'
@@ -61,6 +62,8 @@ export async function historiqueRecent(limite = 20): Promise<EntreeCatalogue[]> 
 export { associerSerie }
 
 export async function noterOuverture(cle: string): Promise<unknown> {
+  // Un replay n'est pas un contenu du catalogue : ni historique ni « Reprendre ».
+  if (estIdentifiantReplay(idServeurDeCle(cle))) return
   // Pour un episode, la serie voyage avec la trace : sans elle le service refuse
   // l'ecriture, et l'envoi (differe, parfois apres un rechargement) ne saurait
   // plus la retrouver.
@@ -89,6 +92,7 @@ export async function reprisePour(cle: string): Promise<number | undefined> {
 
 export async function noterPosition(cle: string, position: number, duree: number): Promise<unknown> {
   if (!Number.isFinite(duree) || duree <= 0) return Promise.resolve()
+  if (estIdentifiantReplay(idServeurDeCle(cle))) return Promise.resolve()
   const serie = serieAssociee(cle) ?? (await db.reprises.get(cle))?.serie
   const r = await db.reprises.put({ cle, position, duree, vuLe: Date.now(), serie })
   noterChangement({ genre: 'reprise', cle, valeur: { position, duree } })

@@ -1,3 +1,4 @@
+import { estIdentifiantReplay } from './identifiants'
 import { ErreurLecteur, erreurDeStatut } from './errors'
 import { cheminContenu } from './identifiants'
 import { signalerSiNonAuthentifie } from './session-expiree'
@@ -23,6 +24,8 @@ export interface Programme {
   /** Millisecondes Unix. Le serveur parle UTC ; l'affichage est en heure locale. */
   debut: number
   fin: number
+  /** Identifiant de replay (`/vod/{id}`) quand le programme peut etre revu ; absent sinon. */
+  replay?: string
 }
 
 interface ProgrammeBrut {
@@ -30,6 +33,7 @@ interface ProgrammeBrut {
   fin?: string
   titre?: string
   description?: string
+  replay?: string
 }
 
 /** Programme du contrat → programme de l'interface. Rejette les dates illisibles. */
@@ -44,6 +48,7 @@ export function versProgramme(chaine: string, b: ProgrammeBrut | null | undefine
     description: b.description?.trim() || undefined,
     debut,
     fin,
+    ...(b.replay && estIdentifiantReplay(b.replay) ? { replay: b.replay } : {}),
   }
 }
 

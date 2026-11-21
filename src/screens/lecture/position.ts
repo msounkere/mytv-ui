@@ -1,4 +1,4 @@
-import { cheminContenu, idServeurDeCle, serieDeCle } from '../../lib/identifiants'
+import { cheminContenu, estIdentifiantReplay, idServeurDeCle, serieDeCle } from '../../lib/identifiants'
 import { signalerSiNonAuthentifie } from '../../lib/session-expiree'
 
 // Position de sortie du lecteur (US-45 CA1). La memorisation locale passe par
@@ -25,6 +25,7 @@ export interface CorpsPosition {
 export function corpsPosition(cle: string, position: number, duree: number, serie?: string): CorpsPosition | undefined {
   if (!Number.isFinite(duree) || duree <= 0 || !Number.isFinite(position)) return undefined
   const id = idServeurDeCle(cle)
+  if (estIdentifiantReplay(id)) return undefined // ni historique ni reprise pour un replay
   let chemin: string
   try {
     chemin = cheminContenu(id)
