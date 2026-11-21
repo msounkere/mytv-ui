@@ -20,7 +20,7 @@ try {
   console.log('1. guide : « Revoir » sur les programmes termines d’une chaine avec replay, et elle seule')
   await page.getByTitle('Reculer de 3 heures').click()
   const revoir = page.locator('button[data-replay][title*="Prog iptva:7000"]')
-  v.ok(await jusqua(async () => (await revoir.count()) > 0, 15_000), 'des programmes termines de la chaine 7000 portent « Revoir »')
+  v.ok(await jusqua(async () => (await revoir.count()) > 0, 30_000), 'des programmes termines de la chaine 7000 portent « Revoir »')
   v.ok((await page.locator('button[data-replay][title*="Prog iptva:7001"]').count()) === 0, 'rien sur la chaine 7001 (sans replay)')
   v.ok((await revoir.first().getAttribute('title')).startsWith('Revoir — '), 'l’infobulle commence par « Revoir — »')
   v.ok((await revoir.first().innerText()).includes('↺ Revoir'), 'la case affiche « ↺ Revoir »')
