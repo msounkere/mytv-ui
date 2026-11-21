@@ -52,6 +52,9 @@ const PAS = 30 * MINUTE
 
 const HEURE = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' })
 const JOUR = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
+// Telephone : la date n'a que 45 % de la rangee ; « dimanche 22 novembre » en gras y etait
+// tronque (CI du 22/11/2026). La forme courte (« dim. 22 nov. ») tient tous les jours.
+const JOUR_COURT = new Intl.DateTimeFormat('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })
 
 interface Ligne {
   /** Identifiant API de la chaîne : la clé de la grille. */
@@ -326,8 +329,8 @@ export default function Guide(props: {
           {/* Téléphone : le jour est TOUJOURS visible, en tête de la rangée, et
               seuls les boutons défilent (D12 : « mercre » tronqué en bout de rangée). */}
           <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', flex: '1 1 100%', 'min-width': 0 }}>
-            <span class="secondaire tronque" data-role="jour-guide" style={{ 'font-size': '13px', flex: '0 1 auto', 'max-width': '45%', 'font-weight': 'var(--w-strong)' }}>
-              {JOUR.format(new Date(debutFenetre()))}
+            <span class="secondaire tronque" data-role="jour-guide" title={JOUR.format(new Date(debutFenetre()))} style={{ 'font-size': '13px', flex: '0 1 auto', 'max-width': '45%', 'font-weight': 'var(--w-strong)' }}>
+              {JOUR_COURT.format(new Date(debutFenetre()))}
             </span>
             <div
               style={{
