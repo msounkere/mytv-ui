@@ -61,6 +61,8 @@ interface Ligne {
 
 export default function Guide(props: {
   surOuvrir: (e: EntreeCatalogue) => void
+  /** Lecture d'un replay (« Revoir ») ; par defaut la lecture de l'application. */
+  surLire?: (e: EntreeCatalogue) => void
 }) {
   const [maintenant, poserMaintenant] = createSignal(Date.now())
   const [debutFenetre, poserDebutFenetre] = createSignal(debutDemiHeureLocale(Date.now() - 15 * MINUTE))
@@ -475,6 +477,7 @@ export default function Guide(props: {
                   grille={grilleDe}
                   inscrire={inscrire}
                   surOuvrir={props.surOuvrir}
+                  surLire={props.surLire ?? lire}
                 />
               )}
             />
@@ -513,6 +516,7 @@ function LigneChaine(props: {
   grille: (epg: string) => Programme[]
   inscrire: (epg: string) => void
   surOuvrir: (e: EntreeCatalogue) => void
+  surLire: (e: EntreeCatalogue) => void
 }) {
   // L'inscription vit le temps de la ligne montée : le lot interrogé suit
   // exactement la fenêtre visible du virtualiseur.
@@ -566,7 +570,7 @@ function LigneChaine(props: {
                   <button
                     data-replay={revoir() ? '' : undefined}
                     onClick={() => {
-                      if (revisible(p, props.maintenant)) lire(entreeReplay(props.ligne.entree, p))
+                      if (revisible(p, props.maintenant)) props.surLire(entreeReplay(props.ligne.entree, p))
                       else props.surOuvrir(props.ligne.entree)
                     }}
                     title={`${revoir() ? 'Revoir — ' : ''}${HEURE.format(new Date(p.debut))} – ${HEURE.format(new Date(p.fin))} · ${p.titre}${p.description ? `\n\n${p.description}` : ''}`}

@@ -119,9 +119,15 @@ export async function demarrerServeur({ dossier, limites = { pagination_max: 200
       const liste = []
       for (let t = Math.floor(de / 3_600_000) * 3_600_000; t < a; t += 3_600_000) {
         if (t + 3_600_000 <= de) continue
+        // Replay (lot 2 du chantier enregistrement) : comme le vrai serveur, l'identifiant de
+        // lecture des programmes COMMENCES depuis moins de 3 jours, mais seulement pour les
+        // chaines 7000 a 7998 paires (les autres tests ne voient rien changer).
+        const numero = Number(id.split(':')[1])
+        const replay = numero >= 7000 && numero < 8000 && numero % 2 === 0 && t <= Date.now() - 60_000 && t >= Date.now() - 3 * 86_400_000
         liste.push({
           debut: new Date(t).toISOString(), fin: new Date(t + 3_600_000).toISOString(),
           titre: `Prog ${id} ${new Date(t).toISOString().slice(11, 13)}hUTC`,
+          ...(replay ? { replay: `iptva:replay-${numero}-${t / 1000}-60` } : {}),
         })
       }
       out[id] = liste

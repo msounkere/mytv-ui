@@ -72,7 +72,7 @@ render(
     <QueryClientProvider client={clientRequetes}>
       <Show when={ecranDemande === 'guide'}>
         <div style={{ height: '100vh' }}>
-          <Guide surOuvrir={(e) => ouvertures.push(e.cle)} />
+          <Guide surOuvrir={(e) => ouvertures.push(e.cle)} surLire={(e) => ouvertures.push(e.cle)} />
         </div>
       </Show>
       <Show when={ecranDemande === 'lecture' && entree()}>

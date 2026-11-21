@@ -61,3 +61,21 @@ test('replay : un deplacement part de la minute pile (le fournisseur sert au ryt
   assert.equal(positionReplay(r, 120), 120)
   assert.equal(positionReplay('/api/v1/vod/iptva:845410', 742), 742) // un film : exact
 })
+
+test('panneau Programmes : la chaine d’un replay, les jours, le statut de chaque programme', async () => {
+  const { chaineDeReplay, joursProgrammes, statutProgramme } = await import('../../src/lib/replay')
+  assert.equal(chaineDeReplay(ID), 'iptva:553959')
+  assert.equal(chaineDeReplay('iptva:553959'), undefined)
+  const t = new Date(2026, 10, 21, 22, 30).getTime() // samedi 21, heure locale
+  const j = joursProgrammes(t)
+  assert.deepEqual(j.map((x) => x.libelle.toLowerCase()), ['aujourd’hui', 'hier', 'jeudi 19'])
+  assert.equal(j[0]!.debut, new Date(2026, 10, 21).getTime())
+  assert.equal(j[0]!.fin, new Date(2026, 10, 22).getTime())
+  assert.equal(j[2]!.debut, new Date(2026, 10, 19).getTime())
+  const p = (debut: number, fin: number, replay?: string) => ({ chaine: 'iptva:553959', titre: 'x', debut, fin, ...(replay ? { replay } : {}) })
+  const h = 3_600_000
+  assert.equal(statutProgramme(p(t - h, t + h, ID), t), 'direct')
+  assert.equal(statutProgramme(p(t - 2 * h, t - h, ID), t), 'revoir')
+  assert.equal(statutProgramme(p(t - 2 * h, t - h), t), 'passe')
+  assert.equal(statutProgramme(p(t + h, t + 2 * h), t), 'a-venir')
+})

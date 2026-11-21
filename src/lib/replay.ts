@@ -49,3 +49,52 @@ export function estLectureReplay(lecture: string): boolean {
 export function positionReplay(lecture: string, cible: number): number {
   return estLectureReplay(lecture) ? Math.floor(cible / 60) * 60 : cible
 }
+
+/** `iptva:replay-553959-…` -> `iptva:553959` (la chaine du replay), sinon undefined. */
+export function chaineDeReplay(id: string): string | undefined {
+  const m = /^([A-Za-z0-9_-]{1,32}):replay-([0-9]{1,20})-[0-9]+-[0-9]+$/.exec(id)
+  return m ? `${m[1]}:${m[2]}` : undefined
+}
+
+export interface JourProgrammes {
+  /** « Aujourd'hui », « Hier », puis le jour de la semaine (« jeudi 19 »). */
+  libelle: string
+  debut: number
+  fin: number
+}
+
+
+
+/**
+ * Les jours du panneau « Programmes » : aujourd'hui et les `avant` jours precedents (le
+ * replay du fournisseur va jusqu'a 3 jours), en heure LOCALE. Le jour d'aujourd'hui va
+ * jusqu'a minuit : le reste de la soiree se voit aussi.
+ */
+export function joursProgrammes(maintenant: number, avant = 2, fuseau?: string): JourProgrammes[] {
+  const minuit = new Date(maintenant)
+  minuit.setHours(0, 0, 0, 0)
+  const nom = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', ...(fuseau ? { timeZone: fuseau } : {}) })
+  const jours: JourProgrammes[] = []
+  for (let i = 0; i <= avant; i++) {
+    const d = new Date(minuit)
+    d.setDate(d.getDate() - i)
+    const f = new Date(d)
+    f.setDate(f.getDate() + 1)
+    jours.push({ libelle: i === 0 ? 'Aujourd’hui' : i === 1 ? 'Hier' : nom.format(d), debut: d.getTime(), fin: f.getTime() })
+  }
+  return jours
+}
+
+export type StatutProgramme = 'direct' | 'revoir' | 'passe' | 'a-venir'
+
+/**
+ * Ce que le panneau propose pour un programme : le programme en cours ramene au direct, un
+ * programme termine avec replay se revoit, un programme termine sans replay est grise (rien
+ * a lire), un programme a venir aussi.
+ */
+export function statutProgramme(p: Programme, maintenant: number): StatutProgramme {
+  if (p.debut <= maintenant && maintenant < p.fin) return 'direct'
+  if (p.debut > maintenant) return 'a-venir'
+  return revisible(p, maintenant) ? 'revoir' : 'passe'
+}
+

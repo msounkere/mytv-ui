@@ -25,6 +25,8 @@ export interface ActionsClavier {
   basculerInfos: () => void
   /** Variantes de la chaîne (US-39) : recommandation, choix, test. */
   basculerVariantes: () => void
+  /** Programmes de la chaîne (direct ou replay) : revoir un programme passé. */
+  basculerProgrammes: () => void
 }
 
 /**
@@ -60,6 +62,7 @@ export function brancherClavier(a: ActionsClavier): (e: KeyboardEvent) => void {
     else if ((e.key === 'g' || e.key === 'G') && a.direct()) a.basculerMiniGuide()
     else if (e.key === 'i' || e.key === 'I') a.basculerInfos()
     else if ((e.key === 'v' || e.key === 'V') && a.direct()) a.basculerVariantes()
+    else if (e.key === 'p' || e.key === 'P') a.basculerProgrammes()
     else return
     e.preventDefault()
   }

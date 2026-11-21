@@ -1,4 +1,4 @@
-import { Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from 'solid-js'
+import { Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack } from 'solid-js'
 import { Portal } from 'solid-js/web'
 import SubstitutLogo from '../components/SubstitutLogo'
 import EtiquettePays from '../components/EtiquettePays'
@@ -9,6 +9,7 @@ import ErreurLecture, { type ActionErreur } from '../components/ErreurLecture'
 import DialogueDiffusion from '../components/DialogueDiffusion'
 import BandeauChaine from '../components/BandeauChaine'
 import MiniGuide from '../components/MiniGuide'
+import ProgrammesChaine from '../components/ProgrammesChaine'
 import PanneauInfos from '../components/PanneauInfos'
 import MiniLecteur, { MARGE_MINI, hauteurMini } from '../components/MiniLecteur'
 import Notification, { type NotificationLecteur } from '../components/Notification'
@@ -27,7 +28,8 @@ import { ecran, ouvrirDetails, ouvrirFiche, poserEcran, revenirAuLecteur } from 
 import { db } from '../lib/db'
 import { attacher, hlsNatif, type Attache } from '../lib/lecteur'
 import { planDirect, planVod, urlVod, deplacementParService, bornerPosition, BADGE_MODE, type Plan } from '../lib/flux'
-import { positionReplay } from '../lib/replay'
+import { chaineDeReplay, entreeReplay, positionReplay } from '../lib/replay'
+import { estIdentifiantReplay } from '../lib/identifiants'
 import { lectureDe, chaineDeLecture } from '../lib/source-lecture'
 import { annulerFinDifferee } from '../lib/bail'
 import { ErreurLecteur, enCoupure } from '../lib/errors'
@@ -399,6 +401,27 @@ export default function Lecture(props: {
     const actif = document.activeElement as HTMLElement | null
     if (actif && racine?.contains(actif)) actif.blur()
     setTimeout(() => props.surChanger(e), 0)
+  }
+
+  // --- Programmes de la chaine et replay (lot 2 du chantier enregistrement) ----
+  // La chaine qu'on regarde : l'entree elle-meme en direct, celle du replay sinon
+  // (retrouvee dans le catalogue local par son numero).
+  const enReplay = createMemo(() => estIdentifiantReplay(props.entree.idServeur))
+  const [chaineCourante] = createResource(
+    () => (direct() ? props.entree.cle : enReplay() ? chaineDeReplay(props.entree.idServeur) : undefined),
+    async (k: string) => (direct() ? props.entree : (await db.catalogue.get(`live:${k}`)) ?? undefined),
+  )
+  const [programmesOuverts, poserProgrammesOuverts] = createSignal(false)
+  function basculerProgrammes() {
+    if (!direct() && !enReplay()) return
+    calques.poserMiniGuideOuvert(false)
+    calques.poserInfosOuvertes(false)
+    poserProgrammesOuverts((v) => !v)
+  }
+  function revenirAuDirect() {
+    const c = chaineCourante()
+    poserProgrammesOuverts(false)
+    if (c && !direct()) changer(c)
   }
 
   const zapping = creerZapping({
@@ -1059,7 +1082,7 @@ export default function Lecture(props: {
     surSonEcran: () => !horsLecteur(),
     direct,
     calqueOuvert: () =>
-      calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert() ||
+      programmesOuverts() || calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert() ||
       calques.rebours() !== null || calques.finEpisode() || fin() !== null ||
       variantesLecteur.ouvert() || menuOuvert(),
     reveiller: calques.reveiller,
@@ -1069,6 +1092,7 @@ export default function Lecture(props: {
       // Echap ferme d'abord TOUT calque ouvert (menu, variantes, diffusion, infos,
       // mini-guide, decompte, fin) avant de quitter (US-45 CA8, D7/B13).
       if (menuOuvert()) poserMenuOuvert(false)
+      else if (programmesOuverts()) poserProgrammesOuverts(false)
       else if (variantesLecteur.ouvert()) variantesLecteur.poserOuvert(false)
       else if (fin() !== null) poserFin(null)
       else if (calques.diffusionOuverte() || calques.infosOuvertes() || calques.miniGuideOuvert() || calques.rebours() !== null || calques.finEpisode()) calques.fermerCalque()
@@ -1085,6 +1109,7 @@ export default function Lecture(props: {
     basculerMiniGuide: ouvrirMiniGuide,
     basculerInfos: ouvrirInfos,
     basculerVariantes: () => variantesLecteur.poserOuvert((v) => !v),
+    basculerProgrammes,
   })
 
   const boutonsGauche = (): BoutonControle[] =>
@@ -1103,6 +1128,10 @@ export default function Lecture(props: {
     { icone: 'cast', libelle: 'Diffuser vers un téléviseur', actif: etatDiffusion() === 'diffusion', action: () => calques.poserDiffusionOuverte(true) },
     ...(!direct() && (pistes.pistesAudio().length > 1 || pistes.pistesTexte().length > 0)
       ? [{ icone: 'subtitles', libelle: 'Pistes et sous-titres', action: () => calques.poserInfosOuvertes(true) }]
+      : []),
+    ...(enReplay() ? [{ icone: 'live_tv', libelle: 'Revenir au direct', action: revenirAuDirect }] : []),
+    ...(direct() || enReplay()
+      ? [{ icone: 'history', libelle: 'Programmes de la chaîne', actif: programmesOuverts(), action: basculerProgrammes }]
       : []),
     ...(direct()
       ? [
@@ -1123,6 +1152,18 @@ export default function Lecture(props: {
   ]
 
   const boutonsDroite = (): BoutonControle[] => [
+    ...(enReplay()
+      ? [{ icone: 'live_tv', libelle: 'Revenir au direct', titre: 'Revenir au direct de la chaîne', desactive: !chaineCourante(), surAction: revenirAuDirect }]
+      : []),
+    ...(direct() || enReplay()
+      ? [{
+          icone: 'history',
+          libelle: 'Programmes de la chaîne',
+          titre: 'Programmes de la chaîne : revoir un programme passé (P)',
+          actif: programmesOuverts(),
+          surAction: basculerProgrammes,
+        }]
+      : []),
     ...(direct()
       ? [
           {
@@ -1397,8 +1438,10 @@ export default function Lecture(props: {
               duree={duree()}
               indiceClavier={
                 direct()
-                  ? '↑ ↓ zapper · R dernière · G guide · V variantes · I infos'
-                  : '← → 10 s · Espace pause · M muet · F favori · I infos'
+                  ? '↑ ↓ zapper · R dernière · G guide · P programmes · V variantes · I infos'
+                  : enReplay()
+                    ? '← → 10 s · Espace pause · P programmes · M muet · I infos'
+                    : '← → 10 s · Espace pause · M muet · F favori · I infos'
               }
               gauche={boutonsGauche()}
               droite={compact() ? boutonsDroiteCompacts() : boutonsDroite()}
@@ -1544,6 +1587,23 @@ export default function Lecture(props: {
                 Non
               </button>
             </div>
+          </Show>
+
+          <Show when={programmesOuverts() && chaineCourante()}>
+            {(c) => (
+              <ProgrammesChaine
+                chaine={c()}
+                replayActif={enReplay() ? props.entree.idServeur : undefined}
+                surRevoir={(p) => {
+                  // La chaine AVANT de fermer : apres, l'accesseur du <Show> est perime.
+                  const entree = entreeReplay(c(), p)
+                  poserProgrammesOuverts(false)
+                  changer(entree)
+                }}
+                surDirect={revenirAuDirect}
+                surFermer={() => poserProgrammesOuverts(false)}
+              />
+            )}
           </Show>
 
           <Show when={calques.miniGuideOuvert()}>
