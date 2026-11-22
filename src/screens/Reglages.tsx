@@ -17,6 +17,7 @@ import { messageErreur } from './ChoixProfil'
 import { LIBELLE_QUALITE_MODE, choisirQualite, qualite, type ModeQualite } from '../lib/qualite'
 import { choisirTeleviseurEac3, choisirTeleviseurHevc, televiseurEac3, televiseurHevc } from '../lib/cast'
 import { noter } from '../lib/diagnostic'
+import BoxIPTV from '../components/BoxIPTV'
 
 // Qualité du flux (US-38 CA4) : Auto laisse le serveur décider ; Éco demande un
 // réencodage à débit réduit (480p, ~1,2 Mbit/s) à chaque ouverture, pour une
@@ -311,6 +312,10 @@ export default function Reglages() {
           </For>
         </Show>
       </div>
+
+      <Show when={session()?.admin}>
+        <BoxIPTV />
+      </Show>
 
       <h2 style={{ 'margin-top': '24px' }}>Catalogue</h2>
       <p class="secondaire" style={{ margin: '6px 0 12px', 'font-size': '12px' }}>
