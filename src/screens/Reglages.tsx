@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createResource, createSignal, onCleanup } from 'solid-js'
+import { useSearchParams } from '@solidjs/router'
 import { liveQuery } from 'dexie'
 import { choisirProfil, creerProfil, deconnexion, profilActifId, profils, session, supprimerProfil } from '../lib/auth'
 import type { ProfilApi } from '../lib/api'
@@ -124,6 +125,21 @@ export default function Reglages() {
   const enImport = () => etatCatalogue() === 'import'
   const erreurAffichee = () => erreur() ?? erreurCatalogue()
 
+  // Onglets (retour du 22/11 : la page s'allongeait). L'onglet est dans l'adresse
+  // (`?onglet=lecture`) : un lien ou un rechargement ramene au meme endroit.
+  const [parametres, poserParametres] = useSearchParams<{ onglet?: string }>()
+  const onglets = (): Onglet[] => [
+    { cle: 'compte', libelle: 'Compte' },
+    { cle: 'lecture', libelle: 'Lecture' },
+    { cle: 'catalogue', libelle: 'Catalogue' },
+    ...(session()?.admin ? [{ cle: 'box' as const, libelle: 'Box IPTV' }] : []),
+  ]
+  const onglet = (): CleOnglet => {
+    const v = parametres.onglet
+    return onglets().some((o) => o.cle === v) ? (v as CleOnglet) : 'compte'
+  }
+  const choisirOnglet = (cle: CleOnglet) => poserParametres({ onglet: cle === 'compte' ? undefined : cle }, { replace: true })
+
   return (
     // L'ecran defile lui-meme, comme les autres (Accueil, Ma liste) : le cadre de la coque
     // coupe ce qui depasse. Sans cela, le bas de la page (Box IPTV, Catalogue) etait hors
@@ -132,6 +148,10 @@ export default function Reglages() {
     <div style={{ 'max-width': '560px', padding: '32px 24px' }}>
       <h1>Réglages</h1>
 
+      <OngletsReglages onglets={onglets()} actif={onglet()} surChoisir={choisirOnglet} />
+
+      <Show when={onglet() === 'compte'}>
+      <div role="tabpanel" id="panneau-compte" aria-labelledby="onglet-compte">
       <h2 style={{ 'margin-top': '24px' }}>Compte</h2>
       <div
         style={{
@@ -234,7 +254,11 @@ export default function Reglages() {
           />
         )}
       </Show>
+      </div>
+      </Show>
 
+      <Show when={onglet() === 'lecture'}>
+      <div role="tabpanel" id="panneau-lecture" aria-labelledby="onglet-lecture">
       <h2 style={{ 'margin-top': '24px' }}>Lecture</h2>
       <p class="secondaire" style={{ margin: '6px 0 12px', 'font-size': '12px' }}>
         Qualité du flux sur cet appareil. Le lecteur propose aussi « Éco » de lui-même quand la liaison est trop juste.
@@ -293,6 +317,11 @@ export default function Reglages() {
         </For>
       </div>
 
+      </div>
+      </Show>
+
+      <Show when={onglet() === 'catalogue'}>
+      <div role="tabpanel" id="panneau-catalogue" aria-labelledby="onglet-catalogue">
       <h2 style={{ 'margin-top': '24px' }}>Catégories masquées</h2>
       <p class="secondaire" style={{ margin: '6px 0 12px', 'font-size': '12px' }}>
         Les catégories du Direct masquées depuis la liste. Elles restent dans le catalogue : les réafficher ne coûte rien.
@@ -316,10 +345,6 @@ export default function Reglages() {
           </For>
         </Show>
       </div>
-
-      <Show when={session()?.admin}>
-        <BoxIPTV />
-      </Show>
 
       <h2 style={{ 'margin-top': '24px' }}>Catalogue</h2>
       <p class="secondaire" style={{ margin: '6px 0 12px', 'font-size': '12px' }}>
@@ -370,6 +395,15 @@ export default function Reglages() {
             </div>
           </div>
         )}
+      </Show>
+
+      </div>
+      </Show>
+
+      <Show when={onglet() === 'box' && session()?.admin}>
+        <div role="tabpanel" id="panneau-box" aria-labelledby="onglet-box">
+          <BoxIPTV />
+        </div>
       </Show>
 
       <Show when={etat()}>
@@ -460,6 +494,63 @@ function Ligne(props: { libelle: string; valeur: string }) {
       <span class="tronque" style={{ 'font-family': 'var(--moov-font-mono)', 'font-size': '12px' }}>
         {props.valeur}
       </span>
+    </div>
+  )
+}
+
+type CleOnglet = 'compte' | 'lecture' | 'catalogue' | 'box'
+interface Onglet {
+  cle: CleOnglet
+  libelle: string
+}
+
+/** Barre d'onglets des Reglages : role tablist, fleches gauche/droite, Debut/Fin. */
+function OngletsReglages(props: { onglets: Onglet[]; actif: CleOnglet; surChoisir: (c: CleOnglet) => void }) {
+  let barre: HTMLDivElement | undefined
+  function clavier(e: KeyboardEvent) {
+    const i = props.onglets.findIndex((o) => o.cle === props.actif)
+    let j = -1
+    if (e.key === 'ArrowRight') j = (i + 1) % props.onglets.length
+    else if (e.key === 'ArrowLeft') j = (i - 1 + props.onglets.length) % props.onglets.length
+    else if (e.key === 'Home') j = 0
+    else if (e.key === 'End') j = props.onglets.length - 1
+    if (j < 0) return
+    e.preventDefault()
+    props.surChoisir(props.onglets[j]!.cle)
+    queueMicrotask(() => barre?.querySelector<HTMLElement>(`#onglet-${props.onglets[j]!.cle}`)?.focus())
+  }
+  return (
+    <div
+      ref={barre}
+      role="tablist"
+      aria-label="Sections des réglages"
+      onKeyDown={clavier}
+      style={{
+        display: 'flex', gap: '4px', margin: '16px 0 0', 'border-bottom': '1px solid var(--line)',
+        'overflow-x': 'auto', 'scrollbar-width': 'none',
+      }}
+    >
+      <For each={props.onglets}>
+        {(o) => (
+          <button
+            role="tab"
+            id={`onglet-${o.cle}`}
+            aria-selected={props.actif === o.cle}
+            aria-controls={`panneau-${o.cle}`}
+            tabIndex={props.actif === o.cle ? 0 : -1}
+            onClick={() => props.surChoisir(o.cle)}
+            style={{
+              padding: '8px 14px', 'white-space': 'nowrap', 'border-radius': 0, 'margin-bottom': '-1px',
+              'min-height': '44px',
+              color: props.actif === o.cle ? 'var(--fg)' : 'var(--fg2)',
+              'font-weight': props.actif === o.cle ? 'var(--w-strong)' : '400',
+              'border-bottom': `2px solid ${props.actif === o.cle ? 'var(--acc)' : 'transparent'}`,
+            }}
+          >
+            {o.libelle}
+          </button>
+        )}
+      </For>
     </div>
   )
 }

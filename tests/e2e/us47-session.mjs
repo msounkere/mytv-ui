@@ -36,7 +36,7 @@ console.log('1. focus initial, mot de passe refuse, session expiree')
     await jusqua(() => serveur.etat.profils.length >= 2, 5000)
 
     // Session expiree pendant un geste : connexion avec message, URL conservee.
-    await page.getByRole('radiogroup', { name: 'Qualité' }).waitFor()
+    await page.getByLabel('Nom du nouveau profil').waitFor()
     await serveur.appel('expirer-sessions')
     // Un geste qui parle au service : le 401 ramene a la connexion.
     await page.getByLabel('Nom du nouveau profil').fill('Cuisine')
@@ -52,7 +52,7 @@ console.log('1. focus initial, mot de passe refuse, session expiree')
     await page.getByRole('dialog', { name: 'Choisir un profil' }).waitFor()
     v.ok(await jusqua(() => page.evaluate(() => document.activeElement?.getAttribute('data-role') === 'profil'), 3000), 'CA4 deux profils : focus sur le premier profil')
     await page.getByRole('button', { name: 'Salon' }).click()
-    v.ok(await jusqua(async () => (await page.getByRole('radiogroup', { name: 'Qualité' }).count()) > 0, 10_000), `CA4 retour a l'ecran d'origine (Reglages) apres reconnexion (${await chemin(page)})`)
+    v.ok(await jusqua(async () => (await page.getByRole('tablist', { name: 'Sections des réglages' }).count()) > 0, 10_000), `CA4 retour a l'ecran d'origine (Reglages) apres reconnexion (${await chemin(page)})`)
     v.ok((await page.locator('[data-role="connexion-info"]').count()) === 0, 'le message ne reste pas')
   } finally {
     await b.fermer()
