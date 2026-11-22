@@ -125,6 +125,10 @@ export default function Reglages() {
   const erreurAffichee = () => erreur() ?? erreurCatalogue()
 
   return (
+    // L'ecran defile lui-meme, comme les autres (Accueil, Ma liste) : le cadre de la coque
+    // coupe ce qui depasse. Sans cela, le bas de la page (Box IPTV, Catalogue) etait hors
+    // d'atteinte des que la page depassait la fenetre.
+    <div data-role="ecran-reglages" style={{ height: '100%', overflow: 'auto' }}>
     <div style={{ 'max-width': '560px', padding: '32px 24px' }}>
       <h1>Réglages</h1>
 
@@ -392,6 +396,7 @@ export default function Reglages() {
           </div>
         )}
       </Show>
+    </div>
     </div>
   )
 }
