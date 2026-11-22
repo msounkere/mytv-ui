@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { demarrerServeurFactice, COMPTE, MOT_DE_PASSE } from './serveur-factice.mjs'
+import { profilSynchronise } from './profil-actif.mjs'
 
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../dist')
 const violations = []
@@ -91,6 +92,7 @@ async function scenario(navigateur, corps, { gabarit = 'bureau' } = {}) {
     await page.goto(`${serveur.origine}/`)
     await seConnecter(page)
     await attendre(async () => (await lireIdb(page, 'reglages', 'catalogue.version'))?.valeur === serveur.etat.version, { quoi: 'import du catalogue', delai: 30_000 })
+    await attendre(async () => profilSynchronise(serveur), { quoi: 'profil active (etat local cloisonne)', delai: 30_000 })
     const profil = serveur.etat.profils[0].id
     const outils = {
       serveur, page, ctx, profil, navigateur, gabarit,

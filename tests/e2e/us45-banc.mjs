@@ -8,6 +8,7 @@ import { chromium, firefox, webkit } from 'playwright'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { demarrerServeurFactice, COMPTE, MOT_DE_PASSE } from './serveur-factice.mjs'
+import { profilSynchronise } from './profil-actif.mjs'
 
 export const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../dist')
 export const TAILLE = { chaines: 20, films: 30, series: 6, variantes: 3 }
@@ -135,6 +136,7 @@ export async function ouvrirSession({ navigateur, moteur, gabarit = 'bureau', sc
   await page.getByPlaceholder('Nom du profil').fill('Salon')
   await page.getByRole('button', { name: 'Créer et utiliser' }).click()
   await attendre(async () => (await idb('reglages', 'catalogue.version'))?.valeur === serveur.etat.version, { delai: 40_000, quoi: 'import du catalogue' })
+  await attendre(async () => profilSynchronise(serveur), { delai: 30_000, quoi: 'profil active (etat local cloisonne)' })
   const profil = serveur.etat.profils[0].id
 
   const video = () => page.evaluate(() => {

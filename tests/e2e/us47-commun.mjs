@@ -8,6 +8,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { demarrerServeurFactice, COMPTE, MOT_DE_PASSE } from './serveur-factice.mjs'
 import { creerVerificateur, jusqua, attendre } from './banc.mjs'
+import { profilSynchronise } from './profil-actif.mjs'
 
 export { COMPTE, MOT_DE_PASSE, creerVerificateur, jusqua, attendre }
 export const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../dist')
@@ -149,6 +150,8 @@ export async function attendreCatalogue(b, delai = 40_000) {
 export async function ouvrirSession(b, o) {
   await seConnecter(b, o)
   if (!(await attendreCatalogue(b))) throw new Error('catalogue non importe')
+  // Profil cree et choisi : attendre son activation (voir profil-actif.mjs).
+  if (o?.creer !== false && !(await jusqua(async () => profilSynchronise(b.serveur), 30_000, 200))) throw new Error('profil non active')
 }
 
 export const texte = async (loc) => (await loc.first().innerText().catch(() => '')) || ''

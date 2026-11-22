@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { demarrerServeurFactice, COMPTE, MOT_DE_PASSE } from './serveur-factice.mjs'
+import { profilSynchronise } from './profil-actif.mjs'
 
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../dist')
 const violations = []
@@ -66,6 +67,7 @@ async function scenario(navigateur, corps) {
     await page.getByPlaceholder('Nom du profil').fill('Salon')
     await page.getByRole('button', { name: 'Créer et utiliser' }).click()
     await attendre(async () => (await lireIdb(page, 'reglages', 'catalogue.version'))?.valeur === serveur.etat.version, { quoi: 'import du catalogue' })
+    await attendre(async () => profilSynchronise(serveur), { quoi: 'profil active (etat local cloisonne)' })
     const profil = serveur.etat.profils[0].id
     const outils = {
       serveur, page, ctx, profil,
