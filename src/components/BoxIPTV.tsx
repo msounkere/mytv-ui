@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createResource, createSignal } from 'solid-js'
+import { For, Show, createMemo, createResource, createSignal, onCleanup } from 'solid-js'
 import { json, versErreurLecteur } from '../lib/api'
 import { emettreToast } from '../lib/toasts'
 
@@ -31,13 +31,18 @@ const NOMS: Record<string, string> = {
   NF: 'Netflix', MULTI: 'Multilingue',
 }
 
+/** Attente apres une case cochee : plusieurs clics d'affilee partent en une seule ecriture. */
+const DELAI_CASES = 800
+
 const nombre = (n: number) => n.toLocaleString('fr-FR')
 
 export default function BoxIPTV() {
   const [etat, { mutate }] = createResource(() => json<EtatBox>('/admin/xtream'))
   const [choisis, poserChoisis] = createSignal<Set<string> | null>(null)
   const [filtre, poserFiltre] = createSignal('')
-  const [envoi, poserEnvoi] = createSignal(false)
+  // Enregistrement automatique, comme les autres onglets : peu apres le dernier changement
+  // (plusieurs cases cochees d'affilee = une seule ecriture), une ecriture a la fois.
+  const [statut, poserStatut] = createSignal<'repos' | 'attente' | 'envoi' | 'enregistre' | 'erreur'>('repos')
   const [profilChoisi, poserProfilChoisi] = createSignal<string | null>(null)
   const profil = () => profilChoisi() ?? etat()?.profil_listes ?? ''
 
@@ -72,33 +77,76 @@ export default function BoxIPTV() {
     if (c.has(code)) c.delete(code)
     else c.add(code)
     poserChoisis(c)
+    planifier(DELAI_CASES)
+  }
+
+  let minuteur: ReturnType<typeof setTimeout> | undefined
+  let enCours = false
+  let encore = false
+  onCleanup(() => clearTimeout(minuteur))
+
+  function planifier(delai: number) {
+    clearTimeout(minuteur)
+    poserStatut('attente')
+    minuteur = setTimeout(() => void enregistrer(), delai)
   }
 
   async function enregistrer() {
     const e = etat()
     if (!e) return
-    poserEnvoi(true)
+    if (enCours) {
+      encore = true // un changement pendant l'envoi : renvoye des que celui-ci revient
+      return
+    }
+    if (!modifie()) {
+      poserStatut('repos')
+      return
+    }
+    enCours = true
+    poserStatut('envoi')
     try {
       const r = await json<{ prefixes: string[]; revision: number; profil_listes?: string }>('/admin/xtream', {
         methode: 'PUT', corps: { prefixes: [...courant()].sort(), profil_listes: profil(), revision: e.revision },
       })
-      mutate({ ...e, prefixes: r.prefixes, revision: r.revision, profil_listes: r.profil_listes ?? profil() })
-      poserChoisis(null)
-      poserProfilChoisi(null)
-      emettreToast({ message: r.prefixes.length ? `Box IPTV : ${r.prefixes.join(', ')} seulement` : 'Box IPTV : tout le catalogue' })
+      // Le choix local reste la reference (il a pu bouger pendant l'envoi) ; le serveur donne
+      // la nouvelle revision et ce qui est enregistre.
+      mutate({ ...e, prefixes: r.prefixes, revision: r.revision, profil_listes: r.profil_listes ?? '' })
+      poserStatut('enregistre')
     } catch (err) {
+      poserStatut('erreur')
       emettreToast({ message: versErreurLecteur(err).message, ton: 'erreur' })
     } finally {
-      poserEnvoi(false)
+      enCours = false
+    }
+    if (encore) {
+      encore = false
+      void enregistrer()
+    }
+  }
+
+  const libelleStatut = () => {
+    switch (statut()) {
+      case 'attente':
+      case 'envoi':
+        return 'Enregistrement…'
+      case 'enregistre':
+        return 'Enregistré — actualisez le portail sur la box'
+      case 'erreur':
+        return 'Non enregistré : réessayez'
+      default:
+        return ''
     }
   }
 
   return (
     <section aria-label="Box IPTV" data-role="box-iptv">
       <h2 style={{ 'margin-top': '24px' }}>Box IPTV</h2>
+      <p data-role="box-statut" aria-live="polite" class="secondaire" style={{ margin: '4px 0 0', 'font-size': '12px', 'min-height': '16px', color: statut() === 'erreur' ? 'var(--err)' : statut() === 'enregistre' ? 'var(--ok)' : undefined }}>
+        {libelleStatut()}
+      </p>
       <p class="secondaire" style={{ margin: '6px 0 12px', 'font-size': '12px' }}>
         Langues et pays envoyés aux box IPTV (Formuler, MYTVOnline…). Rien de coché : tout le catalogue.
-        L’interface web n’est pas concernée. Après un changement, actualisez le portail sur la box.
+        L’interface web n’est pas concernée. Enregistré automatiquement ; actualisez ensuite le portail sur la box.
       </p>
       <Show when={!etat.loading} fallback={<p class="tertiaire" style={{ 'font-size': '13px' }}>Comptage du catalogue…</p>}>
         <Show when={!etat.error} fallback={<p class="tertiaire" style={{ 'font-size': '13px' }}>Réglage indisponible : {versErreurLecteur(etat.error).message}</p>}>
@@ -107,7 +155,10 @@ export default function BoxIPTV() {
             <select
               data-role="box-profil"
               value={profil()}
-              onChange={(e) => poserProfilChoisi(e.currentTarget.value)}
+              onChange={(e) => {
+                poserProfilChoisi(e.currentTarget.value)
+                planifier(0)
+              }}
               style={{ padding: '6px 10px' }}
             >
               <option value="">Aucune (profil de la box)</option>
@@ -127,7 +178,7 @@ export default function BoxIPTV() {
               onInput={(e) => poserFiltre(e.currentTarget.value)}
               style={{ flex: '1 1 200px', padding: '6px 10px' }}
             />
-            <button onClick={() => poserChoisis(new Set())} style={{ border: '1px solid var(--line2)', padding: '6px 12px' }}>
+            <button onClick={() => { poserChoisis(new Set<string>()); planifier(0) }} style={{ border: '1px solid var(--line2)', padding: '6px 12px' }}>
               Tout décocher
             </button>
           </div>
@@ -144,26 +195,6 @@ export default function BoxIPTV() {
                 </label>
               )}
             </For>
-          </div>
-          {/* Barre d'action collee en bas de l'ecran qui defile : toujours a portee, quel que
-              soit le reglage touche (profil en haut, prefixes plus bas). */}
-          <div
-            data-role="box-actions"
-            style={{
-              position: 'sticky', bottom: 0, display: 'flex', 'align-items': 'center', 'justify-content': 'flex-end', gap: '12px',
-              padding: '10px 0', margin: '0 0 8px', background: 'var(--bg)', 'border-top': '1px solid var(--line)',
-            }}
-          >
-            <span class="secondaire" style={{ 'font-size': '12px', flex: 1 }}>
-              {modifie() ? 'Modifications non enregistrées' : 'Aucune modification'}
-            </span>
-            <button
-              onClick={() => void enregistrer()}
-              disabled={!modifie() || envoi()}
-              style={{ background: 'var(--acc)', color: 'var(--acc-ink)', padding: '8px 20px', opacity: modifie() ? 1 : 0.5 }}
-            >
-              {envoi() ? 'Enregistrement…' : 'Enregistrer'}
-            </button>
           </div>
         </Show>
       </Show>
