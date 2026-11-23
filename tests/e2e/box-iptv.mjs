@@ -63,6 +63,12 @@ const v = creerVerificateur('Box IPTV')
     const cible = serveur.etat.profils[0]
     await choix.selectOption(cible.id)
     v.ok(!(await section.getByRole('button', { name: 'Enregistrer' }).isDisabled()), 'changer de profil active Enregistrer')
+    // La barre d'action reste visible en bas de la fenetre, meme fenetre basse.
+    await page.setViewportSize({ width: 1000, height: 420 })
+    await choix.scrollIntoViewIfNeeded()
+    const bouton = await section.getByRole('button', { name: 'Enregistrer' }).boundingBox()
+    v.ok(bouton && bouton.y >= 0 && bouton.y + bouton.height <= 420, `Enregistrer visible pres du choix du profil (y=${bouton?.y})`)
+    v.ok(/non enregistrées/.test(await texte(section.locator('[data-role="box-actions"]'))), 'la barre signale la modification')
     await section.getByRole('button', { name: 'Enregistrer' }).click()
     v.ok(await jusqua(() => serveur.etat.xtream?.profil_listes === cible.id && serveur.etat.xtream.prefixes.join(',') === 'EN,FR', 5000), 'profil envoye, prefixes gardes')
     await page.reload()

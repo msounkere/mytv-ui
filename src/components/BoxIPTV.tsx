@@ -130,15 +130,8 @@ export default function BoxIPTV() {
             <button onClick={() => poserChoisis(new Set())} style={{ border: '1px solid var(--line2)', padding: '6px 12px' }}>
               Tout décocher
             </button>
-            <button
-              onClick={() => void enregistrer()}
-              disabled={!modifie() || envoi()}
-              style={{ background: 'var(--acc)', color: 'var(--acc-ink)', padding: '6px 16px', opacity: modifie() ? 1 : 0.5 }}
-            >
-              {envoi() ? 'Enregistrement…' : 'Enregistrer'}
-            </button>
           </div>
-          <div style={{ display: 'grid', gap: '4px', 'max-height': '360px', overflow: 'auto', margin: '0 0 16px' }} data-role="box-prefixes">
+          <div style={{ display: 'grid', gap: '4px', 'max-height': '360px', overflow: 'auto', margin: '0 0 12px' }} data-role="box-prefixes">
             <For each={visibles()}>
               {(p) => (
                 <label style={{ display: 'flex', 'align-items': 'center', gap: '10px', padding: '6px 12px', border: '1px solid var(--line)', 'border-radius': 'var(--r-md)', cursor: 'pointer' }}>
@@ -151,6 +144,26 @@ export default function BoxIPTV() {
                 </label>
               )}
             </For>
+          </div>
+          {/* Barre d'action collee en bas de l'ecran qui defile : toujours a portee, quel que
+              soit le reglage touche (profil en haut, prefixes plus bas). */}
+          <div
+            data-role="box-actions"
+            style={{
+              position: 'sticky', bottom: 0, display: 'flex', 'align-items': 'center', 'justify-content': 'flex-end', gap: '12px',
+              padding: '10px 0', margin: '0 0 8px', background: 'var(--bg)', 'border-top': '1px solid var(--line)',
+            }}
+          >
+            <span class="secondaire" style={{ 'font-size': '12px', flex: 1 }}>
+              {modifie() ? 'Modifications non enregistrées' : 'Aucune modification'}
+            </span>
+            <button
+              onClick={() => void enregistrer()}
+              disabled={!modifie() || envoi()}
+              style={{ background: 'var(--acc)', color: 'var(--acc-ink)', padding: '8px 20px', opacity: modifie() ? 1 : 0.5 }}
+            >
+              {envoi() ? 'Enregistrement…' : 'Enregistrer'}
+            </button>
           </div>
         </Show>
       </Show>
