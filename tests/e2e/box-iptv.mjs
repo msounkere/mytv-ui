@@ -55,6 +55,18 @@ const v = creerVerificateur('Box IPTV')
     v.ok(await jusqua(async () => /Box IPTV : EN, FR seulement/.test(await page.locator('[data-role="toast"]').innerText().catch(() => '')), 5000), 'un toast confirme')
     await page.reload()
     v.ok(await jusqua(async () => (await section.getByLabel('FR France').isChecked().catch(() => false)), 10_000), 'apres rechargement, FR reste coche')
+    // Profil dont la box montre les listes (Ma liste, En cours, Mes chaines).
+    const choix = section.locator('[data-role="box-profil"]')
+    v.ok((await choix.inputValue()) === '', 'au depart : aucune liste (profil de la box)')
+    const options = await choix.locator('option').allInnerTexts()
+    v.ok(options.length === serveur.etat.profils.length + 1, `profils proposes (${options.join(' | ')})`)
+    const cible = serveur.etat.profils[0]
+    await choix.selectOption(cible.id)
+    v.ok(!(await section.getByRole('button', { name: 'Enregistrer' }).isDisabled()), 'changer de profil active Enregistrer')
+    await section.getByRole('button', { name: 'Enregistrer' }).click()
+    v.ok(await jusqua(() => serveur.etat.xtream?.profil_listes === cible.id && serveur.etat.xtream.prefixes.join(',') === 'EN,FR', 5000), 'profil envoye, prefixes gardes')
+    await page.reload()
+    v.ok(await jusqua(async () => (await choix.inputValue().catch(() => '')) === cible.id, 10_000), 'apres rechargement, le profil reste choisi')
     await section.getByRole('button', { name: 'Tout décocher' }).click()
     v.ok(/recevra tout/.test(await texte(section.locator('[data-role="box-resume"]'))), '« Tout décocher » revient a tout le catalogue')
   } finally {

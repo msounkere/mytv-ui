@@ -378,14 +378,14 @@ export async function demarrerServeurFactice({ dist, taille = { chaines: 300, fi
     // Lot 11 : langues et pays envoyes aux box IPTV (Reglages > Box IPTV).
     if (p === '/admin/xtream') {
       if (!etat.admin) return erreur(res, 403, 'interdit', 'Reserve aux administrateurs')
-      etat.xtream ??= { prefixes: [], revision: 0 }
+      etat.xtream ??= { prefixes: [], revision: 0, profil_listes: '' }
       if (req.method === 'PUT') {
         const c = await corpsJson(req)
         if (c.revision !== etat.xtream.revision) return erreur(res, 409, 'conflit', 'revision perimee')
-        etat.xtream = { prefixes: [...new Set(c.prefixes)].sort(), revision: etat.xtream.revision + 1 }
+        etat.xtream = { prefixes: [...new Set(c.prefixes)].sort(), revision: etat.xtream.revision + 1, profil_listes: c.profil_listes ?? etat.xtream.profil_listes }
         return json(res, 200, etat.xtream)
       }
-      return json(res, 200, { ...etat.xtream, disponibles: [
+      return json(res, 200, { ...etat.xtream, profils: etat.profils.map((p) => ({ id: p.id, nom: p.nom })), disponibles: [
         { code: 'FR', chaines: 2300, films: 9000, series: 1200 }, { code: 'EN', chaines: 1800, films: 30000, series: 5000 },
         { code: 'AR', chaines: 1500, films: 4000, series: 900 }, { code: 'DE', chaines: 400, films: 7000, series: 300 },
       ] })

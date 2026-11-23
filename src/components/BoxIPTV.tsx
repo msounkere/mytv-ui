@@ -17,6 +17,9 @@ interface EtatBox {
   prefixes: string[]
   disponibles: PrefixeDispo[]
   revision: number
+  /** Profil dont la box montre « Ma liste », « En cours », « Mes chaînes » ; vide = celui de la box. */
+  profil_listes?: string
+  profils?: { id: string; nom: string }[]
 }
 
 /** Noms lisibles des prefixes les plus courants (les autres restent en code). */
@@ -35,10 +38,13 @@ export default function BoxIPTV() {
   const [choisis, poserChoisis] = createSignal<Set<string> | null>(null)
   const [filtre, poserFiltre] = createSignal('')
   const [envoi, poserEnvoi] = createSignal(false)
+  const [profilChoisi, poserProfilChoisi] = createSignal<string | null>(null)
+  const profil = () => profilChoisi() ?? etat()?.profil_listes ?? ''
 
   // Le choix en cours d'edition ; tant qu'on n'a rien touche, celui du serveur.
   const courant = () => choisis() ?? new Set(etat()?.prefixes ?? [])
   const modifie = () => {
+    if (profilChoisi() !== null && profilChoisi() !== (etat()?.profil_listes ?? '')) return true
     const c = choisis()
     if (!c) return false
     const s = new Set(etat()?.prefixes ?? [])
@@ -73,11 +79,12 @@ export default function BoxIPTV() {
     if (!e) return
     poserEnvoi(true)
     try {
-      const r = await json<{ prefixes: string[]; revision: number }>('/admin/xtream', {
-        methode: 'PUT', corps: { prefixes: [...courant()].sort(), revision: e.revision },
+      const r = await json<{ prefixes: string[]; revision: number; profil_listes?: string }>('/admin/xtream', {
+        methode: 'PUT', corps: { prefixes: [...courant()].sort(), profil_listes: profil(), revision: e.revision },
       })
-      mutate({ ...e, prefixes: r.prefixes, revision: r.revision })
+      mutate({ ...e, prefixes: r.prefixes, revision: r.revision, profil_listes: r.profil_listes ?? profil() })
       poserChoisis(null)
+      poserProfilChoisi(null)
       emettreToast({ message: r.prefixes.length ? `Box IPTV : ${r.prefixes.join(', ')} seulement` : 'Box IPTV : tout le catalogue' })
     } catch (err) {
       emettreToast({ message: versErreurLecteur(err).message, ton: 'erreur' })
@@ -95,6 +102,18 @@ export default function BoxIPTV() {
       </p>
       <Show when={!etat.loading} fallback={<p class="tertiaire" style={{ 'font-size': '13px' }}>Comptage du catalogue…</p>}>
         <Show when={!etat.error} fallback={<p class="tertiaire" style={{ 'font-size': '13px' }}>Réglage indisponible : {versErreurLecteur(etat.error).message}</p>}>
+          <label style={{ display: 'flex', 'align-items': 'center', gap: '10px', 'flex-wrap': 'wrap', margin: '0 0 12px', 'font-size': '13px' }}>
+            <span>Listes sur la box (Ma liste, En cours, Mes chaînes) :</span>
+            <select
+              data-role="box-profil"
+              value={profil()}
+              onChange={(e) => poserProfilChoisi(e.currentTarget.value)}
+              style={{ padding: '6px 10px' }}
+            >
+              <option value="">Aucune (profil de la box)</option>
+              <For each={etat()?.profils ?? []}>{(p) => <option value={p.id}>{p.nom}</option>}</For>
+            </select>
+          </label>
           <p data-role="box-resume" style={{ margin: '0 0 10px', 'font-size': '13px' }}>
             La box recevra <strong>{courant().size === 0 ? 'tout' : [...courant()].sort().join(', ')}</strong> —{' '}
             {nombre(total().chaines)} chaînes, {nombre(total().films)} films, {nombre(total().series)} séries.
