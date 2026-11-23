@@ -146,6 +146,7 @@ const SCENARIOS = {
       // Reimport force : complet, sans depuis.
       await serveur.lire('vider-requetes')
       await page.getByRole('button', { name: 'Réglages' }).click()
+      await page.getByRole('tab', { name: 'Catalogue' }).click() // Reglages en onglets : le catalogue a le sien
       await page.getByRole('button', { name: 'Réimporter tout' }).click()
       await attendre(() => exports(serveur).some((e) => e.type === 'series'), { quoi: 'reimport force' })
       assert.ok(exports(serveur).every((e) => e.depuis === null), `reimport force avec depuis : ${JSON.stringify(exports(serveur))}`)

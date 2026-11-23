@@ -248,6 +248,7 @@ const SCENARIOS = {
       // Reimport force depuis les Reglages : meme version, mais les donnees repartent.
       await serveur.lire('vider-requetes')
       await page.getByRole('button', { name: 'Réglages' }).click()
+      await page.getByRole('tab', { name: 'Catalogue' }).click() // Reglages en onglets : le catalogue a le sien
       await page.getByRole('button', { name: 'Réimporter tout' }).click()
       await attendre(() => exportsPar(serveur).vod === 1, { quoi: 'reimport force' })
     })
