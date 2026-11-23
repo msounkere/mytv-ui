@@ -5,8 +5,7 @@ import { ErreurApi, ErreurReseau, envoyer, json, type LectureApi, type Page, typ
 import { estConnecte, limites, profilActifId, signalerProfilRequis } from './auth'
 import {
   invaliderAVoir, invaliderCategories, invaliderEpingles, invaliderFavoris, invaliderHistorique,
-  invaliderRecommandation, invaliderReprises,
-} from './requetes'
+  invaliderRecommandation, invaliderReprises, invaliderLangues } from './requetes'
 import { serieAssociee } from './series-episodes'
 import { appliquerListeServeur, versBudget, type AVoirElementApi } from './a-voir-serveur'
 import { CLE_ORDRE } from './ma-liste-regles'
@@ -402,6 +401,7 @@ export async function tirerAVoir(): Promise<boolean> {
 // --- Reglages : fusion a trois points ---------------------------------------
 
 const CLE_EPINGLES = 'epingles.live'
+const CLE_LANGUES = 'langues.preferees'
 const CLE_BARRE = 'mytv.barre-deployee'
 const baseCle = (profil: string) => `synchro.reglages.${profil}`
 
@@ -432,6 +432,8 @@ async function valeursLocales(base: Valeurs | undefined): Promise<Valeurs> {
   }
   const epingles = (await db.reglages.get(CLE_EPINGLES))?.valeur
   if (Array.isArray(epingles) && epingles.length) v[CLE_EPINGLES] = ecrireEnsemble(epingles as string[])
+  const langues = (await db.reglages.get(CLE_LANGUES))?.valeur
+  if (Array.isArray(langues) && langues.length) v[CLE_LANGUES] = ecrireEnsemble(langues as string[])
 
   // Les categories masquees dont le catalogue local ne connait pas encore la
   // categorie (machine neuve, import en cours) ne sont pas « retirees » : elles
@@ -467,6 +469,13 @@ async function appliquerReglages(v: Valeurs): Promise<void> {
   if (ecrireEnsemble(epingles) !== ecrireEnsemble(Array.isArray(actuelles) ? (actuelles as string[]) : [])) {
     await db.reglages.put({ cle: CLE_EPINGLES, valeur: epingles })
     await invaliderEpingles()
+  }
+
+  const langues = lireEnsemble(v[CLE_LANGUES])
+  const languesLocales = (await db.reglages.get(CLE_LANGUES))?.valeur
+  if (ecrireEnsemble(langues) !== ecrireEnsemble(Array.isArray(languesLocales) ? (languesLocales as string[]) : [])) {
+    await db.reglages.put({ cle: CLE_LANGUES, valeur: langues })
+    await invaliderLangues()
   }
 
   const voulues = new Set(lireEnsemble(v['masquees']))

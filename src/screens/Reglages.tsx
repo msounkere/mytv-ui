@@ -19,6 +19,7 @@ import { LIBELLE_QUALITE_MODE, choisirQualite, qualite, type ModeQualite } from 
 import { choisirTeleviseurEac3, choisirTeleviseurHevc, televiseurEac3, televiseurHevc } from '../lib/cast'
 import { noter } from '../lib/diagnostic'
 import BoxIPTV from '../components/BoxIPTV'
+import LanguesAffichees from '../components/LanguesAffichees'
 
 // Qualité du flux (US-38 CA4) : Auto laisse le serveur décider ; Éco demande un
 // réencodage à débit réduit (480p, ~1,2 Mbit/s) à chaque ouverture, pour une
@@ -322,6 +323,8 @@ export default function Reglages() {
 
       <Show when={onglet() === 'catalogue'}>
       <div role="tabpanel" id="panneau-catalogue" aria-labelledby="onglet-catalogue">
+      <LanguesAffichees />
+
       <h2 style={{ 'margin-top': '24px' }}>Catégories masquées</h2>
       <p class="secondaire" style={{ margin: '6px 0 12px', 'font-size': '12px' }}>
         Les catégories du Direct masquées depuis la liste. Elles restent dans le catalogue : les réafficher ne coûte rien.

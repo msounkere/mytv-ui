@@ -114,6 +114,8 @@ export const cles = {
   epgChaine: (streamId: number) => ['epg', streamId] as const,
 
   epingles: ['epingles', 'live'] as const,
+  /** Langues affichées du profil (Réglages > Catalogue). */
+  languesPreferees: ['langues', 'preferees'] as const,
 
   /** Fiche détaillée d'une série, telle que le relais la rend. */
   /** Saisons d'une serie, telles que l'API les rend (`/series/{id}/saisons`). */
@@ -452,6 +454,16 @@ export const invaliderMaListe = invaliderAVoir
 /** Épinglage d'une catégorie de Direct. */
 export function invaliderEpingles(): Promise<void> {
   return clientRequetes.invalidateQueries({ queryKey: cles.epingles })
+}
+
+/** Les langues du profil changent : la préférence et les rangées de l'Accueil qu'elle filtre. */
+export function invaliderLangues(): Promise<void> {
+  return Promise.all([
+    clientRequetes.invalidateQueries({ queryKey: cles.languesPreferees }),
+    clientRequetes.invalidateQueries({ queryKey: ['catalogue', 'vod', 'recents'] }),
+    clientRequetes.invalidateQueries({ queryKey: ['catalogue', 'series', 'recents'] }),
+    clientRequetes.invalidateQueries({ queryKey: cles.aLaUne }),
+  ]).then(() => undefined)
 }
 
 // Prise de mesure, en développement SEULEMENT — même convention que

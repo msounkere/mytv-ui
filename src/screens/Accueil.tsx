@@ -11,6 +11,7 @@ import { anneeDuTitre, titreCourt } from '../components/titres'
 import { ecran, lire, lireEpisodeDe, ouvrirDirectFavoris, poserEcran, poserOnglet } from '../etat'
 import { listeMaListeAccueil } from '../lib/ma-liste'
 import { LIBELLES, compteurRangee, repere } from '../lib/ma-liste-regles'
+import { filtreLangues } from '../lib/langues-preferees'
 import { db, type EntreeCatalogue, type Reprise as LigneReprise, type TypeContenu } from '../lib/db'
 import { clesAJoindre, episodeAReprendre, joindreReprises, resteLisible } from '../lib/reprises-accueil'
 import { episodesOrdonnes, type EpisodeLisible } from '../lib/episodes-suivants'
@@ -147,13 +148,15 @@ function recentsPartages(type: TypeContenu): Promise<EntreeCatalogue[]> {
  * fraîcheur d'après le nom des catégories du fournisseur.
  */
 async function recemmentAjoutes(type: TypeContenu, limite: number): Promise<EntreeCatalogue[]> {
-  const parDate = await db.catalogue
+  // Langues du profil (Réglages > Catalogue) : filtrées PENDANT le parcours de l'index, pour
+  // en garder `limite` (filtrer après coup n'en laisserait que quelques-uns).
+  const garde = await filtreLangues(type)
+  const parcours = db.catalogue
     .where('[type+ajouteLe]')
     .between([type, 1], [type, Infinity])
     .reverse()
-    .limit(limite)
-    .toArray()
-  if (parDate.length > 0) return parDate
+  const parDate = await (garde ? parcours.filter(garde) : parcours).limit(limite).toArray()
+  if (parDate.length > 0 || garde) return parDate
 
   // Repli pour un catalogue importé avant que la date soit conservée : on
   // retombe sur les catégories « nouveautés » du fournisseur.

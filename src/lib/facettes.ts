@@ -327,6 +327,16 @@ export function analyserCategorie(nom: string): FacettesCategorie {
 
 // --- Index ----------------------------------------------------------------
 
+/**
+ * Langue d'un titre. Le préfixe du titre l'emporte quand il nomme une langue : « LAT - »
+ * dans une catégorie espagnole reste de l'espagnol, « EX - » du serbo-croate ; sinon celle
+ * de sa catégorie. `undefined` : inconnue.
+ */
+export function langueDe(e: Pick<EntreeCatalogue, 'pays'>, f: FacettesCategorie | undefined): string | undefined {
+  const depuisPrefixe = e.pays ? LANGUE_PREFIXE[e.pays.toUpperCase()] : undefined
+  return depuisPrefixe ?? f?.langue
+}
+
 export const DRAPEAU_NOUVEAUTE = 1
 export const DRAPEAU_SON = 2
 
@@ -437,10 +447,7 @@ export function construireIndex(entrees: EntreeCatalogue[], categories: Categori
     }
     genres[i] = bits
 
-    // Le préfixe du titre l'emporte quand il nomme une langue : « LAT - » dans
-    // une catégorie espagnole reste de l'espagnol, « EX - » du serbo-croate.
-    const depuisPrefixe = e.pays ? LANGUE_PREFIXE[e.pays.toUpperCase()] : undefined
-    const l = depuisPrefixe ?? f?.langue
+    const l = langueDe(e, f)
     if (l !== undefined) { const r = RANG_LANGUE.get(l); if (r !== undefined) { langue[i] = r; inc(cl, r) } }
     if (f?.pays !== undefined) { const r = RANG_PAYS.get(f.pays); if (r !== undefined) { pays[i] = r; inc(cp, r) } }
     if (f?.service !== undefined) { const r = RANG_SERVICE.get(f.service); if (r !== undefined) { service[i] = r; inc(cs, r) } }

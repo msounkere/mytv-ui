@@ -10,7 +10,7 @@
     "preview": "NODE_OPTIONS=--tls-max-v1.2 vite preview",
     "check": "tsc --noEmit",
     "test:unit": "node --test tests/unit/*.test.mjs && node tests/unit/lancer.mjs",
-    "test:e2e": "node tests/e2e/lancer-e2e.mjs us19 us20-lecture us21-guide us28 us32 us35 us36 us39 us39-direct us41-diffusion us43 us43-lecteur us46 us47-recherche us47-direct us47-coque us47-session us47-responsive us47-messages us45-arret us45-retour us45-fiches us45-fin us45-mobile us45-plein-ecran us45-lecteur replay box-iptv",
+    "test:e2e": "node tests/e2e/lancer-e2e.mjs us19 us20-lecture us21-guide us28 us32 us35 us36 us39 us39-direct us41-diffusion us43 us43-lecteur us46 us47-recherche us47-direct us47-coque us47-session us47-responsive us47-messages us45-arret us45-retour us45-fiches us45-fin us45-mobile us45-plein-ecran us45-lecteur replay box-iptv langues",
     "test:e2e:moteurs": "node tests/e2e/lancer-e2e.mjs NAVIGATEUR=firefox:us47-responsive NAVIGATEUR=firefox:us47-messages NAVIGATEUR=webkit:us47-responsive NAVIGATEUR=webkit:us47-messages NAVIGATEURS=firefox,webkit:us45-arret NAVIGATEURS=firefox,webkit:us45-mobile NAVIGATEURS=firefox,webkit:us45-plein-ecran",
     "test:webkit": "node tests/e2e/us45-webkit.mjs",
     "test:harnais": "node tests/e2e/us19-harnais.mjs && node tests/e2e/us28-harnais.mjs",

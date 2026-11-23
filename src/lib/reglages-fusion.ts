@@ -17,7 +17,7 @@ export type Valeurs = Record<string, string>
 /** Reglages dont la valeur est une liste JSON de chaines a traiter comme un
  *  ENSEMBLE : on fusionne les ajouts et retraits, pas la liste entiere (deux
  *  machines qui epinglent chacune une categorie doivent garder les deux). */
-export const CLES_ENSEMBLES: readonly string[] = ['epingles.live', 'masquees']
+export const CLES_ENSEMBLES: readonly string[] = ['epingles.live', 'masquees', 'langues.preferees']
 
 export function lireEnsemble(brut: string | undefined): string[] {
   if (!brut) return []

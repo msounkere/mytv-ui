@@ -1,5 +1,5 @@
 import { estMobile } from '../../lib/gabarit'
-import { ErrorBoundary, Show, createComputed, createMemo, createSignal, onCleanup } from 'solid-js'
+import { ErrorBoundary, Show, createComputed, createEffect, createMemo, createSignal, onCleanup } from 'solid-js'
 import BarreFiltres from '../../components/BarreFiltres'
 import Diagnostic from '../../components/Diagnostic'
 import GrilleAffiches from '../../components/GrilleAffiches'
@@ -9,6 +9,7 @@ import {
   CRITERES_VIDES, construireIndex, estNouveaute, filtrer, nombreDeFiltres, preparerTriTitre,
   type Criteres,
 } from '../../lib/facettes'
+import { lireLangues } from '../../lib/langues-preferees'
 import { db, type EntreeCatalogue, type TypeContenu } from '../../lib/db'
 import { FRAICHEUR, cles, requete, requeteClefee } from '../../lib/requetes'
 import { categoriesPartagees } from './categories'
@@ -95,11 +96,28 @@ export default function EcranMedia(props: { surOuvrir: (e: EntreeCatalogue) => v
 
   const critereActif = () => criteres()[type()] ?? CRITERES_VIDES
 
+  // Langues du profil (Réglages > Catalogue) : le POINT DE DÉPART du filtre « Langue », en
+  // pastilles qu'on retire d'un geste. Un type dont l'utilisateur a touché les filtres garde
+  // son choix ; les autres suivent la préférence, y compris quand elle change.
+  const touches = new Set<string>()
+  const [langues] = requete(cles.languesPreferees, lireLangues, { fraicheur: FRAICHEUR.geste })
+  createEffect(() => {
+    const l = langues()
+    if (!l) return
+    poserCriteres((m) => {
+      const n = { ...m }
+      for (const t of ['vod', 'series'])
+        if (!touches.has(t)) n[t] = { ...(m[t] ?? CRITERES_VIDES), langues: [...l] }
+      return n
+    })
+  })
+
   let minuteur: ReturnType<typeof setTimeout> | undefined
   onCleanup(() => clearTimeout(minuteur))
 
   function appliquer(c: Criteres) {
     const t = type()
+    touches.add(t)
     poserCriteres((m) => ({ ...m, [t]: c }))
     // Règle de comportement : la grille repart du haut et montre un squelette
     // 320 ms. Le compteur de génération sert aussi de clé de défilement.
